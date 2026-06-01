@@ -28,6 +28,17 @@ createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`).pathname;
 
+    if (pathname === "/health" && (request.method === "GET" || request.method === "HEAD")) {
+      response.statusCode = 200;
+      response.setHeader("Content-Type", "text/plain; charset=utf-8");
+      if (request.method === "HEAD") {
+        response.end();
+        return;
+      }
+      response.end("OK");
+      return;
+    }
+
     if (pathname === "/api/deepseek-config" && request.method === "GET") {
       const config = readDeepseekConfig();
       sendJson(response, 200, {
