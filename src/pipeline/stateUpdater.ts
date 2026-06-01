@@ -1,14 +1,102 @@
-import { CharacterState, EventInput, LlmOutput, StateDelta } from "../core/types";
+import {
+  AppraisalResult,
+  CharacterState,
+  CognitiveModuleTrace,
+  EventInput,
+  LlmConfig,
+  MemoryRecallResult,
+  ReplyOutput,
+  ResponseDecision,
+  StateDelta,
+  StateUpdatePlan,
+} from "../core/types";
 import { clamp, makeId, nowIso, round } from "../core/utils";
+import { runCognitiveModule } from "./cognitiveModuleClient";
 
-export function applyStateUpdates(state: CharacterState, event: EventInput, llmOutput: LlmOutput): { nextState: CharacterState; stateDelta: StateDelta } {
+export async function applyStateUpdates(
+  state: CharacterState,
+  event: EventInput,
+  replyOutput: ReplyOutput,
+  context: {
+    appraisal: AppraisalResult;
+    memoryRecall: MemoryRecallResult;
+    decision: ResponseDecision;
+  },
+  llmConfig: LlmConfig,
+): Promise<{ nextState: CharacterState; stateDelta: StateDelta; stateUpdate: CognitiveModuleTrace<StateUpdatePlan> }> {
+  const stateUpdate = await planStateUpdates(state, event, replyOutput, context, llmConfig);
+  const { nextState, stateDelta } = commitStateUpdates(state, event, replyOutput, stateUpdate.output);
+  return { nextState, stateDelta, stateUpdate };
+}
+
+async function planStateUpdates(
+  state: CharacterState,
+  event: EventInput,
+  replyOutput: ReplyOutput,
+  context: {
+    appraisal: AppraisalResult;
+    memoryRecall: MemoryRecallResult;
+    decision: ResponseDecision;
+  },
+  llmConfig: LlmConfig,
+) {
+  const activeConcern = state.concerns.find((concern) => concern.status === "active" && concern.triggers.some((trigger) => event.content.includes(trigger)));
+  const targetId = event.speakerId ?? "user_b";
+  const mockOutput: StateUpdatePlan = {
+    concernUpdates: activeConcern
+      ? [
+          {
+            concernId: activeConcern.id,
+            intensityDelta: activeConcern.valence < 0 ? 0.05 : 0.02,
+            arousalDelta: 0.06,
+            note: `事件「${event.content}」和回复「${replyOutput.reply || "沉默"}」让「${activeConcern.title}」继续留在心里。`,
+          },
+        ]
+      : [],
+    relationshipUpdates: [
+      {
+        targetId,
+        familiarityDelta: 0.01,
+        tensionDelta: context.decision.responseMode === "short_avoidance" ? 0.02 : -0.01,
+        note: "本轮互动被记录为一次轻微关系变化。",
+      },
+    ],
+    newConcerns: [],
+    internalStateNote: activeConcern
+      ? `她没有把「${activeConcern.title}」完整说出口，只是在心里停了一下。`
+      : "这次对话没有明显戳中她的心事。",
+  };
+
+  return runCognitiveModule<StateUpdatePlan>(
+    {
+      moduleName: "state_update",
+      inputMode: "structured_context",
+      outputMode: "structured_json",
+      prompt: [
+        "你是虚拟人大脑里的状态写回区。你不负责写台词，只负责根据刚才发生的事和她说出口的话，判断她内在状态如何变化。",
+        `事件：${event.speakerName ?? "对方"}说「${event.content}」`,
+        `她说出口的话：${replyOutput.reply || "她选择了沉默"}`,
+        `事件评估：${context.appraisal.appraisalSummary}`,
+        `浮现的记忆：${context.memoryRecall.longTermMemories.map((memory) => memory.summary).join("；") || "没有特别强的记忆"}`,
+        `回应姿态：${context.decision.rationale}`,
+        "请判断：哪些心事被加重或减轻、关系是否变化、是否产生新的心事、有没有没说出口但应该存入记忆的内心余波。",
+      ].join("\n\n"),
+      outputContract:
+        "Return JSON: { concernUpdates: [{ concernId, intensityDelta, valenceDelta, arousalDelta, status, note }], relationshipUpdates: [{ targetId, familiarityDelta, trustDelta, affectionDelta, tensionDelta, note }], newConcerns: [], internalStateNote }",
+    },
+    llmConfig,
+    mockOutput,
+  );
+}
+
+function commitStateUpdates(state: CharacterState, event: EventInput, replyOutput: ReplyOutput, stateUpdatePlan: StateUpdatePlan): { nextState: CharacterState; stateDelta: StateDelta } {
   const concernChanges: string[] = [];
   const relationshipChanges: string[] = [];
   const memoryWrites: string[] = [];
   const runtimeChanges: string[] = [];
 
   const nextConcerns = state.concerns.map((concern) => {
-    const update = llmOutput.concernUpdates.find((candidate) => candidate.concernId === concern.id);
+    const update = stateUpdatePlan.concernUpdates.find((candidate) => candidate.concernId === concern.id);
     if (!update) return concern;
 
     const next = {
@@ -24,7 +112,7 @@ export function applyStateUpdates(state: CharacterState, event: EventInput, llmO
   });
 
   const nextRelationships = { ...state.relationships };
-  for (const update of llmOutput.relationshipUpdates) {
+  for (const update of stateUpdatePlan.relationshipUpdates) {
     const existing = nextRelationships[update.targetId] ?? {
       targetId: update.targetId,
       targetName: update.targetId,
@@ -61,31 +149,31 @@ export function applyStateUpdates(state: CharacterState, event: EventInput, llmO
     },
   ];
 
-  if (llmOutput.reply) {
+  if (replyOutput.reply) {
     shortTermMemory.push({
       id: makeId("stm"),
       timestamp: nowIso(),
       speakerId: state.profile.id,
       speakerName: state.profile.name,
-      content: llmOutput.reply,
+      content: replyOutput.reply,
       eventId: event.id,
     });
   }
 
   memoryWrites.push("写入本轮事件到短期记忆");
-  if (llmOutput.reply) memoryWrites.push("写入角色回复到短期记忆");
+  if (replyOutput.reply) memoryWrites.push("写入角色回复到短期记忆");
 
   const longTermMemory = [...state.longTermMemory];
-  if (llmOutput.internalStateNote) {
+  if (stateUpdatePlan.internalStateNote) {
     longTermMemory.push({
       id: makeId("ltm"),
-      summary: llmOutput.internalStateNote,
+      summary: stateUpdatePlan.internalStateNote,
       relatedPeople: [event.speakerId ?? "unknown"],
-      relatedConcerns: llmOutput.concernUpdates.map((update) => update.concernId),
-      emotionalValence: llmOutput.concernUpdates.length > 0 ? -0.35 : 0,
-      emotionalIntensity: llmOutput.concernUpdates.length > 0 ? 0.55 : 0.2,
+      relatedConcerns: stateUpdatePlan.concernUpdates.map((update) => update.concernId),
+      emotionalValence: stateUpdatePlan.concernUpdates.length > 0 ? -0.35 : 0,
+      emotionalIntensity: stateUpdatePlan.concernUpdates.length > 0 ? 0.55 : 0.2,
       createdAt: nowIso(),
-      importance: llmOutput.concernUpdates.length > 0 ? 0.62 : 0.25,
+      importance: stateUpdatePlan.concernUpdates.length > 0 ? 0.62 : 0.25,
     });
     memoryWrites.push("写入 internal_state_note 到长期记忆");
   }

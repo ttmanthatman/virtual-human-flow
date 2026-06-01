@@ -123,6 +123,6 @@ export const seedMessages: ChatMessage[] = [
 
 export const defaultLlmConfig: LlmConfig = {
   provider: "simulated",
-  model: "local-simulated-json",
+  model: "local-mock-llm",
   endpoint: "",
 };

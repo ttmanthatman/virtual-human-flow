@@ -26,12 +26,22 @@ export async function runConversationPipeline({ content, state, llmConfig }: Run
     content,
   };
 
-  const appraisal = runAppraisal(event, state);
-  const memoryRecall = retrieveMemory(event, appraisal, state);
-  const decision = decideResponse(appraisal, state);
-  const llmRequest = generateNaturalPromptRequest(event, state, appraisal, memoryRecall, decision, llmConfig.provider, llmConfig.model);
-  const llmOutput = await runLlm(llmRequest, llmConfig, { event, state, decision });
-  const { nextState, stateDelta } = applyStateUpdates(state, event, llmOutput);
+  const appraisal = await runAppraisal(event, state, llmConfig);
+  const memoryRecall = await retrieveMemory(event, appraisal.output, state, llmConfig);
+  const decision = await decideResponse(appraisal.output, memoryRecall.output, state, llmConfig);
+  const llmRequest = generateNaturalPromptRequest(event, state, appraisal.output, memoryRecall.output, decision.output, llmConfig.provider, llmConfig.model);
+  const llmOutput = await runLlm(llmRequest, llmConfig, { event, state, decision: decision.output });
+  const { nextState, stateDelta, stateUpdate } = await applyStateUpdates(
+    state,
+    event,
+    llmOutput,
+    {
+      appraisal: appraisal.output,
+      memoryRecall: memoryRecall.output,
+      decision: decision.output,
+    },
+    llmConfig,
+  );
 
   return {
     nextState,
@@ -42,6 +52,7 @@ export async function runConversationPipeline({ content, state, llmConfig }: Run
       decision,
       llmRequest,
       llmOutput,
+      stateUpdate,
       stateDelta,
     },
   };

@@ -1,7 +1,13 @@
-import { AppraisalResult, CharacterState, EventInput, MemoryRecallResult } from "../core/types";
+import { AppraisalResult, CharacterState, CognitiveModuleTrace, EventInput, LlmConfig, MemoryRecallResult } from "../core/types";
 import { clamp, round } from "../core/utils";
+import { runCognitiveModule } from "./cognitiveModuleClient";
 
-export function retrieveMemory(event: EventInput, appraisal: AppraisalResult, state: CharacterState): MemoryRecallResult {
+export async function retrieveMemory(
+  event: EventInput,
+  appraisal: AppraisalResult,
+  state: CharacterState,
+  llmConfig: LlmConfig,
+): Promise<CognitiveModuleTrace<MemoryRecallResult>> {
   const activatedIds = new Set(appraisal.activatedConcerns.map((concern) => concern.concernId));
   const speakerNames = [event.speakerId, event.speakerName].filter(Boolean) as string[];
 
@@ -35,8 +41,27 @@ export function retrieveMemory(event: EventInput, appraisal: AppraisalResult, st
     .sort((a, b) => b.score - a.score)
     .slice(0, 4);
 
-  return {
+  const mockOutput = {
     shortTermContext: state.shortTermMemory.slice(-8),
     longTermMemories,
   };
+
+  return runCognitiveModule<MemoryRecallResult>(
+    {
+      moduleName: "memory_retrieval",
+      inputMode: "structured_context",
+      outputMode: "structured_json",
+      prompt: [
+        "你是虚拟人大脑里的记忆召回区。你只负责判断此刻哪些短期和长期记忆会自然浮上来。",
+        `刚发生的事：${event.speakerName ?? "对方"}说「${event.content}」`,
+        `事件评估：${appraisal.appraisalSummary}`,
+        `长期记忆候选：${state.longTermMemory.map((memory) => `「${memory.summary}」`).join("；")}`,
+        "请选出她此刻最可能想起的几件事，并说明每件事为什么会浮上来。",
+      ].join("\n\n"),
+      outputContract:
+        "Return JSON: { shortTermContext: ShortTermMemory[], longTermMemories: [{ memoryId, summary, score, reason }] }",
+    },
+    llmConfig,
+    mockOutput,
+  );
 }

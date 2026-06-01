@@ -145,16 +145,35 @@ export interface ResponseDecision {
   rationale: string;
 }
 
-export interface LlmRequest {
+export type CognitiveModuleName = "appraisal" | "memory_retrieval" | "response_decision" | "reply_generation" | "state_update";
+
+export interface CognitiveModuleRequest {
+  moduleName: CognitiveModuleName;
+  inputMode: "natural_language" | "structured_context";
+  outputMode: "natural_language" | "structured_json";
+  prompt: string;
+  outputContract?: string;
+}
+
+export interface CognitiveModuleTrace<TOutput> {
+  moduleName: CognitiveModuleName;
+  request: CognitiveModuleRequest;
+  output: TOutput;
+  transport: "mock_llm" | "external_llm";
+}
+
+export interface ExpressionLlmRequest {
   provider: "simulated" | "external";
   model: string;
   prompt: string;
-  outputContract: string;
   generatorNotes: string[];
 }
 
-export interface LlmOutput {
+export interface ReplyOutput {
   reply: string;
+}
+
+export interface StateUpdatePlan {
   concernUpdates: {
     concernId: string;
     intensityDelta?: number;
@@ -191,11 +210,12 @@ export interface StateDelta {
 
 export interface PipelineTrace {
   event: EventInput;
-  appraisal: AppraisalResult;
-  memoryRecall: MemoryRecallResult;
-  decision: ResponseDecision;
-  llmRequest: LlmRequest;
-  llmOutput: LlmOutput;
+  appraisal: CognitiveModuleTrace<AppraisalResult>;
+  memoryRecall: CognitiveModuleTrace<MemoryRecallResult>;
+  decision: CognitiveModuleTrace<ResponseDecision>;
+  llmRequest: ExpressionLlmRequest;
+  llmOutput: ReplyOutput;
+  stateUpdate: CognitiveModuleTrace<StateUpdatePlan>;
   stateDelta: StateDelta;
 }
 

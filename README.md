@@ -34,6 +34,8 @@ npm run dev
 
 - 左侧：角色状态、关切、一键人物档案生成、一键场景生成。
 - 中间：聊天室。
-- 右侧：pipeline trace，展示 `Event -> Appraisal -> Memory Recall -> Decision -> Prompt Generator -> LLM Output -> State Delta`。
+- 右侧：pipeline trace，展示 `Event -> Appraisal LLM -> Memory Recall LLM -> Decision LLM -> Reply Prompt -> Reply Output -> State Update LLM -> State Delta`。
 
-当前 LLM 默认为 simulated adapter。真实 LLM 接入需要后端代理，避免把 API Key 暴露在浏览器里。`Prompt Generator` 会把结构化中间结果转换成自然语言上下文，再交给 LLM；JSON 输出约束单独通过 `outputContract` 传给后端。
+当前 LLM 默认为 mock adapter，只用于没有真实 API 时演示流程。正式架构中，每个认知步骤都必须调用 LLM：Appraisal、Memory Recall、Decision、State Update 都是独立的 LLM 模块。
+
+角色回复这一步是例外中的硬规则：Reply LLM 只接收自然语言上下文，只生成角色说出口的话，不混入 JSON、字段名、输出约束或类似编程语言的内容。结构化状态更新由后续 State Update LLM 模块单独判断。

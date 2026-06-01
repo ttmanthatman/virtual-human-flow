@@ -1,4 +1,4 @@
-import { CharacterState, EventInput, LlmConfig, LlmOutput, LlmRequest, ResponseDecision } from "../core/types";
+import { CharacterState, EventInput, ExpressionLlmRequest, LlmConfig, ReplyOutput, ResponseDecision } from "../core/types";
 
 interface SimulateInput {
   event: EventInput;
@@ -7,18 +7,20 @@ interface SimulateInput {
 }
 
 export async function runLlm(
-  request: LlmRequest,
+  request: ExpressionLlmRequest,
   config: LlmConfig,
   simulateInput: SimulateInput,
-): Promise<LlmOutput> {
+): Promise<ReplyOutput> {
   if (config.provider === "external" && config.endpoint.trim()) {
     const response = await fetch(config.endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: config.model,
+        moduleName: "reply_generation",
+        inputMode: "natural_language",
+        outputMode: "natural_language",
         prompt: request.prompt,
-        outputContract: request.outputContract,
       }),
     });
 
@@ -26,23 +28,17 @@ export async function runLlm(
       throw new Error(`LLM endpoint failed: ${response.status}`);
     }
 
-    return (await response.json()) as LlmOutput;
+    const data = await response.json();
+    return typeof data === "string" ? { reply: data } : (data as ReplyOutput);
   }
 
   return simulateLlmOutput(simulateInput);
 }
 
-function simulateLlmOutput({ event, state, decision }: SimulateInput): LlmOutput {
-  const activeConcern = state.concerns.find((concern) => concern.status === "active" && concern.triggers.some((trigger) => event.content.includes(trigger)));
-  const targetId = event.speakerId ?? "user_b";
-
+function simulateLlmOutput({ decision }: SimulateInput): ReplyOutput {
   if (!decision.shouldRespond || decision.responseMode === "silence") {
     return {
       reply: "",
-      concernUpdates: [],
-      relationshipUpdates: [],
-      newConcerns: [],
-      internalStateNote: "她看见了这句话，但没有找到必须开口的理由。",
     };
   }
 
@@ -58,27 +54,5 @@ function simulateLlmOutput({ event, state, decision }: SimulateInput): LlmOutput
 
   return {
     reply: replyByMode[decision.responseMode] ?? replyByMode.neutral_reply,
-    concernUpdates: activeConcern
-      ? [
-          {
-            concernId: activeConcern.id,
-            intensityDelta: activeConcern.valence < 0 ? 0.05 : 0.02,
-            arousalDelta: 0.06,
-            note: `事件「${event.content}」触发了「${activeConcern.title}」。`,
-          },
-        ]
-      : [],
-    relationshipUpdates: [
-      {
-        targetId,
-        familiarityDelta: 0.01,
-        tensionDelta: decision.responseMode === "short_avoidance" ? 0.02 : -0.01,
-        note: "本轮互动被记录为一次轻微关系变化。",
-      },
-    ],
-    newConcerns: [],
-    internalStateNote: activeConcern
-      ? `她没有把「${activeConcern.title}」完整说出口，只是在心里停了一下。`
-      : "这次对话没有明显戳中她的心事。",
   };
 }

@@ -1,12 +1,4 @@
-import { AppraisalResult, CharacterState, EventInput, LlmRequest, MemoryRecallResult, ResponseDecision } from "../core/types";
-
-const outputContract = `{
-  "reply": "string",
-  "concernUpdates": [{"concernId": "string", "intensityDelta": 0, "valenceDelta": 0, "arousalDelta": 0, "note": "string"}],
-  "relationshipUpdates": [{"targetId": "string", "trustDelta": 0, "affectionDelta": 0, "tensionDelta": 0, "note": "string"}],
-  "newConcerns": [],
-  "internalStateNote": "string"
-}`;
+import { AppraisalResult, CharacterState, EventInput, ExpressionLlmRequest, MemoryRecallResult, ResponseDecision } from "../core/types";
 
 export function generateNaturalPromptRequest(
   event: EventInput,
@@ -16,7 +8,7 @@ export function generateNaturalPromptRequest(
   decision: ResponseDecision,
   provider: "simulated" | "external",
   model: string,
-): LlmRequest {
+): ExpressionLlmRequest {
   const activatedConcerns = appraisal.activatedConcerns
     .map((item) => {
       const concern = state.concerns.find((candidate) => candidate.id === item.concernId);
@@ -81,11 +73,10 @@ export function generateNaturalPromptRequest(
     provider,
     model,
     prompt,
-    outputContract,
     generatorNotes: [
-      "结构化 pipeline 结果仅供 Prompt Generator 使用，不直接进入最终自然语言 prompt。",
-      "最终 prompt 不包含 JSON、字段名或工程术语，避免污染角色说话风格。",
-      "结构化输出约束保存在 outputContract，真实 LLM 后端应通过 Structured Outputs 或等价机制应用。",
+      "结构化 pipeline 结果只在 Prompt Generator 内部被理解，最终交给表达 LLM 的内容只有自然语言。",
+      "表达 LLM 不携带 JSON、字段名、输出契约或工程术语。",
+      "状态更新、关系更新等结构化判断由后续 state_update 认知模块单独调用 LLM 完成。",
     ],
   };
 }

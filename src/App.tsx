@@ -14,7 +14,7 @@ import {
   Sparkles,
   UserRound,
 } from "lucide-react";
-import { ChatMessage, CharacterState, LlmConfig, LlmRequest, PipelineTrace } from "./core/types";
+import { ChatMessage, CharacterState, ExpressionLlmRequest, LlmConfig, PipelineTrace } from "./core/types";
 import { makeId, nowIso } from "./core/utils";
 import { defaultLlmConfig, seedMessages, seedState } from "./data/seedState";
 import { runConversationPipeline } from "./pipeline/conversationPipeline";
@@ -25,8 +25,9 @@ const traceSteps: { key: keyof PipelineTrace; label: string; icon: typeof Activi
   { key: "appraisal", label: "Appraisal", icon: Brain },
   { key: "memoryRecall", label: "Memory Recall", icon: Database },
   { key: "decision", label: "Decision", icon: ChevronsRight },
-  { key: "llmRequest", label: "Prompt Generator", icon: FileText },
-  { key: "llmOutput", label: "LLM Output", icon: Braces },
+  { key: "llmRequest", label: "Reply Prompt", icon: FileText },
+  { key: "llmOutput", label: "Reply Output", icon: MessageSquare },
+  { key: "stateUpdate", label: "State Update LLM", icon: Braces },
   { key: "stateDelta", label: "State Delta", icon: Network },
 ];
 
@@ -147,7 +148,7 @@ export function App() {
               value={llmConfig.provider}
               onChange={(event) => setLlmConfig((current) => ({ ...current, provider: event.target.value as LlmConfig["provider"] }))}
             >
-              <option value="simulated">Simulated</option>
+              <option value="simulated">Mock LLM</option>
               <option value="external">External Endpoint</option>
             </select>
           </label>
@@ -239,7 +240,7 @@ export function App() {
           </div>
 
           <form className="composer" onSubmit={handleSend}>
-            <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入一句话，观察 Event -> LLM -> State Delta" />
+            <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入一句话，观察多模块 LLM 数据流" />
             <button type="submit" disabled={isRunning}>
               <Send size={17} /> {isRunning ? "Running" : "Send"}
             </button>
@@ -302,14 +303,11 @@ function formatTraceDisplay(activeStep: keyof PipelineTrace, selectedTraceData: 
   }
 
   if (activeStep === "llmRequest") {
-    const request = selectedTraceData as LlmRequest;
+    const request = selectedTraceData as ExpressionLlmRequest;
     return [
-      "Natural Prompt Sent To LLM",
+      "Natural Prompt Sent To Reply LLM",
       "",
       request.prompt,
-      "",
-      "Output Contract (separate from prompt)",
-      request.outputContract,
       "",
       "Generator Notes",
       ...request.generatorNotes.map((note) => `- ${note}`),

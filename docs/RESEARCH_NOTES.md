@@ -20,12 +20,12 @@
 
 4. ReAct
    - 来源：https://arxiv.org/abs/2210.03629
-   - 结论：推理和行动交替有助于让系统可解释、可追踪。对本项目的启发是：把 Event、Appraisal、Memory Recall、Decision、Prompt、LLM Output、State Delta 逐步展示。
+   - 结论：推理和行动交替有助于让系统可解释、可追踪。对本项目的启发是：把 Event、Appraisal LLM、Memory Recall LLM、Decision LLM、Reply Prompt、Reply Output、State Update LLM、State Delta 逐步展示。
 
 5. OpenAI Structured Outputs / Responses API
    - 来源：https://platform.openai.com/docs/guides/structured-outputs
    - 来源：https://platform.openai.com/docs/api-reference/responses
-   - 结论：真实 LLM 接入时应优先使用 JSON Schema / Structured Outputs，而不是只靠提示词要求模型输出 JSON。MVP 当前先用 simulated adapter，后续接后端 LLM gateway。
+   - 结论：认知模块接入真实 LLM 时应优先使用 JSON Schema / Structured Outputs，而不是只靠提示词要求模型输出 JSON。Reply LLM 不使用结构化输出约束。
 
 ## 当前落地取舍
 
@@ -34,7 +34,7 @@
 | 记忆 | 短期原文 + 长期摘要 | 先做可观察闭环，不急着引入向量库 |
 | 情绪 | `concern` + `relationship` + `derivedMood` | 避免把心理状态压成一个数字 |
 | 主动性 | 暂未实现异步后台 | 先完成同步响应路径 |
-| LLM | simulated adapter + external endpoint 输入框 | 没有 API Key 和后端前，先保证数据流可见 |
+| LLM | mock adapter + external endpoint 输入框 | 没有 API Key 和后端前，先保证数据流可见；正式判断逻辑必须走 LLM |
 | UI | 三栏工作台 | 用户需要直观看到状态、聊天和 pipeline |
 
 ## 2026-06-01 Prompt Generator 修正
@@ -43,7 +43,8 @@
 
 当前修正：
 
-- Appraisal、Memory Recall、Decision 继续保持结构化，供系统调试。
-- 新增 `Prompt Generator` 概念，把结构化中间结果翻译成自然语言上下文。
-- 最终 `prompt` 不再包含 JSON、字段名、激活分、工程术语。
-- JSON 输出约束改为单独的 `outputContract`，真实 LLM 后端应使用 Structured Outputs 或类似机制应用。
+- Reply LLM 永远只接收自然语言上下文，只生成角色台词。
+- Appraisal、Memory Recall、Decision、State Update 都是独立认知模块，正式架构下每一步都调用 LLM。
+- 新增 `Prompt Generator` 概念，把认知模块输出翻译成自然语言回复上下文。
+- State Update LLM 在回复生成之后单独判断结构化状态变化。
+- 当前无真实 API 时使用 mock adapter 让界面可跑；它只是占位，不代表正式判断逻辑。
