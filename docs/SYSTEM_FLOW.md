@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-当前只建立开发方法、文档骨架和版本回溯机制。MVP 的具体业务模块尚未确认，因此不提前假设系统结构。
+当前已建立第一版本地 MVP：三栏工作台展示人物状态、聊天室和 pipeline debug。系统能一键根据描述生成人物档案，一键生成场景，并在发送消息后展示 Event 到 LLM Output 再到 State Delta 的完整数据流。
 
 ## 总体工作流
 
@@ -45,6 +45,37 @@ flowchart LR
     GH --> VPS[ok.xiaogushi.us 部署]
 ```
 
+## 当前 MVP 同步响应路径
+
+```mermaid
+flowchart TD
+    U[用户在 Chat 输入消息] --> E[EventInput]
+    E --> A[runAppraisal: 事件触发关切]
+    A --> M[retrieveMemory: 召回短期和长期记忆]
+    M --> D[decideResponse: 是否回应和回应姿态]
+    D --> P[buildPromptRequest: 组装最终 LLM 输入]
+    P --> L{runLlm}
+    L -- simulated --> S[本地模拟结构化 JSON]
+    L -- external endpoint --> X[外部 LLM 服务]
+    S --> O[LlmOutput]
+    X --> O
+    O --> W[applyStateUpdates: 写回状态和记忆]
+    W --> C[聊天室显示回复]
+    W --> T[Pipeline Trace 面板显示每一步]
+```
+
+## 当前 UI 结构
+
+```mermaid
+flowchart LR
+    LEFT[左侧 State/Dossier/Scene] --> PIPE[Conversation Pipeline]
+    CHAT[中间 Chat] --> PIPE
+    PIPE --> TRACE[右侧 Pipeline Trace]
+    TRACE --> JSON[Event/Appraisal/Memory/Decision/Prompt/LLM Output/State Delta]
+    LEFT --> GEN1[Generate Dossier]
+    LEFT --> GEN2[Generate Scene]
+```
+
 ## 待确认 MVP 架构问题
 
 开始写业务代码前，需要确认以下信息：
@@ -73,4 +104,9 @@ flowchart LR
 | 开发方法 | initialized | 已建立规则文档 |
 | 命名登记 | initialized | 已建立 AI 用命名表 |
 | 系统流程 | initialized | 已建立初始工作流图 |
-| MVP 业务模块 | pending | 等待用户补充前置对话或确认第一版目标 |
+| MVP 业务模块 | initialized | 已实现本地可运行的三栏工作台 |
+| 人物档案生成 | initialized | 基于描述生成 profile 和 concerns，目前为规则版 |
+| 场景生成 | initialized | 基于描述生成 scene，目前为规则版 |
+| 同步对话路径 | initialized | Event -> Appraisal -> Memory -> Decision -> Prompt -> LLM Output -> State Delta |
+| 真实 LLM 接入 | pending | 当前为 simulated adapter；后续需要后端代理和 API Key |
+| 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现 |

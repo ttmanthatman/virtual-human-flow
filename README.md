@@ -17,3 +17,23 @@
 - `docs/DEVELOPMENT_METHOD.md`: 项目协作和开发流程。
 - `docs/AI_NAMING_REGISTRY.md`: 给 AI 使用的命名与关系登记表。
 - `docs/SYSTEM_FLOW.md`: 给用户和 AI 共同阅读的系统调用、数据流和架构图。
+- `docs/RESEARCH_NOTES.md`: 动手前调研过的相近项目、原理和踩坑。
+
+## 本地运行
+
+```bash
+npm install
+npm run dev
+```
+
+打开 `http://127.0.0.1:5173/`。
+
+## 当前 MVP
+
+当前版本是一个本地可运行的三栏工作台：
+
+- 左侧：角色状态、关切、一键人物档案生成、一键场景生成。
+- 中间：聊天室。
+- 右侧：pipeline trace，展示 `Event -> Appraisal -> Memory Recall -> Decision -> Prompt -> LLM Output -> State Delta`。
+
+当前 LLM 默认为 simulated adapter。真实 LLM 接入需要后端代理，避免把 API Key 暴露在浏览器里。
