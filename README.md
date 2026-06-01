@@ -63,4 +63,4 @@ DeepSeek 本地测试通过 Vite 代理 `/api/deepseek-chat` 访问官方 Chat C
 - 线上目录：`/var/www/ok.xiaogushi.us/app`
 - 线上进程：PM2 `ok-xiaogushi-us`，监听 `127.0.0.1:4174`
 - 反代配置：`/etc/nginx/sites-available/ok.xiaogushi.us.conf`
-- 本轮部署前备份：`/root/ok.xiaogushi.us-backups/20260601103603`
+- 本轮部署前备份：`/root/ok.xiaogushi.us-backups/20260601153353`
