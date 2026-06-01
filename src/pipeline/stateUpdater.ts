@@ -200,6 +200,35 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
           arousal: moodArousal,
           label: moodValence < -0.25 ? "被旧事牵动，语气更轻" : moodValence > 0.25 ? "稍微放松" : "平稳克制",
         },
+        signalProfiles: {
+          ...state.runtime.signalProfiles,
+          mood: {
+            ...state.runtime.signalProfiles.mood,
+            label: moodValence < -0.25 ? "被旧事牵动，语气更轻" : moodValence > 0.25 ? "稍微放松" : "平稳克制",
+            summary:
+              moodValence < -0.25
+                ? "刚才的互动让某个具体心事浮上来，表层仍克制。"
+                : moodValence > 0.25
+                  ? "刚才的互动稍微缓和了她的表层状态。"
+                  : "刚才的互动没有明显改变她的整体外显状态。",
+            llmContext:
+              moodValence < -0.25
+                ? "回复后她仍在压住旧事带来的余波，后续表达应更短、更轻。"
+                : moodValence > 0.25
+                  ? "回复后她稍微放松，但仍会保留边界。"
+                  : "回复后她保持平稳，继续根据具体话题调整。",
+          },
+          valence: {
+            ...state.runtime.signalProfiles.valence,
+            label: moodValence < -0.25 ? "局部偏负面" : moodValence > 0.25 ? "局部缓和" : "接近中性",
+            llmContext: "这是对当前互动后的自然语言判断，不是全局分数；后续仍要看触发物和关系对象。",
+          },
+          arousal: {
+            ...state.runtime.signalProfiles.arousal,
+            label: moodArousal > 0.45 ? "内在被牵动，外表压低" : "外表平稳，内部观察",
+            llmContext: moodArousal > 0.45 ? "她心里有波动，但会用短句和转移话题压住。" : "她没有明显被推高，可以自然但保留地回应。",
+          },
+        },
       },
     },
     stateDelta: {

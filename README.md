@@ -40,3 +40,5 @@ npm run dev
 当前 LLM 默认为 mock adapter，只用于没有真实 API 时演示流程。正式架构中，每个认知步骤都必须调用 LLM：Appraisal、Memory Recall、Decision、State Update 都是独立的 LLM 模块。
 
 角色回复这一步是例外中的硬规则：Reply LLM 只接收自然语言上下文，只生成角色说出口的话，不混入 JSON、字段名、输出约束或类似编程语言的内容。结构化状态更新由后续 State Update LLM 模块单独判断。
+
+左侧简化指标只用于人快速观察。性格标签、Energy、Mood、Valence、Arousal 等显示值不是提交给 LLM 的驱动材料；Reply LLM 使用的是人物档案、状态考量和场景语境的自然语言综合描述。Dossier 和 Scene 生成先产出预览，确认后再应用。

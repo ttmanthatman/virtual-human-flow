@@ -52,14 +52,25 @@ export function generateNaturalPromptRequest(
       : "刚才没有太多直接上下文。";
 
   const responseModeNarrative = describeResponseMode(decision.responseMode);
+  const personalityNarrative = [
+    state.profile.personalitySummary,
+    ...state.profile.personalityFacets.map((facet) => `她的「${facet.label}」表现为：${facet.summary}${facet.tension ? ` ${facet.tension}` : ""} ${facet.expression}`),
+  ].join(" ");
+  const runtimeNarrative = Object.values(state.runtime.signalProfiles)
+    .map((signal) => `${signal.label}：${signal.llmContext}`)
+    .join(" ");
+  const sceneNarrative = state.scene
+    ? `${state.scene.title}：${state.scene.llmContext} ${state.scene.sensoryProfile} ${state.scene.interactionPressure}`
+    : "当前没有明确场景，按普通私聊处理。";
 
   const prompt = [
     `你现在只负责替 ${state.profile.name} 说出这一刻会说的话，以及她没有说出口的心理余波。`,
     `${state.profile.name} 的稳定背景是：${state.profile.background}`,
+    `她的性格不是几个标签，而是这些经历和倾向综合出来的：${personalityNarrative}`,
     `她平常说话的方式是：${state.profile.speakingStyle}`,
     `她在关系里的边界是：${state.profile.boundaries.join("；")}`,
-    `此刻的场景是「${state.scene?.title ?? "未设置"}」：${state.scene?.description ?? "没有额外场景描述"}。氛围是：${state.scene?.atmosphere ?? "普通对话氛围"}。`,
-    `她现在的整体状态像是：${state.runtime.derivedMood.label}。注意，这只是表层气氛，真正影响她反应的是刚被碰到的心事和她与说话者的关系。`,
+    `此刻的场景语境是：${sceneNarrative}`,
+    `界面上的能量、心情、情绪方向和唤起程度只是给人看的摘要，不要把分数当作她的思考。真正驱动她的是这些自然语言状态：${runtimeNarrative}`,
     `${event.speakerName ?? "对方"}刚刚对她说：「${event.content}」`,
     concernNarrative,
     relationshipNarrative,

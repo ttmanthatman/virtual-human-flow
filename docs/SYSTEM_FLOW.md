@@ -10,6 +10,8 @@
 
 认知模块是另一类 LLM 调用。Appraisal、Memory Recall、Decision、State Update 都是独立的脑区式 LLM 模块；它们可以用结构化输入/输出约束，因为它们不是角色台词生成器，而是系统内部的判断模块。
 
+左侧 UI 里的性格标签、Energy、Mood、Valence、Arousal 是给人快速观察的摘要，不是 LLM 驱动材料。提交给 Reply LLM 的是 `personalitySummary`、`personalityFacets`、`runtime.signalProfiles`、`scene.llmContext` 等自然语言综合描述。
+
 ## 总体工作流
 
 ```mermaid
@@ -65,6 +67,21 @@ flowchart TD
     W --> T[Pipeline Trace 面板显示每个 LLM 模块]
 ```
 
+## 生成预览路径
+
+```mermaid
+flowchart TD
+    A[用户输入人物或场景描述] --> B[Generate Preview]
+    B --> C{预览类型}
+    C -- Dossier --> D[补齐 personalitySummary/personalityFacets/concerns/runtimeSignalProfiles]
+    C -- Scene --> E[补齐 sensoryProfile/interactionPressure/llmContext]
+    D --> F[左侧显示预览]
+    E --> F
+    F --> G{用户是否应用}
+    G -- 是 --> H[写入当前角色状态或场景]
+    G -- 否 --> I[保留原状态]
+```
+
 ## 当前 UI 结构
 
 ```mermaid
@@ -107,7 +124,9 @@ flowchart LR
 | 系统流程 | initialized | 已建立初始工作流图 |
 | MVP 业务模块 | initialized | 已实现本地可运行的三栏工作台 |
 | 人物档案生成 | initialized | 基于描述生成 profile 和 concerns，目前为规则版 |
+| 人物档案预览 | initialized | 先显示 Dossier 预览，用户确认后应用 |
 | 场景生成 | initialized | 基于描述生成 scene，目前为规则版 |
+| 场景预览 | initialized | 先显示 Scene 预览，用户确认后应用 |
 | 同步对话路径 | initialized | Event -> Appraisal LLM -> Memory LLM -> Decision LLM -> Reply Prompt -> Reply Output -> State Update LLM -> State Delta |
 | 真实 LLM 接入 | pending | 当前为 mock adapter；正式运行需要后端代理和 API Key，每个认知模块都应调用 LLM |
 | 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现 |

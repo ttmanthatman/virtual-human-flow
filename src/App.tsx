@@ -4,7 +4,9 @@ import {
   Brain,
   Braces,
   ChevronsRight,
+  Check,
   Database,
+  Eye,
   FileText,
   MessageSquare,
   Network,
@@ -37,6 +39,8 @@ export function App() {
   const [input, setInput] = useState("周末一起去爬山吗？");
   const [dossierDescription, setDossierDescription] = useState("林安，27岁，自由插画师，刚结束一段关系，性格克制敏感，不喜欢直接表达脆弱。");
   const [sceneDescription, setSceneDescription] = useState("雨夜的私人工作室，窗外有雨，桌上放着未完成的画稿和一杯快冷掉的茶。");
+  const [dossierPreview, setDossierPreview] = useState<CharacterState | undefined>();
+  const [scenePreview, setScenePreview] = useState<CharacterState["scene"] | undefined>();
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(defaultLlmConfig);
   const [activeTrace, setActiveTrace] = useState<PipelineTrace | undefined>();
   const [activeStep, setActiveStep] = useState<keyof PipelineTrace>("event");
@@ -92,15 +96,31 @@ export function App() {
   }
 
   function handleGenerateDossier() {
-    const next = generateDossierFromDescription(dossierDescription, state);
-    setState(next);
+    const preview = generateDossierFromDescription(dossierDescription, state);
+    setDossierPreview(preview);
     setMessages((items) => [
       ...items,
       {
         id: makeId("msg"),
         speaker: "system",
         speakerName: "Dossier",
-        content: `已生成 ${next.profile.name} 的人物档案：${next.concerns.map((concern) => concern.title).join("、")}`,
+        content: `已生成 ${preview.profile.name} 的人物档案预览：${preview.concerns.map((concern) => concern.title).join("、")}`,
+        timestamp: nowIso(),
+      },
+    ]);
+  }
+
+  function handleApplyDossier() {
+    if (!dossierPreview) return;
+    setState(dossierPreview);
+    setDossierPreview(undefined);
+    setMessages((items) => [
+      ...items,
+      {
+        id: makeId("msg"),
+        speaker: "system",
+        speakerName: "Dossier",
+        content: `已应用 ${dossierPreview.profile.name} 的人物档案。`,
         timestamp: nowIso(),
       },
     ]);
@@ -108,14 +128,30 @@ export function App() {
 
   function handleGenerateScene() {
     const scene = generateSceneFromDescription(sceneDescription);
-    setState((current) => ({ ...current, scene }));
+    setScenePreview(scene);
     setMessages((items) => [
       ...items,
       {
         id: makeId("msg"),
         speaker: "system",
         speakerName: "Scene",
-        content: `已生成场景：${scene.title}。${scene.atmosphere}`,
+        content: `已生成场景预览：${scene.title}。${scene.atmosphere}`,
+        timestamp: nowIso(),
+      },
+    ]);
+  }
+
+  function handleApplyScene() {
+    if (!scenePreview) return;
+    setState((current) => ({ ...current, scene: scenePreview }));
+    setScenePreview(undefined);
+    setMessages((items) => [
+      ...items,
+      {
+        id: makeId("msg"),
+        speaker: "system",
+        speakerName: "Scene",
+        content: `已应用场景：${scenePreview.title}。`,
         timestamp: nowIso(),
       },
     ]);
@@ -127,6 +163,8 @@ export function App() {
     setActiveTrace(undefined);
     setActiveStep("event");
     setInput("周末一起去爬山吗？");
+    setDossierPreview(undefined);
+    setScenePreview(undefined);
   }
 
   return (
@@ -168,16 +206,28 @@ export function App() {
               <span>{state.profile.age} / {state.profile.personalityTraits.slice(0, 3).join("、")}</span>
             </div>
             <p>{state.profile.background}</p>
+            <details className="detail-disclosure">
+              <summary>性格由哪些特性综合而来</summary>
+              <p>{state.profile.personalitySummary}</p>
+              <div className="detail-list">
+                {state.profile.personalityFacets.map((facet) => (
+                  <div key={facet.label}>
+                    <strong>{facet.label}</strong>
+                    <span>{facet.summary}</span>
+                    <small>{facet.tension}</small>
+                    <small>{facet.expression}</small>
+                  </div>
+                ))}
+              </div>
+            </details>
           </div>
 
-          <MetricGrid
-            items={[
-              ["Energy", state.runtime.energy.toFixed(2)],
-              ["Mood", state.runtime.derivedMood.label],
-              ["Valence", state.runtime.derivedMood.valence.toFixed(2)],
-              ["Arousal", state.runtime.derivedMood.arousal.toFixed(2)],
-            ]}
-          />
+          <div className="metric-grid">
+            <RuntimeMetric label="Energy" value={state.runtime.energy.toFixed(2)} detail={state.runtime.signalProfiles.energy} />
+            <RuntimeMetric label="Mood" value={state.runtime.derivedMood.label} detail={state.runtime.signalProfiles.mood} />
+            <RuntimeMetric label="Valence" value={state.runtime.derivedMood.valence.toFixed(2)} detail={state.runtime.signalProfiles.valence} />
+            <RuntimeMetric label="Arousal" value={state.runtime.derivedMood.arousal.toFixed(2)} detail={state.runtime.signalProfiles.arousal} />
+          </div>
 
           <section className="subsection">
             <h2>Concerns</h2>
@@ -202,16 +252,18 @@ export function App() {
             <h2>Dossier</h2>
             <textarea value={dossierDescription} onChange={(event) => setDossierDescription(event.target.value)} />
             <button className="primary-button" type="button" onClick={handleGenerateDossier}>
-              <Sparkles size={16} /> Generate Dossier
+              <Eye size={16} /> Preview Dossier
             </button>
+            {dossierPreview ? <DossierPreviewCard preview={dossierPreview} onApply={handleApplyDossier} /> : null}
           </section>
 
           <section className="subsection">
             <h2>Scene</h2>
             <textarea value={sceneDescription} onChange={(event) => setSceneDescription(event.target.value)} />
             <button className="secondary-button" type="button" onClick={handleGenerateScene}>
-              <Sparkles size={16} /> Generate Scene
+              <Eye size={16} /> Preview Scene
             </button>
+            {scenePreview ? <ScenePreviewCard preview={scenePreview} onApply={handleApplyScene} /> : null}
           </section>
         </aside>
 
@@ -324,15 +376,52 @@ function PanelTitle({ icon: Icon, title }: { icon: typeof Activity; title: strin
   );
 }
 
-function MetricGrid({ items }: { items: [string, string][] }) {
+function RuntimeMetric({ label, value, detail }: { label: string; value: string; detail: CharacterState["runtime"]["signalProfiles"]["energy"] }) {
   return (
-    <div className="metric-grid">
-      {items.map(([label, value]) => (
-        <div className="metric" key={label}>
-          <span>{label}</span>
-          <strong>{value}</strong>
-        </div>
-      ))}
+    <details className="metric" title={detail.summary}>
+      <summary>
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </summary>
+      <p>{detail.summary}</p>
+      <ul>
+        {detail.considerations.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+      <small>{detail.llmContext}</small>
+    </details>
+  );
+}
+
+function DossierPreviewCard({ preview, onApply }: { preview: CharacterState; onApply: () => void }) {
+  return (
+    <div className="preview-card">
+      <div className="preview-head">
+        <strong>{preview.profile.name} 预览</strong>
+        <button type="button" onClick={onApply}>
+          <Check size={14} /> Apply
+        </button>
+      </div>
+      <p>{preview.profile.personalitySummary}</p>
+      <small>性格摘要：{preview.profile.personalityTraits.slice(0, 4).join("、")}</small>
+      <small>关切：{preview.concerns.map((concern) => concern.title).join("、")}</small>
+    </div>
+  );
+}
+
+function ScenePreviewCard({ preview, onApply }: { preview: NonNullable<CharacterState["scene"]>; onApply: () => void }) {
+  return (
+    <div className="preview-card">
+      <div className="preview-head">
+        <strong>{preview.title} 预览</strong>
+        <button type="button" onClick={onApply}>
+          <Check size={14} /> Apply
+        </button>
+      </div>
+      <p>{preview.llmContext}</p>
+      <small>{preview.sensoryProfile}</small>
+      <small>{preview.interactionPressure}</small>
     </div>
   );
 }

@@ -10,12 +10,31 @@ export type ResponseMode =
   | "delayed_reply"
   | "emotional_outburst";
 
+export type RuntimeSignalKey = "energy" | "mood" | "valence" | "arousal";
+
+export interface PersonalityFacet {
+  label: string;
+  summary: string;
+  evidence: string[];
+  tension: string;
+  expression: string;
+}
+
+export interface RuntimeSignalProfile {
+  label: string;
+  summary: string;
+  considerations: string[];
+  llmContext: string;
+}
+
 export interface CharacterProfile {
   id: string;
   name: string;
   age?: number;
   background: string;
   personalityTraits: string[];
+  personalitySummary: string;
+  personalityFacets: PersonalityFacet[];
   speakingStyle: string;
   values: string[];
   boundaries: string[];
@@ -81,6 +100,7 @@ export interface RuntimeState {
     arousal: number;
     label: string;
   };
+  signalProfiles: Record<RuntimeSignalKey, RuntimeSignalProfile>;
   activeConcernIds: string[];
   lastActiveAt: string;
 }
@@ -102,6 +122,9 @@ export interface SceneState {
   atmosphere: string;
   visibleCues: string[];
   activeObjects: string[];
+  sensoryProfile: string;
+  interactionPressure: string;
+  llmContext: string;
 }
 
 export interface EventInput {

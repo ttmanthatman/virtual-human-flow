@@ -209,6 +209,57 @@ select {
   margin: 10px 0 0;
 }
 
+.detail-disclosure {
+  margin-top: 10px;
+}
+
+.detail-disclosure summary,
+.metric summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.detail-disclosure summary::-webkit-details-marker,
+.metric summary::-webkit-details-marker {
+  display: none;
+}
+
+.detail-disclosure summary {
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.detail-list {
+  display: grid !important;
+  gap: 8px !important;
+  margin-top: 10px;
+}
+
+.detail-list div {
+  background: #fff;
+  border: 1px solid #dbe4e7;
+  border-radius: 7px;
+  display: grid !important;
+  gap: 4px !important;
+  justify-content: stretch !important;
+  padding: 9px;
+}
+
+.detail-list strong {
+  font-size: 12px;
+}
+
+.detail-list span,
+.detail-list small,
+.preview-card small,
+.metric small {
+  color: #66757d;
+  display: block;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .metric-grid {
   display: grid;
   gap: 8px;
@@ -221,11 +272,34 @@ select {
   padding: 10px;
 }
 
+.metric[open] {
+  grid-column: 1 / -1;
+}
+
+.metric summary {
+  min-height: 45px;
+}
+
 .metric strong {
   display: block;
   font-size: 13px;
   line-height: 1.35;
   margin-top: 7px;
+}
+
+.metric p {
+  color: #4d5c63;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 8px 0;
+}
+
+.metric ul {
+  color: #62727a;
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0 0 8px;
+  padding-left: 16px;
 }
 
 .subsection {
@@ -328,6 +402,47 @@ textarea {
   background: #e7f2f1;
   color: #0d5f58;
   padding: 10px;
+}
+
+.preview-card {
+  background: #f8fbfb;
+  border: 1px solid #cfe0e3;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.preview-head {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.preview-head strong {
+  font-size: 12px;
+}
+
+.preview-head button {
+  align-items: center;
+  background: #0f766e;
+  border: 0;
+  border-radius: 7px;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  font-weight: 760;
+  gap: 5px;
+  padding: 6px 8px;
+}
+
+.preview-card p {
+  color: #40515a;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
 }
 
 .scene-strip {
