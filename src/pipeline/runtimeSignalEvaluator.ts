@@ -174,6 +174,6 @@ function buildDeterministicRuntimeSignals(state: CharacterState, stateUpdatePlan
         cognitiveNarrative: "话题命中旧关系时，心跳和注意力会先起波动，外在仍维持低音量和短停顿。",
       },
     },
-    rationale: "模拟模式下用关切强度、情绪倾向、唤醒度和本轮状态写回生成观察信号。",
+    rationale: "本地兜底时用关切强度、情绪倾向、唤醒度和本轮状态写回生成观察信号。",
   };
 }

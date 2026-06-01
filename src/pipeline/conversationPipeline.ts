@@ -56,7 +56,7 @@ export async function runConversationPipeline({ content, state, llmConfig, onPro
   const llmOutput = await runLlm(llmRequest, llmConfig, { event, state, decision: decision.output }, (output) =>
     emit({ step: "llmOutput", status: "streaming", output }),
   );
-  emit({ step: "llmOutput", status: "completed", output: llmOutput.reply || "（林安看见了，但没有回复。）", transport: llmConfig.provider === "external" ? "external_llm" : "mock_llm" });
+  emit({ step: "llmOutput", status: "completed", output: llmOutput.reply || "（林安看见了，但没有回复。）", transport: "external_llm" });
 
   emit({ step: "stateUpdate", status: "running", input: "状态更新模块输入\n\n" + JSON.stringify({ event, replyOutput: llmOutput, appraisal: appraisal.output, memoryRecall: memoryRecall.output, decision: decision.output }, null, 2), output: "等待模型输出..." });
   const { nextState: stateAfterUpdate, stateDelta: deltaAfterUpdate, stateUpdate } = await applyStateUpdates(

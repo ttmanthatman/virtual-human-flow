@@ -57,7 +57,8 @@ export function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
-  const [deepseekStatus, setDeepseekStatus] = useState("DeepSeek 密钥尚未检查");
+  const [deepseekStatus, setDeepseekStatus] = useState("正在检查 DeepSeek 连接");
+  const [deepseekConnected, setDeepseekConnected] = useState(false);
 
   const selectedTraceData = liveTrace[activeStep] ?? buildCompletedTraceProgress(activeStep, activeTrace);
   const traceDisplay = formatTraceDisplay(selectedTraceData);
@@ -70,27 +71,24 @@ export function App() {
     fetch("/api/deepseek-config")
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error("无法读取 DeepSeek 配置"))))
       .then((config: { apiKeySaved: boolean; endpoint?: string; model?: string }) => {
-        setDeepseekStatus(config.apiKeySaved ? "DeepSeek 密钥已保存在项目根目录" : "DeepSeek 密钥尚未保存");
+        setDeepseekConnected(config.apiKeySaved);
+        setDeepseekStatus(config.apiKeySaved ? "DeepSeek 已连接" : "DeepSeek 密钥尚未保存");
         setLlmConfig((current) => ({
           ...current,
-          endpoint: current.endpoint || config.endpoint || "/api/deepseek-chat",
-          model: normalizeDeepseekModel(current.model === "local-mock-llm" && config.model ? config.model : current.model),
+          provider: "external",
+          endpoint: config.endpoint || "/api/deepseek-chat",
+          model: normalizeDeepseekModel(config.model || current.model || "deepseek-v4-flash"),
         }));
       })
-      .catch(() => setDeepseekStatus("DeepSeek 配置接口不可用"));
+      .catch(() => {
+        setDeepseekConnected(false);
+        setDeepseekStatus("DeepSeek 配置接口不可用");
+      });
   }, []);
-
-  function handleProviderChange(provider: LlmConfig["provider"]) {
-    setLlmConfig((current) => ({
-      ...current,
-      provider,
-      endpoint: provider === "external" ? current.endpoint || "/api/deepseek-chat" : current.endpoint,
-      model: provider === "external" ? normalizeDeepseekModel(current.model === "local-mock-llm" ? "deepseek-v4-flash" : current.model) : current.model,
-    }));
-  }
 
   async function handleSaveDeepseekConfig() {
     if (!deepseekApiKey.trim()) {
+      setDeepseekConnected(false);
       setDeepseekStatus("请输入 DeepSeek 密钥后再保存");
       return;
     }
@@ -101,28 +99,30 @@ export function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         apiKey: deepseekApiKey.trim(),
-        model: normalizeDeepseekModel(llmConfig.model),
-        endpoint: llmConfig.endpoint || "/api/deepseek-chat",
+        model: "deepseek-v4-flash",
+        endpoint: "/api/deepseek-chat",
       }),
     });
 
     if (!response.ok) {
+      setDeepseekConnected(false);
       setDeepseekStatus("DeepSeek 密钥保存失败");
       return;
     }
 
     setDeepseekApiKey("");
-    setDeepseekStatus("DeepSeek 密钥已保存在项目根目录");
-    setLlmConfig((current) => ({ ...current, provider: "external", endpoint: current.endpoint || "/api/deepseek-chat" }));
+    setDeepseekConnected(true);
+    setDeepseekStatus("DeepSeek 已连接");
+    setLlmConfig((current) => ({ ...current, provider: "external", model: "deepseek-v4-flash", endpoint: "/api/deepseek-chat" }));
   }
 
   async function handleTestDeepseekConfig() {
     setDeepseekStatus("正在测试 DeepSeek 连接...");
-    const response = await fetch(llmConfig.endpoint || "/api/deepseek-chat", {
+    const response = await fetch("/api/deepseek-chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: llmConfig.model || "deepseek-v4-flash",
+        model: "deepseek-v4-flash",
         moduleName: "reply_generation",
         inputMode: "natural_language",
         outputMode: "natural_language",
@@ -132,12 +132,14 @@ export function App() {
 
     if (!response.ok) {
       const detail = await response.text();
+      setDeepseekConnected(false);
       setDeepseekStatus(`DeepSeek 连接失败：${response.status} ${detail.slice(0, 80)}`);
       return;
     }
 
     const data = (await response.json()) as { reply?: string };
-    setDeepseekStatus(data.reply ? `DeepSeek 连接成功：${data.reply}` : "DeepSeek 连接成功");
+    setDeepseekConnected(true);
+    setDeepseekStatus(data.reply ? `DeepSeek 已连接：${data.reply}` : "DeepSeek 已连接");
   }
 
   async function handleSend(event: FormEvent) {
@@ -292,16 +294,13 @@ export function App() {
           </div>
         </div>
         <div className="topbar-actions">
-          <label className="provider-control">
-            <span>语言模型</span>
-            <select
-              value={llmConfig.provider}
-              onChange={(event) => handleProviderChange(event.target.value as LlmConfig["provider"])}
-            >
-              <option value="simulated">模拟语言模型</option>
-              <option value="external">外部接口</option>
-            </select>
-          </label>
+          <div className={deepseekConnected ? "connection-pill connected" : "connection-pill"}>
+            <Check size={15} />
+            <div>
+              <strong>{deepseekConnected ? "DeepSeek 已连接" : "DeepSeek 未连接"}</strong>
+              <span>deepseek-v4-flash · 思考关闭</span>
+            </div>
+          </div>
           <button className="icon-button" type="button" onClick={handleReset} title="重置">
             <RefreshCcw size={17} />
           </button>
@@ -437,39 +436,34 @@ export function App() {
           <div className="llm-settings">
             <label>
               <span>模型</span>
-              <input value={llmConfig.model} onChange={(event) => setLlmConfig((current) => ({ ...current, model: event.target.value }))} />
+              <input value="deepseek-v4-flash" readOnly />
             </label>
             <label>
               <span>接口地址</span>
               <input
-                value={llmConfig.endpoint}
-                onChange={(event) => setLlmConfig((current) => ({ ...current, endpoint: event.target.value }))}
-                placeholder="https://your-model-endpoint"
+                value="/api/deepseek-chat"
+                readOnly
               />
             </label>
-            {llmConfig.provider === "external" ? (
-              <>
-                <label>
-                  <span>DeepSeek 密钥</span>
-                  <input
-                    value={deepseekApiKey}
-                    onChange={(event) => setDeepseekApiKey(event.target.value)}
-                    placeholder="输入后保存到项目根目录"
-                    type="password"
-                  />
-                </label>
-                <div className="llm-key-actions">
-                  <button className="secondary-button" type="button" onClick={handleSaveDeepseekConfig}>
-                    保存密钥
-                  </button>
-                  <button className="secondary-button" type="button" onClick={handleTestDeepseekConfig}>
-                    测试连接
-                  </button>
-                </div>
-                <small>{deepseekStatus}</small>
-                <small>思考模式：已强制关闭；`deepseek-reasoner` 会被替换为 `deepseek-v4-flash`。</small>
-              </>
-            ) : null}
+            <label>
+              <span>DeepSeek 密钥</span>
+              <input
+                value={deepseekApiKey}
+                onChange={(event) => setDeepseekApiKey(event.target.value)}
+                placeholder={deepseekConnected ? "已保存，可输入新密钥覆盖" : "输入后保存到项目根目录"}
+                type="password"
+              />
+            </label>
+            <div className="llm-key-actions">
+              <button className="secondary-button" type="button" onClick={handleSaveDeepseekConfig}>
+                保存密钥
+              </button>
+              <button className="secondary-button" type="button" onClick={handleTestDeepseekConfig}>
+                测试连接
+              </button>
+            </div>
+            <small>{deepseekStatus}</small>
+            <small>思考模式：代理层按 DeepSeek 文档强制发送 disabled；测试只走真实 DeepSeek。</small>
           </div>
 
           <div className="json-view">
@@ -538,7 +532,7 @@ function buildCompletedTraceProgress(step: keyof PipelineTrace, trace: PipelineT
       status: "completed",
       input: trace.llmRequest.prompt,
       output: trace.llmOutput.reply || "（林安看见了，但没有回复。）",
-      transport: trace.llmRequest.provider === "external" ? "external_llm" : "mock_llm",
+      transport: "external_llm",
     };
   }
 

@@ -48,7 +48,7 @@ textarea {
 .primary-button,
 .secondary-button,
 .icon-button,
-.provider-control {
+.connection-pill {
   align-items: center;
   display: flex;
 }
@@ -90,21 +90,44 @@ textarea {
   gap: 10px;
 }
 
-.provider-control {
+.connection-pill {
   background: #fff;
   border: 1px solid #d9e1e4;
   border-radius: 8px;
-  gap: 8px;
-  padding: 8px 10px;
+  color: #56666f;
+  gap: 9px;
+  min-width: 178px;
+  padding: 7px 10px;
 }
 
-.provider-control span,
+.connection-pill.connected {
+  border-color: rgba(15, 118, 110, 0.28);
+  color: #0f766e;
+}
+
+.connection-pill div {
+  display: grid;
+  gap: 1px;
+}
+
+.connection-pill strong {
+  color: #172026;
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.15;
+}
+
+.connection-pill span,
 .llm-settings span,
 .metric span {
   color: #66757d;
   font-size: 11px;
   font-weight: 680;
   text-transform: uppercase;
+}
+
+.connection-pill span {
+  text-transform: none;
 }
 
 select,
@@ -711,7 +734,7 @@ pre {
     flex-shrink: 0;
   }
 
-  .provider-control {
+  .connection-pill {
     padding: 7px 8px;
   }
 

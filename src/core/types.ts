@@ -208,7 +208,7 @@ export interface PipelineStepProgress {
 }
 
 export interface ExpressionLlmRequest {
-  provider: "simulated" | "external";
+  provider: "external";
   model: string;
   prompt: string;
 }
@@ -274,7 +274,7 @@ export interface ChatMessage {
 }
 
 export interface LlmConfig {
-  provider: "simulated" | "external";
+  provider: "external";
   model: string;
   endpoint: string;
 }

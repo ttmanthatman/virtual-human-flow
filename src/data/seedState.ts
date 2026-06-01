@@ -175,7 +175,7 @@ export const seedMessages: ChatMessage[] = [
 ];
 
 export const defaultLlmConfig: LlmConfig = {
-  provider: "simulated",
-  model: "local-mock-llm",
-  endpoint: "",
+  provider: "external",
+  model: "deepseek-v4-flash",
+  endpoint: "/api/deepseek-chat",
 };

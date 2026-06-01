@@ -40,7 +40,7 @@
 | 记忆 | 短期原文 + 长期摘要 | 先做可观察闭环，不急着引入向量库 |
 | 情绪 | `concern` + `relationship` + `derivedMood` | 避免把心理状态压成一个数字 |
 | 主动性 | 暂未实现异步后台 | 先完成同步响应路径 |
-| LLM | mock adapter + external endpoint 输入框 | 没有 API Key 和后端前，先保证数据流可见；正式判断逻辑必须走 LLM |
+| LLM | DeepSeek 本地代理 + `deepseek-v4-flash` | 用户要求一切测试来真的，UI 不再暴露模拟模型选项 |
 | UI | 三栏工作台 | 用户需要直观看到状态、聊天和 pipeline |
 
 ## 2026-06-01 Prompt Generator 修正
@@ -53,7 +53,7 @@
 - Appraisal、Memory Recall、Decision、State Update 都是独立认知模块，正式架构下每一步都调用 LLM。
 - 新增 `Prompt Generator` 概念，把认知模块输出翻译成自然语言回复上下文。
 - State Update LLM 在回复生成之后单独判断结构化状态变化。
-- 当前无真实 API 时使用 mock adapter 让界面可跑；它只是占位，不代表正式判断逻辑。
+- 当前 UI 固定走真实 DeepSeek，本地兜底只保留在内部函数层用于极端开发故障，不作为用户可选模式或验收路径。
 
 ## 2026-06-01 属性叙述与回复指令分离
 

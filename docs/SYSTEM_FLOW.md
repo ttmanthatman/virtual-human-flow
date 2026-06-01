@@ -14,7 +14,7 @@
 
 人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。Reply Prompt 的作用是把这些自然语言材料过一遍，让回复从人物整体状态中长出来，而不是让某个单独指标指挥台词风格。
 
-DeepSeek 接入必须关闭思考模式。代理层对所有 DeepSeek Chat Completions 请求显式传入 `thinking: { type: "disabled" }`，不发送 `reasoning_effort`，并把 `deepseek-reasoner` 纠正为 `deepseek-v4-flash`。
+DeepSeek 接入必须关闭思考模式。应用固定使用真实 DeepSeek 本地代理和 `deepseek-v4-flash`，不再暴露模拟语言模型选项。代理层对所有 DeepSeek Chat Completions 请求显式传入 `thinking: { type: "disabled" }`，不发送 `reasoning_effort`，并把 `deepseek-reasoner` 纠正为 `deepseek-v4-flash`。
 
 流程追踪面板不是事后 dump。每个模块开始时会自动切换到当前步骤，并显示该模块的输入、流式输出和状态。每个步骤都必须让用户能分清“发给模块的输入”和“模块返回的输出”。
 
@@ -66,7 +66,7 @@ flowchart TD
     A --> M[记忆召回模块: 判断哪些记忆浮现]
     M --> D[回应决策模块: 判断是否回应和回应姿态]
     D --> P[Prompt Generator: 生成自然语言回复上下文]
-    P --> R[Reply LLM: 只生成角色台词]
+    P --> R[DeepSeek Flash Reply LLM: 只生成角色台词]
     R --> S[状态更新模块: 判断状态和记忆变化]
     S --> G[信号评估模块: 评估能量/情绪/情绪倾向/唤醒度]
     G --> W[确定性写回: clamp/append/commit]
@@ -141,6 +141,6 @@ flowchart LR
 | 场景生成 | initialized | 基于描述生成 scene，目前为规则版 |
 | 场景预览 | initialized | 先显示场景预览，用户确认后应用 |
 | 同步对话路径 | initialized | 事件 -> 评估 -> 记忆召回 -> 回应决策 -> 回应提示词 -> 回应输出 -> 状态更新 -> 信号评估 -> 状态变化 |
-| 真实 LLM 接入 | initialized | 当前支持本地 DeepSeek 代理、根目录密钥文件、关闭思考模式和流式输出；没有密钥时回到 mock adapter |
+| 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |
 | 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现 |

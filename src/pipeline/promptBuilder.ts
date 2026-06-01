@@ -6,7 +6,7 @@ export function generateNaturalPromptRequest(
   appraisal: AppraisalResult,
   memoryRecall: MemoryRecallResult,
   decision: ResponseDecision,
-  provider: "simulated" | "external",
+  provider: "external",
   model: string,
 ): ExpressionLlmRequest {
   const activatedConcerns = appraisal.activatedConcerns
