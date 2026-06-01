@@ -29,6 +29,15 @@ npm run dev
 
 打开 `http://127.0.0.1:5173/`。
 
+## 生产运行
+
+```bash
+npm run build
+npm run start
+```
+
+生产服务由 `server.mjs` 提供：它负责服务 `dist/` 前端文件，并继续提供 `/api/deepseek-config` 和 `/api/deepseek-chat`，避免部署后丢失 DeepSeek 代理能力。
+
 ## 当前 MVP
 
 当前版本是一个本地可运行的三栏工作台：
@@ -46,3 +55,12 @@ npm run dev
 DeepSeek 本地测试通过 Vite 代理 `/api/deepseek-chat` 访问官方 Chat Completions 接口。前端保存的密钥写入项目根目录 `.deepseek.local.json`，该文件已加入 `.gitignore`。代理层固定使用 `deepseek-v4-flash`，强制 `thinking: { type: "disabled" }`，并把 `deepseek-reasoner` 纠正为 `deepseek-v4-flash`，避免打开思考模式。
 
 流程追踪面板会在每个模块开始时自动切换到当前模块，并分区显示输入、输出和状态。外部 DeepSeek 调用使用流式返回，输出到达时会逐步更新。
+
+## 当前部署
+
+- 域名：`https://ok.xiaogushi.us`
+- VPS：只操作 `ok.xiaogushi.us` 对应目录、nginx 配置和 PM2 进程。
+- 线上目录：`/var/www/ok.xiaogushi.us/app`
+- 线上进程：PM2 `ok-xiaogushi-us`，监听 `127.0.0.1:4174`
+- 反代配置：`/etc/nginx/sites-available/ok.xiaogushi.us.conf`
+- 本轮部署前备份：`/root/ok.xiaogushi.us-backups/20260601103603`

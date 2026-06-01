@@ -59,6 +59,7 @@
 | Conversation Pipeline | `src/pipeline/conversationPipeline.ts` | 串联一轮同步响应路径 | content, state, llmConfig | next state, trace | App Shell | pipeline steps |
 | Generators | `src/pipeline/generators.ts` | 根据描述一键生成人物档案和场景 | 描述文本 | `CharacterState` 或 `SceneState` | App Shell | Core Types |
 | DeepSeek Local Proxy | `vite.config.ts` | 在本地开发服务器中代理 DeepSeek Chat Completions，固定 flash 模型、关闭 thinking 并保存根目录密钥文件 | `/api/deepseek-config`, `/api/deepseek-chat` | DeepSeek 响应或配置状态 | App Shell | DeepSeek API |
+| Production Server | `server.mjs` | 生产环境服务 `dist/` 并提供 DeepSeek API 代理 | HTTP request, `.deepseek.local.json` | HTML/assets/API/SSE | nginx reverse proxy | DeepSeek API |
 
 ## 函数登记表
 
@@ -85,6 +86,7 @@
 | `fetchDeepseek` | `vite.config.ts` | 组装 DeepSeek Chat Completions 请求，强制关闭 thinking | body, config, apiKey, stream | Response | 调用 DeepSeek API | implemented |
 | `normalizeDeepseekModel` | `vite.config.ts` / `src/App.tsx` | 避免使用 `deepseek-reasoner`，改为非思考模型 | model | model | 无 | implemented |
 | `sendSse` | `vite.config.ts` | 写出本地 SSE data 事件 | response, data | void | 写 HTTP response | implemented |
+| `serveStatic` | `server.mjs` | 生产环境返回 `dist/` 静态文件并支持 SPA fallback | pathname, method, response | HTML/assets | 读取 dist | implemented |
 
 ## 数据字段登记表
 
@@ -120,6 +122,7 @@
 | `/api/deepseek-config` | GET | 返回本地 DeepSeek 密钥是否已保存、默认 endpoint 和 `deepseek-v4-flash` 模型 | 不返回密钥明文 | implemented |
 | `/api/deepseek-config` | POST | 将 DeepSeek 密钥保存到项目根目录 `.deepseek.local.json`，模型固定为 `deepseek-v4-flash` | 文件必须被 `.gitignore` 忽略 | implemented |
 | `/api/deepseek-chat` | POST | 本地代理 DeepSeek Chat Completions，避免浏览器直接携带密钥请求外网；支持 SSE 流式返回 | 从 `.deepseek.local.json` 或 `DEEPSEEK_API_KEY` 读取密钥；强制关闭 thinking 并纠正 reasoner 模型 | implemented |
+| `/health` | GET | 线上 nginx 健康检查 | 只返回 OK | implemented |
 
 ## 外部服务登记表
 
@@ -127,5 +130,7 @@
 | --- | --- | --- | --- | --- |
 | GitHub | `github` | 代码远程同步和版本回溯 | 本机 GitHub CLI 或 GitHub 连接器 | 需要确认仓库名和可见性 |
 | VPS | `productionVps` | MVP 部署 | 不写入仓库 | 只允许操作 `ok.xiaogushi.us` |
+| PM2 进程 | `okXiaogushiUsPm2Process` | 运行线上 Node 生产服务 | root 用户 PM2，仅新增 `ok-xiaogushi-us` | 不触碰其他 PM2 应用 |
+| Nginx 站点 | `okXiaogushiUsNginxSite` | 将 `ok.xiaogushi.us` 反代到 `127.0.0.1:4174` | `/etc/nginx/sites-available/ok.xiaogushi.us.conf` | 只修改该域名配置 |
 | DeepSeek API | `deepseekApi` | 本地真实 LLM 测试，驱动认知模块和 Reply LLM | `.deepseek.local.json` 或 `DEEPSEEK_API_KEY`，不进 git | 通过 Vite 本地代理调用；固定 `deepseek-v4-flash` 并强制 `thinking.disabled` |
 | 外部 LLM Endpoint | `externalLlmEndpoint` | DeepSeek 本地代理入口 | 不在前端保存密钥；由 Vite 代理读取本地密钥 | 当前由 `/api/deepseek-chat` 承担本地代理，不作为 UI 可选模拟模式 |

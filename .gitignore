@@ -5,6 +5,7 @@ tmp/
 .env
 .env.local
 .deepseek.local.json
+.vps.local.json
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts

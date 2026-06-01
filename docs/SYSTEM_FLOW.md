@@ -57,6 +57,20 @@ flowchart LR
     GH --> VPS[ok.xiaogushi.us 部署]
 ```
 
+## 生产部署路径
+
+```mermaid
+flowchart TD
+    B[本地 npm run build] --> D[生成 dist]
+    D --> S[上传到 /var/www/ok.xiaogushi.us/app]
+    S --> N[server.mjs: 服务前端和 DeepSeek API]
+    N --> P[PM2 ok-xiaogushi-us: 127.0.0.1:4174]
+    P --> X[Nginx ok.xiaogushi.us.conf]
+    X --> U[https://ok.xiaogushi.us]
+    N --> K[.deepseek.local.json: 线上本地密钥文件]
+    N --> A[DeepSeek API]
+```
+
 ## 当前 MVP 同步响应路径
 
 ```mermaid
@@ -143,4 +157,11 @@ flowchart LR
 | 同步对话路径 | initialized | 事件 -> 评估 -> 记忆召回 -> 回应决策 -> 回应提示词 -> 回应输出 -> 状态更新 -> 信号评估 -> 状态变化 |
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |
+| 生产部署 | initialized | `ok.xiaogushi.us` 通过 nginx 反代 PM2 进程 `ok-xiaogushi-us`，线上目录 `/var/www/ok.xiaogushi.us/app` |
 | 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现 |
+
+## 部署记录
+
+| 时间 | 提交/版本 | 域名 | 目录 | 进程 | 备份 | 验证 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-06-01 | `2a4b378` 后续生产服务补丁 | `https://ok.xiaogushi.us` | `/var/www/ok.xiaogushi.us/app` | PM2 `ok-xiaogushi-us` | `/root/ok.xiaogushi.us-backups/20260601103603` | HTTPS 首页、`/api/deepseek-config`、DeepSeek SSE、浏览器完整对话链路通过 |
