@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-当前已建立第一版本地 MVP：三栏工作台展示人物状态、聊天室和 pipeline debug。系统能一键根据描述生成人物档案，一键生成场景，并在发送消息后展示多模块 LLM 数据流。
+当前已建立第一版本地 MVP：三栏工作台展示人物状态、聊天室和流程追踪。系统能一键根据描述生成人物档案，一键生成场景，并在发送消息后展示多模块 LLM 数据流。
 
 重要约束：Reply LLM 只接收自然语言上下文，只生成角色说出口的话。不能把 JSON、字段名、输出契约、工程术语或类似编程语言的内容混进这一步。
 
@@ -13,6 +13,10 @@
 左侧 UI 里的性格标签、能量、情绪、情绪倾向、唤醒度是给人快速观察的摘要。它们由专门的 Runtime Signal Evaluation LLM 模块评估，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `personalitySummary`、`personalityFacets`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative` 等自然语言综合描述。
 
 人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。Reply Prompt 的作用是把这些自然语言材料过一遍，让回复从人物整体状态中长出来，而不是让某个单独指标指挥台词风格。
+
+DeepSeek 接入必须关闭思考模式。代理层对所有 DeepSeek Chat Completions 请求显式传入 `thinking: { type: "disabled" }`，不发送 `reasoning_effort`，并把 `deepseek-reasoner` 纠正为 `deepseek-v4-flash`。
+
+流程追踪面板不是事后 dump。每个模块开始时会自动切换到当前步骤，并显示该模块的输入、流式输出和状态。每个步骤都必须让用户能分清“发给模块的输入”和“模块返回的输出”。
 
 ## 总体工作流
 
@@ -67,7 +71,13 @@ flowchart TD
     S --> G[信号评估模块: 评估能量/情绪/情绪倾向/唤醒度]
     G --> W[确定性写回: clamp/append/commit]
     W --> C[聊天室显示回复]
-    W --> T[流程追踪面板显示每个 LLM 模块]
+    W --> T[流程追踪面板显示每个模块输入/输出/状态]
+    A -. 流式输出 .-> T
+    M -. 流式输出 .-> T
+    D -. 流式输出 .-> T
+    R -. 流式输出 .-> T
+    S -. 流式输出 .-> T
+    G -. 流式输出 .-> T
 ```
 
 ## 生成预览路径
@@ -131,5 +141,6 @@ flowchart LR
 | 场景生成 | initialized | 基于描述生成 scene，目前为规则版 |
 | 场景预览 | initialized | 先显示场景预览，用户确认后应用 |
 | 同步对话路径 | initialized | 事件 -> 评估 -> 记忆召回 -> 回应决策 -> 回应提示词 -> 回应输出 -> 状态更新 -> 信号评估 -> 状态变化 |
-| 真实 LLM 接入 | initialized | 当前支持本地 DeepSeek 代理和根目录密钥文件；没有密钥时回到 mock adapter |
+| 真实 LLM 接入 | initialized | 当前支持本地 DeepSeek 代理、根目录密钥文件、关闭思考模式和流式输出；没有密钥时回到 mock adapter |
+| 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |
 | 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现 |

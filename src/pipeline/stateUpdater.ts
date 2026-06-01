@@ -23,8 +23,9 @@ export async function applyStateUpdates(
     decision: ResponseDecision;
   },
   llmConfig: LlmConfig,
+  onStream?: (output: string) => void,
 ): Promise<{ nextState: CharacterState; stateDelta: StateDelta; stateUpdate: CognitiveModuleTrace<StateUpdatePlan> }> {
-  const stateUpdate = await planStateUpdates(state, event, replyOutput, context, llmConfig);
+  const stateUpdate = await planStateUpdates(state, event, replyOutput, context, llmConfig, onStream);
   const { nextState, stateDelta } = commitStateUpdates(state, event, replyOutput, stateUpdate.output);
   return { nextState, stateDelta, stateUpdate };
 }
@@ -39,6 +40,7 @@ async function planStateUpdates(
     decision: ResponseDecision;
   },
   llmConfig: LlmConfig,
+  onStream?: (output: string) => void,
 ) {
   const activeConcern = state.concerns.find((concern) => concern.status === "active" && concern.triggers.some((trigger) => event.content.includes(trigger)));
   const targetId = event.speakerId ?? "user_b";
@@ -86,6 +88,7 @@ async function planStateUpdates(
     },
     llmConfig,
     mockOutput,
+    { onStream },
   );
 }
 

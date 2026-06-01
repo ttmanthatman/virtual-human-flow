@@ -16,7 +16,7 @@ import {
   Sparkles,
   UserRound,
 } from "lucide-react";
-import { ChatMessage, CharacterState, ExpressionLlmRequest, LlmConfig, PipelineTrace, ReplyOutput } from "./core/types";
+import { ChatMessage, CharacterState, LlmConfig, PipelineStepProgress, PipelineTrace } from "./core/types";
 import { makeId, nowIso } from "./core/utils";
 import { defaultLlmConfig, seedMessages, seedState } from "./data/seedState";
 import { runConversationPipeline } from "./pipeline/conversationPipeline";
@@ -40,6 +40,8 @@ const concernStatusLabels = {
   resolved: "已解决",
 };
 
+type TraceDisplayState = Partial<Record<keyof PipelineTrace, PipelineStepProgress>>;
+
 export function App() {
   const [state, setState] = useState<CharacterState>(seedState);
   const [messages, setMessages] = useState<ChatMessage[]>(seedMessages);
@@ -50,14 +52,15 @@ export function App() {
   const [scenePreview, setScenePreview] = useState<CharacterState["scene"] | undefined>();
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(defaultLlmConfig);
   const [activeTrace, setActiveTrace] = useState<PipelineTrace | undefined>();
+  const [liveTrace, setLiveTrace] = useState<TraceDisplayState>({});
   const [activeStep, setActiveStep] = useState<keyof PipelineTrace>("event");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
   const [deepseekStatus, setDeepseekStatus] = useState("DeepSeek 密钥尚未检查");
 
-  const selectedTraceData = activeTrace ? activeTrace[activeStep] : undefined;
-  const traceDisplay = formatTraceDisplay(activeStep, selectedTraceData);
+  const selectedTraceData = liveTrace[activeStep] ?? buildCompletedTraceProgress(activeStep, activeTrace);
+  const traceDisplay = formatTraceDisplay(selectedTraceData);
   const activeConcernTitles = useMemo(
     () => state.concerns.filter((concern) => state.runtime.activeConcernIds.includes(concern.id)).map((concern) => concern.title),
     [state.concerns, state.runtime.activeConcernIds],
@@ -71,7 +74,7 @@ export function App() {
         setLlmConfig((current) => ({
           ...current,
           endpoint: current.endpoint || config.endpoint || "/api/deepseek-chat",
-          model: current.model === "local-mock-llm" && config.model ? config.model : current.model,
+          model: normalizeDeepseekModel(current.model === "local-mock-llm" && config.model ? config.model : current.model),
         }));
       })
       .catch(() => setDeepseekStatus("DeepSeek 配置接口不可用"));
@@ -82,7 +85,7 @@ export function App() {
       ...current,
       provider,
       endpoint: provider === "external" ? current.endpoint || "/api/deepseek-chat" : current.endpoint,
-      model: provider === "external" && current.model === "local-mock-llm" ? "deepseek-v4-flash" : current.model,
+      model: provider === "external" ? normalizeDeepseekModel(current.model === "local-mock-llm" ? "deepseek-v4-flash" : current.model) : current.model,
     }));
   }
 
@@ -98,7 +101,7 @@ export function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         apiKey: deepseekApiKey.trim(),
-        model: llmConfig.model,
+        model: normalizeDeepseekModel(llmConfig.model),
         endpoint: llmConfig.endpoint || "/api/deepseek-chat",
       }),
     });
@@ -142,6 +145,8 @@ export function App() {
     if (!input.trim() || isRunning) return;
     setIsRunning(true);
     setError("");
+    setActiveTrace(undefined);
+    setLiveTrace({});
 
     const userMessage: ChatMessage = {
       id: makeId("msg"),
@@ -153,10 +158,23 @@ export function App() {
     setMessages((items) => [...items, userMessage]);
 
     try {
-      const result = await runConversationPipeline({ content: input.trim(), state, llmConfig });
+      const result = await runConversationPipeline({
+        content: input.trim(),
+        state,
+        llmConfig,
+        onProgress: (progress) => {
+          setActiveStep(progress.step);
+          setLiveTrace((current) => ({
+            ...current,
+            [progress.step]: {
+              ...current[progress.step],
+              ...progress,
+            },
+          }));
+        },
+      });
       setState(result.nextState);
       setActiveTrace(result.trace);
-      setActiveStep("event");
 
       const reply = result.trace.llmOutput.reply || "（林安看见了，但没有回复。）";
       setMessages((items) => [
@@ -172,7 +190,17 @@ export function App() {
       ]);
       setInput("");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "流程运行失败");
+      const message = caught instanceof Error ? caught.message : "流程运行失败";
+      setError(message);
+      setLiveTrace((current) => ({
+        ...current,
+        [activeStep]: {
+          ...current[activeStep],
+          step: activeStep,
+          status: "failed",
+          error: message,
+        },
+      }));
     } finally {
       setIsRunning(false);
     }
@@ -244,6 +272,7 @@ export function App() {
     setState(seedState);
     setMessages(seedMessages);
     setActiveTrace(undefined);
+    setLiveTrace({});
     setActiveStep("event");
     setInput("周末一起去爬山吗？");
     setDossierPreview(undefined);
@@ -395,10 +424,11 @@ export function App() {
                   key={step.key}
                   type="button"
                   onClick={() => setActiveStep(step.key)}
-                  disabled={!activeTrace}
+                  disabled={!activeTrace && !liveTrace[step.key]}
                 >
                   <Icon size={15} />
                   <span>{step.label}</span>
+                  <small>{traceStatusLabel(liveTrace[step.key]?.status ?? (activeTrace ? "completed" : "pending"))}</small>
                 </button>
               );
             })}
@@ -437,6 +467,7 @@ export function App() {
                   </button>
                 </div>
                 <small>{deepseekStatus}</small>
+                <small>思考模式：已强制关闭；`deepseek-reasoner` 会被替换为 `deepseek-v4-flash`。</small>
               </>
             ) : null}
           </div>
@@ -444,9 +475,9 @@ export function App() {
           <div className="json-view">
             <div className="json-head">
               <strong>{traceSteps.find((step) => step.key === activeStep)?.label ?? "追踪"}</strong>
-              <span>{activeTrace ? "实时" : "等待中"}</span>
+              <span>{selectedTraceData ? traceStatusLabel(selectedTraceData.status) : "等待中"}</span>
             </div>
-            <pre>{traceDisplay}</pre>
+            {traceDisplay}
           </div>
         </aside>
       </section>
@@ -454,22 +485,100 @@ export function App() {
   );
 }
 
-function formatTraceDisplay(activeStep: keyof PipelineTrace, selectedTraceData: PipelineTrace[keyof PipelineTrace] | undefined) {
-  if (!selectedTraceData) {
-    return JSON.stringify({ hint: "发送一条消息后，这里显示每一步调用数据。" }, null, 2);
+function formatTraceDisplay(progress: PipelineStepProgress | undefined) {
+  if (!progress) {
+    return <pre>{JSON.stringify({ hint: "发送一条消息后，这里显示每一步的输入、输出和状态。" }, null, 2)}</pre>;
   }
 
-  if (activeStep === "llmRequest") {
-    const request = selectedTraceData as ExpressionLlmRequest;
-    return request.prompt;
+  return (
+    <div className="trace-io">
+      <section>
+        <h3>输入</h3>
+        <pre>{progress.input || "暂无输入"}</pre>
+      </section>
+      <section>
+        <h3>输出</h3>
+        <pre>{progress.error ? `错误：${progress.error}` : progress.output || "等待输出..."}</pre>
+      </section>
+      <section>
+        <h3>状态</h3>
+        <pre>{JSON.stringify({ status: progress.status, transport: progress.transport ?? "pending" }, null, 2)}</pre>
+      </section>
+    </div>
+  );
+}
+
+function buildCompletedTraceProgress(step: keyof PipelineTrace, trace: PipelineTrace | undefined): PipelineStepProgress | undefined {
+  if (!trace) return undefined;
+  const data = trace[step];
+
+  if (step === "event") {
+    return {
+      step,
+      status: "completed",
+      input: trace.event.content,
+      output: JSON.stringify(trace.event, null, 2),
+      transport: "local",
+    };
   }
 
-  if (activeStep === "llmOutput") {
-    const output = selectedTraceData as ReplyOutput;
-    return output.reply || "（林安看见了，但没有回复。）";
+  if (step === "llmRequest") {
+    return {
+      step,
+      status: "completed",
+      input: JSON.stringify({ event: trace.event, decision: trace.decision.output }, null, 2),
+      output: trace.llmRequest.prompt,
+      transport: "local",
+    };
   }
 
-  return JSON.stringify(selectedTraceData, null, 2);
+  if (step === "llmOutput") {
+    return {
+      step,
+      status: "completed",
+      input: trace.llmRequest.prompt,
+      output: trace.llmOutput.reply || "（林安看见了，但没有回复。）",
+      transport: trace.llmRequest.provider === "external" ? "external_llm" : "mock_llm",
+    };
+  }
+
+  if (step === "stateDelta") {
+    return {
+      step,
+      status: "completed",
+      input: JSON.stringify({ stateUpdate: trace.stateUpdate.output, runtimeSignalEvaluation: trace.runtimeSignalEvaluation.output }, null, 2),
+      output: JSON.stringify(trace.stateDelta, null, 2),
+      transport: "local",
+    };
+  }
+
+  const cognitiveTrace = data as { request?: { prompt: string; outputContract?: string }; output?: unknown; transport?: PipelineStepProgress["transport"] };
+  return {
+    step,
+    status: "completed",
+    input: [cognitiveTrace.request?.prompt, cognitiveTrace.request?.outputContract ? `\n\n输出契约：${cognitiveTrace.request.outputContract}` : ""].filter(Boolean).join(""),
+    output: JSON.stringify(cognitiveTrace.output, null, 2),
+    transport: cognitiveTrace.transport,
+  };
+}
+
+function traceStatusLabel(status: PipelineStepProgress["status"]) {
+  switch (status) {
+    case "pending":
+      return "待执行";
+    case "running":
+      return "输入已发送";
+    case "streaming":
+      return "生成中";
+    case "completed":
+      return "完成";
+    case "failed":
+      return "失败";
+  }
+}
+
+function normalizeDeepseekModel(model: string) {
+  return model.trim() === "deepseek-reasoner" ? "deepseek-v4-flash" : model;
 }
 
 function PanelTitle({ icon: Icon, title }: { icon: typeof Activity; title: string }) {
@@ -482,6 +591,8 @@ function PanelTitle({ icon: Icon, title }: { icon: typeof Activity; title: strin
 }
 
 function RuntimeMetric({ label, value, detail }: { label: string; value: string; detail: CharacterState["runtime"]["signalProfiles"]["energy"] }) {
+  const considerations = Array.isArray(detail.considerations) ? detail.considerations : [String(detail.considerations || "暂无补充考量")];
+
   return (
     <details className="metric" title={detail.summary}>
       <summary>
@@ -490,7 +601,7 @@ function RuntimeMetric({ label, value, detail }: { label: string; value: string;
       </summary>
       <p>{detail.summary}</p>
       <ul>
-        {detail.considerations.map((item) => (
+        {considerations.map((item) => (
           <li key={item}>{item}</li>
         ))}
       </ul>

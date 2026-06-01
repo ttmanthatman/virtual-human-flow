@@ -25,6 +25,7 @@ export async function evaluateRuntimeSignals(
     stateUpdatePlan: StateUpdatePlan;
   },
   llmConfig: LlmConfig,
+  onStream?: (output: string) => void,
 ): Promise<CognitiveModuleTrace<RuntimeSignalEvaluationResult>> {
   const mockOutput = buildDeterministicRuntimeSignals(state, context.stateUpdatePlan);
 
@@ -51,6 +52,7 @@ export async function evaluateRuntimeSignals(
     },
     llmConfig,
     mockOutput,
+    { onStream },
   );
 }
 
@@ -59,9 +61,10 @@ export function applyRuntimeSignalEvaluation(
   stateDelta: StateDelta,
   evaluation: RuntimeSignalEvaluationResult,
 ): { nextState: CharacterState; stateDelta: StateDelta } {
-  const energy = round(clamp(evaluation.energy, 0, 1));
-  const valence = round(clamp(evaluation.derivedMood.valence, -1, 1));
-  const arousal = round(clamp(evaluation.derivedMood.arousal, 0, 1));
+  const normalized = normalizeRuntimeSignalEvaluation(state, evaluation);
+  const energy = round(clamp(normalized.energy, 0, 1));
+  const valence = round(clamp(normalized.derivedMood.valence, -1, 1));
+  const arousal = round(clamp(normalized.derivedMood.arousal, 0, 1));
 
   return {
     nextState: {
@@ -72,9 +75,9 @@ export function applyRuntimeSignalEvaluation(
         derivedMood: {
           valence,
           arousal,
-          label: evaluation.derivedMood.label || state.runtime.derivedMood.label,
+          label: normalized.derivedMood.label || state.runtime.derivedMood.label,
         },
-        signalProfiles: evaluation.signalProfiles,
+        signalProfiles: normalized.signalProfiles,
       },
     },
     stateDelta: {
@@ -82,9 +85,48 @@ export function applyRuntimeSignalEvaluation(
       runtimeChanges: [
         ...stateDelta.runtimeChanges,
         `runtimeSignalEvaluation -> energy ${energy}, valence ${valence}, arousal ${arousal}`,
-        evaluation.rationale ? `runtimeSignalEvaluation rationale: ${evaluation.rationale}` : "",
+        normalized.rationale ? `runtimeSignalEvaluation rationale: ${normalized.rationale}` : "",
       ].filter(Boolean),
     },
+  };
+}
+
+function normalizeRuntimeSignalEvaluation(state: CharacterState, evaluation: RuntimeSignalEvaluationResult): RuntimeSignalEvaluationResult {
+  const fallback = state.runtime.signalProfiles;
+
+  return {
+    energy: typeof evaluation.energy === "number" ? evaluation.energy : state.runtime.energy,
+    derivedMood: {
+      valence: typeof evaluation.derivedMood?.valence === "number" ? evaluation.derivedMood.valence : state.runtime.derivedMood.valence,
+      arousal: typeof evaluation.derivedMood?.arousal === "number" ? evaluation.derivedMood.arousal : state.runtime.derivedMood.arousal,
+      label: typeof evaluation.derivedMood?.label === "string" ? evaluation.derivedMood.label : state.runtime.derivedMood.label,
+    },
+    signalProfiles: {
+      energy: normalizeRuntimeSignalProfile(evaluation.signalProfiles?.energy, fallback.energy),
+      mood: normalizeRuntimeSignalProfile(evaluation.signalProfiles?.mood, fallback.mood),
+      valence: normalizeRuntimeSignalProfile(evaluation.signalProfiles?.valence, fallback.valence),
+      arousal: normalizeRuntimeSignalProfile(evaluation.signalProfiles?.arousal, fallback.arousal),
+    },
+    rationale: typeof evaluation.rationale === "string" ? evaluation.rationale : "模型输出已归一化为稳定状态信号结构。",
+  };
+}
+
+function normalizeRuntimeSignalProfile(
+  profile: RuntimeSignalEvaluationResult["signalProfiles"]["energy"] | undefined,
+  fallback: RuntimeSignalEvaluationResult["signalProfiles"]["energy"],
+) {
+  const rawConsiderations = profile?.considerations as unknown;
+  const considerations = Array.isArray(rawConsiderations)
+    ? rawConsiderations.map(String)
+    : typeof rawConsiderations === "string"
+      ? rawConsiderations.split(/[；;。\n]/).map((item: string) => item.trim()).filter(Boolean)
+      : fallback.considerations;
+
+  return {
+    label: typeof profile?.label === "string" ? profile.label : fallback.label,
+    summary: typeof profile?.summary === "string" ? profile.summary : fallback.summary,
+    considerations,
+    cognitiveNarrative: typeof profile?.cognitiveNarrative === "string" ? profile.cognitiveNarrative : fallback.cognitiveNarrative,
   };
 }
 

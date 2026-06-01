@@ -6,6 +6,7 @@ export async function decideResponse(
   memoryRecall: MemoryRecallResult,
   state: CharacterState,
   llmConfig: LlmConfig,
+  onStream?: (output: string) => void,
 ): Promise<CognitiveModuleTrace<ResponseDecision>> {
   const strongest = appraisal.activatedConcerns[0];
   const relationship = appraisal.speakerRelationship;
@@ -18,7 +19,7 @@ export async function decideResponse(
       delaySeconds: 2,
       rationale: "当前是直接对话，即使事件显著性低，也先给出简短自然回应。",
     };
-    return runDecisionModule(appraisal, memoryRecall, state, llmConfig, mockOutput);
+    return runDecisionModule(appraisal, memoryRecall, state, llmConfig, mockOutput, onStream);
   }
 
   if (activeConcern && activeConcern.valence < -0.35 && strongest.activationScore > 0.45) {
@@ -28,7 +29,7 @@ export async function decideResponse(
       delaySeconds: 4,
       rationale: "负面关切被明显激活，角色会回应但倾向克制、回避或转移。",
     };
-    return runDecisionModule(appraisal, memoryRecall, state, llmConfig, mockOutput);
+    return runDecisionModule(appraisal, memoryRecall, state, llmConfig, mockOutput, onStream);
   }
 
   if (relationship && relationship.familiarity > 0.65 && appraisal.eventSalience > 0.55) {
@@ -38,7 +39,7 @@ export async function decideResponse(
       delaySeconds: 1,
       rationale: "事件有一定重要性，说话者关系较近，可以更自然地接话。",
     };
-    return runDecisionModule(appraisal, memoryRecall, state, llmConfig, mockOutput);
+    return runDecisionModule(appraisal, memoryRecall, state, llmConfig, mockOutput, onStream);
   }
 
   const mockOutput: ResponseDecision = {
@@ -47,7 +48,7 @@ export async function decideResponse(
     delaySeconds: 2,
     rationale: "普通可回应事件，保持角色基本语气。",
   };
-  return runDecisionModule(appraisal, memoryRecall, state, llmConfig, mockOutput);
+  return runDecisionModule(appraisal, memoryRecall, state, llmConfig, mockOutput, onStream);
 }
 
 function runDecisionModule(
@@ -56,6 +57,7 @@ function runDecisionModule(
   state: CharacterState,
   llmConfig: LlmConfig,
   mockOutput: ResponseDecision,
+  onStream?: (output: string) => void,
 ) {
   return runCognitiveModule<ResponseDecision>(
     {
@@ -73,5 +75,6 @@ function runDecisionModule(
     },
     llmConfig,
     mockOutput,
+    { onStream },
   );
 }

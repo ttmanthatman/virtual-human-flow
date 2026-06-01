@@ -7,6 +7,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 const deepseekConfigPath = resolve(process.cwd(), ".deepseek.local.json");
 const defaultDeepseekEndpoint = "https://api.deepseek.com/chat/completions";
 const defaultDeepseekModel = "deepseek-v4-flash";
+const deepseekRequestTimeoutMs = 90000;
 
 export default defineConfig({
   plugins: [react(), deepseekProxyPlugin()],
@@ -42,7 +43,7 @@ function deepseekProxyPlugin(): Plugin {
               {
                 apiKey,
                 endpoint: defaultDeepseekEndpoint,
-                model: typeof body.model === "string" && body.model.trim() ? body.model.trim() : defaultDeepseekModel,
+                model: normalizeDeepseekModel(typeof body.model === "string" && body.model.trim() ? body.model.trim() : defaultDeepseekModel),
                 savedAt: new Date().toISOString(),
               },
               null,
@@ -64,9 +65,18 @@ function deepseekProxyPlugin(): Plugin {
               return;
             }
 
-            const result = await callDeepseek(body, config, apiKey);
-            sendJson(response, 200, result);
+            if (body.stream === true) {
+              await streamDeepseek(body, config, apiKey, response);
+            } else {
+              const result = await callDeepseek(body, config, apiKey);
+              sendJson(response, 200, result);
+            }
           } catch (error) {
+            if (response.headersSent) {
+              sendSse(response, { error: error instanceof Error ? error.message : "DeepSeek 调用失败" });
+              response.end();
+              return;
+            }
             sendJson(response, 500, { error: error instanceof Error ? error.message : "DeepSeek 调用失败" });
           }
           return;
@@ -88,7 +98,7 @@ function readDeepseekConfig() {
     return {
       apiKey: parsed.apiKey || "",
       endpoint: parsed.endpoint || defaultDeepseekEndpoint,
-      model: parsed.model || defaultDeepseekModel,
+      model: normalizeDeepseekModel(parsed.model || defaultDeepseekModel),
     };
   } catch {
     return { apiKey: "", endpoint: defaultDeepseekEndpoint, model: defaultDeepseekModel };
@@ -98,9 +108,91 @@ function readDeepseekConfig() {
 async function callDeepseek(body: Record<string, unknown>, config: ReturnType<typeof readDeepseekConfig>, apiKey: string) {
   const outputMode = body.outputMode === "structured_json" ? "structured_json" : "natural_language";
   const moduleName = typeof body.moduleName === "string" ? body.moduleName : "unknown";
+  const upstream = await fetchDeepseek(body, config, apiKey, false);
+
+  const raw = await upstream.text();
+  if (!upstream.ok) {
+    throw new Error(`DeepSeek 返回 ${upstream.status}: ${raw.slice(0, 300)}`);
+  }
+
+  const payload = JSON.parse(raw) as { choices?: { message?: { content?: string | null; reasoning_content?: string | null } }[] };
+  const content = payload.choices?.[0]?.message?.content?.trim() || "";
+  if (!content) {
+    throw new Error("DeepSeek 没有返回内容");
+  }
+
+  if (outputMode === "structured_json") {
+    return parseJsonContent(content);
+  }
+
+  return moduleName === "reply_generation" ? { reply: content } : content;
+}
+
+async function streamDeepseek(body: Record<string, unknown>, config: ReturnType<typeof readDeepseekConfig>, apiKey: string, response: ServerResponse) {
+  const outputMode = body.outputMode === "structured_json" ? "structured_json" : "natural_language";
+  const moduleName = typeof body.moduleName === "string" ? body.moduleName : "unknown";
+  const upstream = await fetchDeepseek(body, config, apiKey, true);
+
+  response.statusCode = upstream.ok ? 200 : upstream.status;
+  response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  response.setHeader("Cache-Control", "no-cache, no-transform");
+  response.setHeader("Connection", "keep-alive");
+
+  if (!upstream.ok || !upstream.body) {
+    const raw = await upstream.text();
+    sendSse(response, { error: `DeepSeek 返回 ${upstream.status}: ${raw.slice(0, 300)}` });
+    response.end();
+    return;
+  }
+
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let accumulated = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+
+    for (const event of events) {
+      const data = event
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n");
+      if (!data || data === "[DONE]") continue;
+
+      const parsed = JSON.parse(data) as { choices?: { delta?: { content?: string | null; reasoning_content?: string | null } }[] };
+      const delta = parsed.choices?.[0]?.delta?.content ?? "";
+      if (!delta) continue;
+
+      accumulated += delta;
+      sendSse(response, { delta });
+    }
+  }
+
+  const content = accumulated.trim();
+  if (!content) {
+    sendSse(response, { error: "DeepSeek 流结束但没有返回内容" });
+    response.end();
+    return;
+  }
+
+  const final = outputMode === "structured_json" ? parseJsonContent(content) : moduleName === "reply_generation" ? { reply: content } : content;
+  sendSse(response, { final });
+  response.end();
+}
+
+async function fetchDeepseek(body: Record<string, unknown>, config: ReturnType<typeof readDeepseekConfig>, apiKey: string, stream: boolean) {
+  const outputMode = body.outputMode === "structured_json" ? "structured_json" : "natural_language";
   const prompt = typeof body.prompt === "string" ? body.prompt : "";
   const outputContract = typeof body.outputContract === "string" ? body.outputContract : "";
-  const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : config.model;
+  const requestedModel = typeof body.model === "string" && body.model.trim() ? body.model.trim() : config.model;
+  const model = normalizeDeepseekModel(requestedModel);
   const systemContent =
     outputMode === "structured_json"
       ? [
@@ -111,9 +203,12 @@ async function callDeepseek(body: Record<string, unknown>, config: ReturnType<ty
           .filter(Boolean)
           .join("\n")
       : "你只返回最终文本，不要解释，不要附加标签。";
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), deepseekRequestTimeoutMs);
 
-  const upstream = await fetch(config.endpoint || defaultDeepseekEndpoint, {
+  return fetch(config.endpoint || defaultDeepseekEndpoint, {
     method: "POST",
+    signal: controller.signal,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
@@ -125,28 +220,12 @@ async function callDeepseek(body: Record<string, unknown>, config: ReturnType<ty
         { role: "user", content: prompt },
       ],
       response_format: outputMode === "structured_json" ? { type: "json_object" } : { type: "text" },
-      stream: false,
+      thinking: { type: "disabled" },
+      stream,
       temperature: 0.4,
       max_tokens: outputMode === "structured_json" ? 1400 : 700,
     }),
-  });
-
-  const raw = await upstream.text();
-  if (!upstream.ok) {
-    throw new Error(`DeepSeek 返回 ${upstream.status}: ${raw.slice(0, 300)}`);
-  }
-
-  const payload = JSON.parse(raw) as { choices?: { message?: { content?: string | null } }[] };
-  const content = payload.choices?.[0]?.message?.content?.trim() || "";
-  if (!content) {
-    throw new Error("DeepSeek 没有返回内容");
-  }
-
-  if (outputMode === "structured_json") {
-    return parseJsonContent(content);
-  }
-
-  return moduleName === "reply_generation" ? { reply: content } : content;
+  }).finally(() => clearTimeout(timeout));
 }
 
 function parseJsonContent(content: string) {
@@ -178,4 +257,12 @@ function sendJson(response: ServerResponse, statusCode: number, data: unknown) {
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.end(JSON.stringify(data));
+}
+
+function sendSse(response: ServerResponse, data: unknown) {
+  response.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function normalizeDeepseekModel(model: string) {
+  return model === "deepseek-reasoner" ? defaultDeepseekModel : model;
 }

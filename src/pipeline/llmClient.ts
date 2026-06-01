@@ -10,29 +10,78 @@ export async function runLlm(
   request: ExpressionLlmRequest,
   config: LlmConfig,
   simulateInput: SimulateInput,
+  onStream?: (output: string) => void,
 ): Promise<ReplyOutput> {
   if (config.provider === "external" && config.endpoint.trim()) {
     const response = await fetch(config.endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify({
         model: config.model,
         moduleName: "reply_generation",
         inputMode: "natural_language",
         outputMode: "natural_language",
         prompt: request.prompt,
+        stream: true,
       }),
     });
 
     if (!response.ok) {
-      throw new Error(`LLM endpoint failed: ${response.status}`);
+      const detail = await response.text();
+      throw new Error(`LLM endpoint failed: ${response.status} ${detail.slice(0, 240)}`);
     }
 
-    const data = await response.json();
+    const data = response.headers.get("Content-Type")?.includes("text/event-stream")
+      ? await readReplyEventStream(response, onStream)
+      : await response.json();
     return typeof data === "string" ? { reply: data } : (data as ReplyOutput);
   }
 
-  return simulateLlmOutput(simulateInput);
+  const output = simulateLlmOutput(simulateInput);
+  onStream?.(output.reply);
+  return output;
+}
+
+async function readReplyEventStream(response: Response, onStream?: (output: string) => void) {
+  if (!response.body) {
+    throw new Error("外部接口没有返回可读取的流");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let accumulated = "";
+  let finalReply = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+
+    for (const event of events) {
+      const data = event
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n");
+      if (!data || data === "[DONE]") continue;
+
+      const parsed = JSON.parse(data) as { delta?: string; final?: { reply?: string }; error?: string };
+      if (parsed.error) throw new Error(parsed.error);
+      if (typeof parsed.delta === "string") {
+        accumulated += parsed.delta;
+        onStream?.(accumulated);
+      }
+      if (parsed.final?.reply !== undefined) {
+        finalReply = parsed.final.reply;
+      }
+    }
+  }
+
+  return { reply: finalReply || accumulated };
 }
 
 function simulateLlmOutput({ decision }: SimulateInput): ReplyOutput {

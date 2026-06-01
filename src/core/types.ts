@@ -196,6 +196,17 @@ export interface CognitiveModuleTrace<TOutput> {
   transport: "mock_llm" | "external_llm";
 }
 
+export type PipelineStepStatus = "pending" | "running" | "streaming" | "completed" | "failed";
+
+export interface PipelineStepProgress {
+  step: keyof PipelineTrace;
+  status: PipelineStepStatus;
+  input?: string;
+  output?: string;
+  error?: string;
+  transport?: CognitiveModuleTrace<unknown>["transport"] | "local";
+}
+
 export interface ExpressionLlmRequest {
   provider: "simulated" | "external";
   model: string;

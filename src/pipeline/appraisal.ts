@@ -2,7 +2,12 @@ import { AppraisalResult, CharacterState, CognitiveModuleTrace, EventInput, LlmC
 import { clamp, round } from "../core/utils";
 import { runCognitiveModule } from "./cognitiveModuleClient";
 
-export async function runAppraisal(event: EventInput, state: CharacterState, llmConfig: LlmConfig): Promise<CognitiveModuleTrace<AppraisalResult>> {
+export async function runAppraisal(
+  event: EventInput,
+  state: CharacterState,
+  llmConfig: LlmConfig,
+  onStream?: (output: string) => void,
+): Promise<CognitiveModuleTrace<AppraisalResult>> {
   const speakerRelationship = event.speakerId ? state.relationships[event.speakerId] : undefined;
 
   const activatedConcerns = state.concerns
@@ -61,5 +66,6 @@ export async function runAppraisal(event: EventInput, state: CharacterState, llm
     },
     llmConfig,
     mockOutput,
+    { onStream },
   );
 }

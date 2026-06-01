@@ -7,6 +7,7 @@ export async function retrieveMemory(
   appraisal: AppraisalResult,
   state: CharacterState,
   llmConfig: LlmConfig,
+  onStream?: (output: string) => void,
 ): Promise<CognitiveModuleTrace<MemoryRecallResult>> {
   const activatedIds = new Set(appraisal.activatedConcerns.map((concern) => concern.concernId));
   const speakerNames = [event.speakerId, event.speakerName].filter(Boolean) as string[];
@@ -63,5 +64,6 @@ export async function retrieveMemory(
     },
     llmConfig,
     mockOutput,
+    { onStream },
   );
 }

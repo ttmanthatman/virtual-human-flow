@@ -28,6 +28,11 @@
    - 来源：https://platform.openai.com/docs/api-reference/responses
    - 结论：认知模块接入真实 LLM 时应优先使用 JSON Schema / Structured Outputs，而不是只靠提示词要求模型输出 JSON。Reply LLM 不使用结构化输出约束。
 
+6. DeepSeek Thinking Mode / Streaming
+   - 来源：https://api-docs.deepseek.com/guides/thinking_mode
+   - 来源：https://api-docs.deepseek.com/api/create-chat-completion
+   - 结论：DeepSeek thinking 默认是 enabled；本项目必须在代理层显式传 `thinking: { type: "disabled" }`，并避免使用 `deepseek-reasoner`。DeepSeek Chat Completions 支持 `text/event-stream`，可用于把每个认知模块的输出过程显示到流程追踪面板。
+
 ## 当前落地取舍
 
 | 方向 | 当前选择 | 原因 |
