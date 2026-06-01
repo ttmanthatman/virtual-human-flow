@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-当前已建立第一版本地 MVP：三栏工作台展示人物状态、聊天室和流程追踪。系统能根据用户素材预览人物档案和场景，并在发送消息后展示多模块 LLM 数据流。
+当前已建立第一版本地 MVP：三栏工作台展示多人档案、人物状态、聊天室和流程追踪。系统能根据用户素材预览人物档案和配套场景，并在发送消息后展示多模块 LLM 数据流。
 
 重要约束：Reply LLM 只接收自然语言上下文，只生成角色说出口的话。不能把 JSON、字段名、输出契约、工程术语或类似编程语言的内容混进这一步。
 
@@ -15,6 +15,8 @@
 人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。Reply Prompt 的作用是把这些自然语言材料过一遍，让回复从人物整体状态中长出来，而不是让某个单独指标指挥台词风格。
 
 人物档案和场景预览也属于认知模块，不是本地字符串拼接。人物档案预览通过 Dossier Interpretation LLM 将用户素材拆成展示摘要、长期记忆、人性/人格、标签、关切和状态信号；场景预览通过 Scene Interpretation LLM 将用户素材拆成场景摘要、状态影响和人物影响。预览应用时写入的是 LLM 解读后的结构化状态，而不是用户原文。
+
+人物档案和场景设置作为 `personaDossier` 成组保存。左侧可以新建、切换和删除档案；切换档案时人物状态、人物素材和场景素材一起切换。应用人物或场景预览前，Profile Scene Consistency LLM 会判断人物与场景是否处于同一世界观、时代和社会语境；现代人物进入古代场景这类硬冲突需要输入本地“扭曲时空密码”才能继续。
 
 DeepSeek 接入必须关闭思考模式。应用固定使用真实 DeepSeek 本地代理和 `deepseek-v4-flash`，不再暴露模拟语言模型选项。代理层对所有 DeepSeek Chat Completions 请求显式传入 `thinking: { type: "disabled" }`，不发送 `reasoning_effort`，并把 `deepseek-reasoner` 纠正为 `deepseek-v4-flash`。
 
@@ -109,8 +111,28 @@ flowchart TD
     E1 --> F
     F --> G[左侧显示摘要预览]
     G --> H{用户是否应用}
-    H -- 是 --> I[写入当前角色状态]
     H -- 否 --> J[保留原状态]
+    H -- 是 --> K[人物场景一致性检测 LLM]
+    K --> L{是否硬冲突}
+    L -- 否 --> I[写入当前 personaDossier 状态]
+    L -- 是 --> M[要求输入扭曲时空密码]
+    M -- 正确 --> I
+    M -- 错误或取消 --> J
+```
+
+## 多人档案路径
+
+```mermaid
+flowchart TD
+    A[左栏多人档案列表] --> B{用户操作}
+    B -- 新建 --> C[创建 personaDossier: 空人物素材 + 空场景素材 + 待配置状态]
+    B -- 切换 --> D[读取 personaDossier.state]
+    B -- 删除 --> E{是否最后一个}
+    E -- 是 --> F[阻止删除]
+    E -- 否 --> G[移除档案并切换到剩余档案]
+    D --> H[左栏人物/场景输入同步切换]
+    H --> I[聊天室后续使用当前档案状态]
+    I --> J[对话状态更新写回当前 personaDossier]
 ```
 
 ## 生成预览写回边界
@@ -147,8 +169,11 @@ flowchart LR
     CHAT[中间对话] --> PIPE
     PIPE --> TRACE[右侧流程追踪]
     TRACE --> JSON[事件/评估/记忆/决策/回应提示词/回应输出/状态更新/信号评估/状态变化]
+    LEFT --> DOS[多人档案: 新建/切换/删除]
     LEFT --> GEN1[生成人物档案]
     LEFT --> GEN2[生成场景]
+    GEN1 --> FIT[人物场景一致性检测]
+    GEN2 --> FIT
 ```
 
 ## 待确认 MVP 架构问题
@@ -180,10 +205,12 @@ flowchart LR
 | 命名登记 | initialized | 已建立 AI 用命名表 |
 | 系统流程 | initialized | 已建立初始工作流图 |
 | MVP 业务模块 | initialized | 已实现本地可运行的三栏工作台 |
+| 多人档案 | initialized | 左侧可新建、切换、删除 `personaDossier`；每个档案绑定人物状态和配套场景素材 |
 | 人物档案生成 | initialized | 通过 Dossier Interpretation LLM 重新解读用户素材，生成 profile、concerns、longTermMemory 和 runtime 预览 |
 | 人物档案预览 | initialized | 左侧只展示 `profile.displaySummary` 等摘要信息，用户确认后应用 |
 | 场景生成 | initialized | 通过 Scene Interpretation LLM 重新解读用户素材，生成 scene、状态影响、人物影响、关切和记忆预览 |
 | 场景预览 | initialized | 先显示场景摘要和状态影响预览，用户确认后应用完整状态 |
+| 人物场景一致性检测 | initialized | Profile Scene Consistency LLM 判断人物和场景是否硬冲突；硬冲突需要扭曲时空密码继续 |
 | 同步对话路径 | initialized | 事件 -> 评估 -> 记忆召回 -> 回应决策 -> 回应提示词 -> 回应输出 -> 状态更新 -> 信号评估 -> 状态变化 |
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |

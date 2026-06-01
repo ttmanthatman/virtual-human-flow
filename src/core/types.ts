@@ -38,6 +38,15 @@ export interface RuntimeSignalEvaluationResult {
   rationale: string;
 }
 
+export interface ProfileSceneConsistencyResult {
+  compatible: boolean;
+  confidence: number;
+  severity: "none" | "soft_mismatch" | "hard_mismatch";
+  summary: string;
+  mismatchReasons: string[];
+  requiresDistortionPassword: boolean;
+}
+
 export interface CharacterProfile {
   id: string;
   name: string;
@@ -127,6 +136,16 @@ export interface CharacterState {
   scene?: SceneState;
 }
 
+export interface PersonaDossier {
+  id: string;
+  title: string;
+  state: CharacterState;
+  dossierDescription: string;
+  sceneDescription: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SceneState {
   id: string;
   title: string;
@@ -188,7 +207,8 @@ export type CognitiveModuleName =
   | "state_update"
   | "runtime_signal_evaluation"
   | "dossier_interpretation"
-  | "scene_interpretation";
+  | "scene_interpretation"
+  | "profile_scene_consistency";
 
 export interface CognitiveModuleRequest {
   moduleName: CognitiveModuleName;

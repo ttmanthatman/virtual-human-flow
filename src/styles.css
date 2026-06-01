@@ -45,6 +45,8 @@ textarea {
 .panel-title,
 .composer,
 .flow-step,
+.subsection-head,
+.distortion-head,
 .primary-button,
 .secondary-button,
 .icon-button,
@@ -330,10 +332,56 @@ select {
   gap: 9px;
 }
 
+.subsection-head {
+  justify-content: space-between;
+}
+
 .subsection h2 {
   color: #33434b;
   font-size: 12px;
   font-weight: 760;
+}
+
+.dossier-manager {
+  border-bottom: 1px solid #e1e8eb;
+  padding-bottom: 12px;
+}
+
+.dossier-tabs {
+  display: grid;
+  gap: 7px;
+}
+
+.dossier-tab {
+  background: #fff;
+  border: 1px solid #dbe4e7;
+  border-radius: 8px;
+  color: #33434b;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.dossier-tab.selected {
+  background: #edf7f6;
+  border-color: rgba(15, 118, 110, 0.38);
+}
+
+.dossier-tab span {
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.dossier-tab small {
+  color: #718189;
+  font-size: 11px;
+}
+
+.icon-button.compact {
+  height: 30px;
+  width: 30px;
 }
 
 .list-stack {
@@ -427,6 +475,17 @@ textarea {
   padding: 10px;
 }
 
+.primary-button:disabled,
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
+.danger-button {
+  background: #f7e8e6;
+  color: #9d3029;
+}
+
 .preview-card {
   background: #f8fbfb;
   border: 1px solid #cfe0e3;
@@ -466,6 +525,42 @@ textarea {
   font-size: 12px;
   line-height: 1.45;
   margin: 0;
+}
+
+.distortion-gate {
+  background: #fff8ec;
+  border: 1px solid #efc87f;
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+}
+
+.distortion-head {
+  color: #805000;
+  gap: 7px;
+}
+
+.distortion-head strong {
+  font-size: 13px;
+}
+
+.distortion-gate p {
+  color: #554231;
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.distortion-gate small {
+  color: #7c6645;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.distortion-gate input {
+  height: 36px;
+  padding: 0 9px;
 }
 
 .scene-strip {
@@ -633,6 +728,13 @@ textarea {
   color: #65747c;
   font-size: 11px;
   line-height: 1.45;
+}
+
+.connected-summary {
+  background: #f4faf9;
+  border: 1px solid #d7e9e6;
+  border-radius: 8px;
+  padding: 10px;
 }
 
 .json-view {
