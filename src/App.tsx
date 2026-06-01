@@ -49,7 +49,7 @@ export function App() {
   const [dossierDescription, setDossierDescription] = useState("林安，27岁，自由插画师，刚结束一段关系，性格克制敏感，不喜欢直接表达脆弱。");
   const [sceneDescription, setSceneDescription] = useState("雨夜的私人工作室，窗外有雨，桌上放着未完成的画稿和一杯快冷掉的茶。");
   const [dossierPreview, setDossierPreview] = useState<CharacterState | undefined>();
-  const [scenePreview, setScenePreview] = useState<CharacterState["scene"] | undefined>();
+  const [scenePreview, setScenePreview] = useState<CharacterState | undefined>();
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(defaultLlmConfig);
   const [activeTrace, setActiveTrace] = useState<PipelineTrace | undefined>();
   const [liveTrace, setLiveTrace] = useState<TraceDisplayState>({});
@@ -59,6 +59,8 @@ export function App() {
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
   const [deepseekStatus, setDeepseekStatus] = useState("正在检查 DeepSeek 连接");
   const [deepseekConnected, setDeepseekConnected] = useState(false);
+  const [isGeneratingDossier, setIsGeneratingDossier] = useState(false);
+  const [isGeneratingScene, setIsGeneratingScene] = useState(false);
 
   const selectedTraceData = liveTrace[activeStep] ?? buildCompletedTraceProgress(activeStep, activeTrace);
   const traceDisplay = formatTraceDisplay(selectedTraceData);
@@ -208,19 +210,30 @@ export function App() {
     }
   }
 
-  function handleGenerateDossier() {
-    const preview = generateDossierFromDescription(dossierDescription, state);
-    setDossierPreview(preview);
-    setMessages((items) => [
-      ...items,
-      {
-        id: makeId("msg"),
-        speaker: "system",
-        speakerName: "人物档案",
-        content: `已生成 ${preview.profile.name} 的人物档案预览：${preview.concerns.map((concern) => concern.title).join("、")}`,
-        timestamp: nowIso(),
-      },
-    ]);
+  async function handleGenerateDossier() {
+    if (!dossierDescription.trim() || isGeneratingDossier) return;
+    setIsGeneratingDossier(true);
+    setError("");
+
+    try {
+      const preview = await generateDossierFromDescription(dossierDescription, state, llmConfig);
+      setDossierPreview(preview);
+      setMessages((items) => [
+        ...items,
+        {
+          id: makeId("msg"),
+          speaker: "system",
+          speakerName: "人物档案",
+          content: `LLM 已重新解读 ${preview.profile.name} 的人物档案：${preview.profile.displaySummary}`,
+          timestamp: nowIso(),
+        },
+      ]);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "人物档案预览失败";
+      setError(message);
+    } finally {
+      setIsGeneratingDossier(false);
+    }
   }
 
   function handleApplyDossier() {
@@ -239,24 +252,35 @@ export function App() {
     ]);
   }
 
-  function handleGenerateScene() {
-    const scene = generateSceneFromDescription(sceneDescription);
-    setScenePreview(scene);
-    setMessages((items) => [
-      ...items,
-      {
-        id: makeId("msg"),
-        speaker: "system",
-        speakerName: "场景",
-        content: `已生成场景预览：${scene.title}。${scene.atmosphere}`,
-        timestamp: nowIso(),
-      },
-    ]);
+  async function handleGenerateScene() {
+    if (!sceneDescription.trim() || isGeneratingScene) return;
+    setIsGeneratingScene(true);
+    setError("");
+
+    try {
+      const preview = await generateSceneFromDescription(sceneDescription, state, llmConfig);
+      setScenePreview(preview);
+      setMessages((items) => [
+        ...items,
+        {
+          id: makeId("msg"),
+          speaker: "system",
+          speakerName: "场景",
+          content: `LLM 已重新解读场景：${preview.scene?.title ?? "新场景"}。状态焦点：${preview.runtime.attentionFocus ?? "已更新"}`,
+          timestamp: nowIso(),
+        },
+      ]);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "场景预览失败";
+      setError(message);
+    } finally {
+      setIsGeneratingScene(false);
+    }
   }
 
   function handleApplyScene() {
     if (!scenePreview) return;
-    setState((current) => ({ ...current, scene: scenePreview }));
+    setState(scenePreview);
     setScenePreview(undefined);
     setMessages((items) => [
       ...items,
@@ -264,7 +288,7 @@ export function App() {
         id: makeId("msg"),
         speaker: "system",
         speakerName: "场景",
-        content: `已应用场景：${scenePreview.title}。`,
+        content: `已应用场景：${scenePreview.scene?.title ?? "新场景"}。`,
         timestamp: nowIso(),
       },
     ]);
@@ -316,7 +340,7 @@ export function App() {
               <strong>{state.profile.name}</strong>
               <span>{state.profile.age} / {state.profile.personalityTraits.slice(0, 3).join("、")}</span>
             </div>
-            <p>{state.profile.background}</p>
+            <p>{state.profile.displaySummary}</p>
             <details className="detail-disclosure">
               <summary>性格由哪些特性综合而来</summary>
               <p>{state.profile.personalitySummary}</p>
@@ -362,8 +386,8 @@ export function App() {
           <section className="subsection">
             <h2>人物档案</h2>
             <textarea value={dossierDescription} onChange={(event) => setDossierDescription(event.target.value)} />
-            <button className="primary-button" type="button" onClick={handleGenerateDossier}>
-              <Eye size={16} /> 预览人物档案
+            <button className="primary-button" type="button" onClick={handleGenerateDossier} disabled={isGeneratingDossier}>
+              <Eye size={16} /> {isGeneratingDossier ? "解读中" : "预览人物档案"}
             </button>
             {dossierPreview ? <DossierPreviewCard preview={dossierPreview} onApply={handleApplyDossier} /> : null}
           </section>
@@ -371,8 +395,8 @@ export function App() {
           <section className="subsection">
             <h2>场景</h2>
             <textarea value={sceneDescription} onChange={(event) => setSceneDescription(event.target.value)} />
-            <button className="secondary-button" type="button" onClick={handleGenerateScene}>
-              <Eye size={16} /> 预览场景
+            <button className="secondary-button" type="button" onClick={handleGenerateScene} disabled={isGeneratingScene}>
+              <Eye size={16} /> {isGeneratingScene ? "解读中" : "预览场景"}
             </button>
             {scenePreview ? <ScenePreviewCard preview={scenePreview} onApply={handleApplyScene} /> : null}
           </section>
@@ -605,6 +629,8 @@ function RuntimeMetric({ label, value, detail }: { label: string; value: string;
 }
 
 function DossierPreviewCard({ preview, onApply }: { preview: CharacterState; onApply: () => void }) {
+  const previewMemories = preview.longTermMemory.slice(-3).map((memory) => memory.summary);
+
   return (
     <div className="preview-card">
       <div className="preview-head">
@@ -613,25 +639,33 @@ function DossierPreviewCard({ preview, onApply }: { preview: CharacterState; onA
           <Check size={14} /> 应用
         </button>
       </div>
-      <p>{preview.profile.personalitySummary}</p>
+      <p>{preview.profile.displaySummary}</p>
       <small>性格摘要：{preview.profile.personalityTraits.slice(0, 4).join("、")}</small>
       <small>关切：{preview.concerns.map((concern) => concern.title).join("、")}</small>
+      {previewMemories.length > 0 ? <small>长期记忆：{previewMemories.join("；")}</small> : null}
     </div>
   );
 }
 
-function ScenePreviewCard({ preview, onApply }: { preview: NonNullable<CharacterState["scene"]>; onApply: () => void }) {
+function ScenePreviewCard({ preview, onApply }: { preview: CharacterState; onApply: () => void }) {
+  const scene = preview.scene;
+  if (!scene) return null;
+  const newConcernTitles = preview.concerns.map((concern) => concern.title).join("、");
+  const latestMemory = preview.longTermMemory.at(-1)?.summary;
+
   return (
     <div className="preview-card">
       <div className="preview-head">
-        <strong>{preview.title} 预览</strong>
+        <strong>{scene.title} 预览</strong>
         <button type="button" onClick={onApply}>
           <Check size={14} /> 应用
         </button>
       </div>
-      <p>{preview.cognitiveNarrative}</p>
-      <small>{preview.sensoryProfile}</small>
-      <small>{preview.interactionPressure}</small>
+      <p>{scene.description}</p>
+      <small>状态焦点：{preview.runtime.attentionFocus ?? scene.title}</small>
+      <small>场景压力：{scene.atmosphere}。{scene.interactionPressure}</small>
+      <small>关切更新：{newConcernTitles}</small>
+      {latestMemory ? <small>长期记忆：{latestMemory}</small> : null}
     </div>
   );
 }

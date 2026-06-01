@@ -42,6 +42,7 @@ export interface CharacterProfile {
   id: string;
   name: string;
   age?: number;
+  displaySummary: string;
   background: string;
   personalityTraits: string[];
   personalitySummary: string;
@@ -179,7 +180,15 @@ export interface ResponseDecision {
   rationale: string;
 }
 
-export type CognitiveModuleName = "appraisal" | "memory_retrieval" | "response_decision" | "reply_generation" | "state_update" | "runtime_signal_evaluation";
+export type CognitiveModuleName =
+  | "appraisal"
+  | "memory_retrieval"
+  | "response_decision"
+  | "reply_generation"
+  | "state_update"
+  | "runtime_signal_evaluation"
+  | "dossier_interpretation"
+  | "scene_interpretation";
 
 export interface CognitiveModuleRequest {
   moduleName: CognitiveModuleName;

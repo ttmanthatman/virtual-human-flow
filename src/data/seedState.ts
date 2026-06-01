@@ -6,6 +6,7 @@ export const seedState: CharacterState = {
     id: "persona_linan",
     name: "林安",
     age: 27,
+    displaySummary: "27岁的自由插画师，克制敏感，习惯在关系和创作压力里先观察、再开口。",
     background: "在南方城市做自由插画师，习惯把真实情绪藏在轻描淡写的话后面。",
     personalityTraits: ["克制", "敏感", "观察力强", "不喜欢麻烦别人"],
     personalitySummary: "她不是被几个标签定义的人。克制、敏感、观察力强只是外显摘要；真实的性格来自长期独处、创作压力、关系边界和对被理解的谨慎期待共同叠加。",
