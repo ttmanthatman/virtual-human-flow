@@ -36,6 +36,7 @@
 | 状态更新计划 | `stateUpdatePlan` | runtime object | State Update LLM 生成的结构化状态变化 | `stateDeltaDraft` |
 | 性格特性 | `personalityFacet` | domain object | 一个性格摘要背后的来源、张力和表达方式 | `traitDefinition` |
 | 状态信号详情 | `runtimeSignalProfile` | domain object | Energy/Mood/Valence/Arousal 显示值背后的自然语言考量 | `metricDetail` |
+| 认知叙述 | `cognitiveNarrative` | domain field | 人物内部状态或场景如何参与反应的自然语言描述，不是给 Reply LLM 的直接指令 | `llmContext`, `replyInstruction` |
 | 生成预览 | `generationPreview` | UI state | Dossier/Scene 生成后等待用户应用的预览结果 | `draftResult` |
 
 ## 模块登记表
@@ -82,9 +83,10 @@
 | `shortTermMemory` | `CharacterState` | `ShortTermMemory[]` | 最近对话原文 | stateUpdater | memoryRetrieval/promptBuilder | implemented |
 | `longTermMemory` | `CharacterState` | `LongTermMemory[]` | 长期摘要记忆 | seed/stateUpdater | memoryRetrieval/promptBuilder | implemented |
 | `runtime.derivedMood` | `RuntimeState` | object | 从 concerns 派生的当前心情 | seed/stateUpdater | UI/promptBuilder | implemented |
-| `runtime.signalProfiles` | `RuntimeState` | `Record<RuntimeSignalKey, RuntimeSignalProfile>` | UI 简化指标背后的自然语言考量，供 LLM prompt 使用 | seed/generator/stateUpdater | promptBuilder/UI | implemented |
+| `runtime.signalProfiles` | `RuntimeState` | `Record<RuntimeSignalKey, RuntimeSignalProfile>` | UI 简化指标背后的自然语言考量，供 Prompt Generator 组织上下文 | seed/generator/stateUpdater | promptBuilder/UI | implemented |
+| `runtime.signalProfiles.*.cognitiveNarrative` | `RuntimeSignalProfile` | `string` | 状态信号背后的内在状态叙述，只描述属性和成因，不写回复指令 | seed/generator/stateUpdater | promptBuilder/UI | implemented |
 | `scene` | `CharacterState` | `SceneState` | 当前场景 | seed/generator | UI/promptBuilder | implemented |
-| `scene.llmContext` | `SceneState` | `string` | 场景对角色表达的自然语言影响 | seed/generator | promptBuilder/UI | implemented |
+| `scene.cognitiveNarrative` | `SceneState` | `string` | 场景如何改变注意力、身体感和关系距离的自然语言叙述 | seed/generator | promptBuilder/UI | implemented |
 | `dossierPreview` | App state | `CharacterState?` | 人物档案生成后的待应用预览 | App Shell | UI/apply action | implemented |
 | `scenePreview` | App state | `SceneState?` | 场景生成后的待应用预览 | App Shell | UI/apply action | implemented |
 | `pipelineTrace` | `ChatMessage` | `PipelineTrace` | 一轮对话所有中间结果 | conversationPipeline | Pipeline Debug Panel | implemented |

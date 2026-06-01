@@ -97,7 +97,7 @@ export function generateSceneFromDescription(description: string): SceneState {
       : studio
         ? "私人创作空间降低了社交压力，但会让未完成的事持续在场。"
         : "安静空间会让对话更靠近内心，但也更容易触发回避。",
-    llmContext: `${description} 这个场景不只是背景，它会影响角色说话的长度、停顿和回避方式。`,
+    cognitiveNarrative: `${description} 这个场景不只是背景；它会改变角色的注意力落点、身体松紧、停顿位置和关系距离感。`,
   };
 }
 
@@ -133,25 +133,25 @@ function buildRuntimeSignalProfiles(isLonely: boolean, isCareer: boolean) {
       label: isLonely ? "能回应，但不想解释太多" : "能量平稳，保留观察",
       summary: isLonely ? "她有礼貌回应的余力，但不想把精力花在摊开旧关系上。" : "她并不抗拒对话，只是会先看对方怎么靠近。",
       considerations: [isLonely ? "旧关系余波会消耗她" : "陌生关系让她保持余量", isCareer ? "工作反馈等待会分走注意力" : "环境稳定时更容易开口"],
-      llmContext: isLonely ? "回复应短、轻、避开解释。" : "回复可以自然，但不要过度热情。",
+      cognitiveNarrative: isLonely ? "她有回应余力，但旧关系占用了大部分心理预算，解释自己的欲望很低。" : "她的能量没有明显被抽走，只是会保留一段观察距离。",
     },
     mood: {
       label: isLonely ? "被旧关系牵动" : "谨慎观察中",
       summary: isLonely ? "她不是全局低落，而是特定话题会把她带回旧关系。" : "她的情绪主要来自对场合和对方意图的判断。",
       considerations: [isLonely ? "周末、约会、复合会触发旧记忆" : "被误解会触发防御", "明确善意会让她稍微松一点"],
-      llmContext: isLonely ? "让情绪绑定具体触发物，不要写成泛泛低沉。" : "让她先保留，再根据对方语气微调。",
+      cognitiveNarrative: isLonely ? "情绪低点来自具体触发物，尤其是旧关系、未完成约定和熟悉的日常词。" : "她会先观察对方意图，再产生更明确的情绪方向。",
     },
     valence: {
       label: isLonely ? "局部偏负面" : "中性偏防备",
       summary: isLonely ? "负面感受主要绑定旧关系和未完成约定。" : "她不一定难过，但会避免太快进入亲密表达。",
       considerations: [isLonely ? "旧关系相关内容降低情绪色彩" : "边界被尊重时情绪会稳定", isCareer ? "工作反馈可能放大自我怀疑" : "轻松闲聊可缓和"],
-      llmContext: "不要把这个显示结果当作全局情绪，只把它作为当前触发物的语境。",
+      cognitiveNarrative: "这个情绪方向不是全局人格色彩，而是当前触发物、关系对象和未完成心事共同形成的局部倾向。",
     },
     arousal: {
       label: isLonely ? "心里被牵动，外表压低" : "外表平稳，内部观察",
       summary: isLonely ? "她内在波动比外在表达更强。" : "她主要在观察，不急着反应。",
       considerations: [isLonely ? "被触发时会停顿" : "信息不足时会慢一点", "关系越近，越可能露出真实波动"],
-      llmContext: isLonely ? "用短停顿和转开话题体现波动。" : "用平稳语气体现观察。",
+      cognitiveNarrative: isLonely ? "波动先发生在心跳、注意力和停顿里，外表会努力维持体面。" : "内部主要在收集信息，身体和语气都还没有被明显推高。",
     },
   };
 }

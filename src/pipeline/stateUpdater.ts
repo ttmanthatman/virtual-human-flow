@@ -211,22 +211,22 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
                 : moodValence > 0.25
                   ? "刚才的互动稍微缓和了她的表层状态。"
                   : "刚才的互动没有明显改变她的整体外显状态。",
-            llmContext:
+            cognitiveNarrative:
               moodValence < -0.25
-                ? "回复后她仍在压住旧事带来的余波，后续表达应更短、更轻。"
+                ? "回复后旧事余波仍在，心理预算更集中在维持体面和守住边界上。"
                 : moodValence > 0.25
-                  ? "回复后她稍微放松，但仍会保留边界。"
-                  : "回复后她保持平稳，继续根据具体话题调整。",
+                  ? "回复后她稍微放松，但关系边界仍然清楚地留在心里。"
+                  : "回复后她保持平稳，后续反应仍主要取决于具体话题和关系对象。",
           },
           valence: {
             ...state.runtime.signalProfiles.valence,
             label: moodValence < -0.25 ? "局部偏负面" : moodValence > 0.25 ? "局部缓和" : "接近中性",
-            llmContext: "这是对当前互动后的自然语言判断，不是全局分数；后续仍要看触发物和关系对象。",
+            cognitiveNarrative: "这是当前互动之后形成的局部情绪方向，不是她整个人的全局色彩。",
           },
           arousal: {
             ...state.runtime.signalProfiles.arousal,
             label: moodArousal > 0.45 ? "内在被牵动，外表压低" : "外表平稳，内部观察",
-            llmContext: moodArousal > 0.45 ? "她心里有波动，但会用短句和转移话题压住。" : "她没有明显被推高，可以自然但保留地回应。",
+            cognitiveNarrative: moodArousal > 0.45 ? "她心里有波动，身体和注意力会先收紧，外在仍努力维持体面。" : "她没有明显被推高，主要处在观察和判断对方意图的状态。",
           },
         },
       },

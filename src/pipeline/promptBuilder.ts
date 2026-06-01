@@ -56,28 +56,35 @@ export function generateNaturalPromptRequest(
     state.profile.personalitySummary,
     ...state.profile.personalityFacets.map((facet) => `她的「${facet.label}」表现为：${facet.summary}${facet.tension ? ` ${facet.tension}` : ""} ${facet.expression}`),
   ].join(" ");
+  const valuesNarrative = state.profile.values.length > 0 ? state.profile.values.join("、") : "没有明确列出的价值取向";
+  const boundariesNarrative = state.profile.boundaries.length > 0 ? state.profile.boundaries.join("；") : "没有明确列出的边界";
+  const exampleNarrative =
+    state.profile.examples.length > 0
+      ? state.profile.examples.map((example) => `在「${example.situation}」里，她可能会说：「${example.expectedReply}」`).join(" ")
+      : "没有可参考的表达样本。";
   const runtimeNarrative = Object.values(state.runtime.signalProfiles)
-    .map((signal) => `${signal.label}：${signal.llmContext}`)
+    .map((signal) => `${signal.label}：${signal.summary} ${signal.considerations.join("；")}。${signal.cognitiveNarrative}`)
     .join(" ");
   const sceneNarrative = state.scene
-    ? `${state.scene.title}：${state.scene.llmContext} ${state.scene.sensoryProfile} ${state.scene.interactionPressure}`
+    ? `${state.scene.title}：${state.scene.cognitiveNarrative} ${state.scene.sensoryProfile} ${state.scene.interactionPressure}`
     : "当前没有明确场景，按普通私聊处理。";
 
   const prompt = [
-    `你现在只负责替 ${state.profile.name} 说出这一刻会说的话，以及她没有说出口的心理余波。`,
+    `现在进入 ${state.profile.name} 的表达时刻。下面是一段自然语言语境，不是规则清单。`,
     `${state.profile.name} 的稳定背景是：${state.profile.background}`,
-    `她的性格不是几个标签，而是这些经历和倾向综合出来的：${personalityNarrative}`,
-    `她平常说话的方式是：${state.profile.speakingStyle}`,
-    `她在关系里的边界是：${state.profile.boundaries.join("；")}`,
+    `先把她的性格完整过一遍：${personalityNarrative}`,
+    `她看重的东西包括：${valuesNarrative}。她在关系里的边界包括：${boundariesNarrative}。`,
+    `她平常的说话质感是：${state.profile.speakingStyle}`,
+    `类似情境里的表达样本是：${exampleNarrative}`,
     `此刻的场景语境是：${sceneNarrative}`,
-    `界面上的能量、心情、情绪方向和唤起程度只是给人看的摘要，不要把分数当作她的思考。真正驱动她的是这些自然语言状态：${runtimeNarrative}`,
+    `界面上的能量、心情、情绪方向和唤起程度只是给人看的观察摘要。她内部真正参与反应的是这些自然语言状态：${runtimeNarrative}`,
     `${event.speakerName ?? "对方"}刚刚对她说：「${event.content}」`,
     concernNarrative,
     relationshipNarrative,
     memoryNarrative,
     recentConversationNarrative,
-    `从她的状态看，这一轮更适合：${responseModeNarrative}。背后的原因是：${decision.rationale}`,
-    "写她会自然说出口的话。不要像助手，不要解释这些背景材料，也不要把上面的分析词带进她的台词。",
+    `综合她的性格、场景、关系、记忆和当下状态，这一轮反应更接近：${responseModeNarrative}。背后的自然语言原因是：${decision.rationale}`,
+    `最终出现在屏幕上的，只是 ${state.profile.name} 此刻会自然说出口的话；分析、标签和背景说明都留在她没有说出口的内在过程里。`,
   ].join("\n\n");
 
   return {
@@ -97,20 +104,20 @@ function describeIntensity(intensity: number) {
 function describeResponseMode(mode: ResponseDecision["responseMode"]) {
   switch (mode) {
     case "warm_reply":
-      return "可以温和接话，语气比平时更松一点";
+      return "她会温和接住对方，关系距离比平时稍微松一点";
     case "neutral_reply":
-      return "简短、自然、保持一点距离";
+      return "她会保持自然的礼貌距离，话不会突然变多";
     case "short_avoidance":
-      return "短句回避，不展开解释，也不显得过分热情";
+      return "她会先把话收短，解释自己的欲望很低，热情不会突然变高";
     case "topic_shift":
-      return "先避开被戳中的话题，再轻轻转到别处";
+      return "被戳中的部分会让她绕开正面情绪，注意力轻轻转到别处";
     case "question_back":
-      return "用反问把主动权拿回来";
+      return "她会把主动权拿回一点，通过反问确认对方意图";
     case "silence":
-      return "可以沉默，不需要说出口";
+      return "沉默本身也符合她此刻的心理压力";
     case "delayed_reply":
       return "像是想了一会儿才回复";
     case "emotional_outburst":
-      return "情绪外露，但仍要符合她的人设边界";
+      return "情绪比平时更外露，但仍受她长期边界感牵制";
   }
 }

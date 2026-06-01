@@ -389,7 +389,7 @@ function RuntimeMetric({ label, value, detail }: { label: string; value: string;
           <li key={item}>{item}</li>
         ))}
       </ul>
-      <small>{detail.llmContext}</small>
+      <small>{detail.cognitiveNarrative}</small>
     </details>
   );
 }
@@ -419,7 +419,7 @@ function ScenePreviewCard({ preview, onApply }: { preview: NonNullable<Character
           <Check size={14} /> Apply
         </button>
       </div>
-      <p>{preview.llmContext}</p>
+      <p>{preview.cognitiveNarrative}</p>
       <small>{preview.sensoryProfile}</small>
       <small>{preview.interactionPressure}</small>
     </div>

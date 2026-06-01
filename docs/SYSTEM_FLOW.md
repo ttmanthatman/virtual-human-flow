@@ -10,7 +10,9 @@
 
 认知模块是另一类 LLM 调用。Appraisal、Memory Recall、Decision、State Update 都是独立的脑区式 LLM 模块；它们可以用结构化输入/输出约束，因为它们不是角色台词生成器，而是系统内部的判断模块。
 
-左侧 UI 里的性格标签、Energy、Mood、Valence、Arousal 是给人快速观察的摘要，不是 LLM 驱动材料。提交给 Reply LLM 的是 `personalitySummary`、`personalityFacets`、`runtime.signalProfiles`、`scene.llmContext` 等自然语言综合描述。
+左侧 UI 里的性格标签、Energy、Mood、Valence、Arousal 是给人快速观察的摘要，不是 LLM 驱动材料。提交给 Reply LLM 的是 `personalitySummary`、`personalityFacets`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative` 等自然语言综合描述。
+
+人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。Reply Prompt 的作用是把这些自然语言材料过一遍，让回复从人物整体状态中长出来，而不是让某个单独指标指挥台词风格。
 
 ## 总体工作流
 
@@ -74,7 +76,7 @@ flowchart TD
     A[用户输入人物或场景描述] --> B[Generate Preview]
     B --> C{预览类型}
     C -- Dossier --> D[补齐 personalitySummary/personalityFacets/concerns/runtimeSignalProfiles]
-    C -- Scene --> E[补齐 sensoryProfile/interactionPressure/llmContext]
+    C -- Scene --> E[补齐 sensoryProfile/interactionPressure/cognitiveNarrative]
     D --> F[左侧显示预览]
     E --> F
     F --> G{用户是否应用}

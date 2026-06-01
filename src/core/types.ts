@@ -24,7 +24,7 @@ export interface RuntimeSignalProfile {
   label: string;
   summary: string;
   considerations: string[];
-  llmContext: string;
+  cognitiveNarrative: string;
 }
 
 export interface CharacterProfile {
@@ -124,7 +124,7 @@ export interface SceneState {
   activeObjects: string[];
   sensoryProfile: string;
   interactionPressure: string;
-  llmContext: string;
+  cognitiveNarrative: string;
 }
 
 export interface EventInput {

@@ -17,6 +17,7 @@
 3. OCC / Appraisal 情绪模型
    - 来源：https://pmc.ncbi.nlm.nih.gov/articles/PMC4243519/
    - 结论：情绪更适合被看成事件与情境的评估结果，而不是一个全局 mood 数字。对本项目的启发是：用 `concern` 和 `relationship` 做核心状态，`derivedMood` 只是派生量。
+   - 补充：这篇文章强调情绪更像由情境意义、想法、感受、倾向和表达共同构成的结果。落地到本项目时，Energy/Mood/Valence/Arousal 不能变成“直接让 LLM 怎么回复”的控制杆，而应该只是综合状态的观察入口。
 
 4. ReAct
    - 来源：https://arxiv.org/abs/2210.03629
@@ -48,3 +49,14 @@
 - 新增 `Prompt Generator` 概念，把认知模块输出翻译成自然语言回复上下文。
 - State Update LLM 在回复生成之后单独判断结构化状态变化。
 - 当前无真实 API 时使用 mock adapter 让界面可跑；它只是占位，不代表正式判断逻辑。
+
+## 2026-06-01 属性叙述与回复指令分离
+
+用户指出：Energy 等状态详情中出现“回复应短、轻、避开解释”这类句子，说明 AI 把人物属性叙述误写成了给 Reply LLM 的直接话术指令。
+
+当前修正：
+
+- 将 `llmContext` 改名为 `cognitiveNarrative`，避免字段名暗示这里可以放 LLM 指令。
+- Runtime signal 和 Scene 只描述内部状态、成因、身体感、注意力落点、关系距离，不写“应该怎么回复”。
+- Prompt Generator 在 Reply Prompt 中重新过一遍性格、价值、边界、表达样本、场景、状态、关切、关系和记忆。
+- Reply Prompt 仍保持自然语言，但不让单个状态指标绕过整体人格和情境综合。
