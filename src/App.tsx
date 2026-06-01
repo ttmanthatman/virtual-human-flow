@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Brain,
@@ -23,15 +23,22 @@ import { runConversationPipeline } from "./pipeline/conversationPipeline";
 import { generateDossierFromDescription, generateSceneFromDescription } from "./pipeline/generators";
 
 const traceSteps: { key: keyof PipelineTrace; label: string; icon: typeof Activity }[] = [
-  { key: "event", label: "Event", icon: Play },
-  { key: "appraisal", label: "Appraisal", icon: Brain },
-  { key: "memoryRecall", label: "Memory Recall", icon: Database },
-  { key: "decision", label: "Decision", icon: ChevronsRight },
-  { key: "llmRequest", label: "Reply Prompt", icon: FileText },
-  { key: "llmOutput", label: "Reply Output", icon: MessageSquare },
-  { key: "stateUpdate", label: "State Update LLM", icon: Braces },
-  { key: "stateDelta", label: "State Delta", icon: Network },
+  { key: "event", label: "事件", icon: Play },
+  { key: "appraisal", label: "评估", icon: Brain },
+  { key: "memoryRecall", label: "记忆召回", icon: Database },
+  { key: "decision", label: "回应决策", icon: ChevronsRight },
+  { key: "llmRequest", label: "回应提示词", icon: FileText },
+  { key: "llmOutput", label: "回应输出", icon: MessageSquare },
+  { key: "stateUpdate", label: "状态更新", icon: Braces },
+  { key: "runtimeSignalEvaluation", label: "信号评估", icon: Activity },
+  { key: "stateDelta", label: "状态变化", icon: Network },
 ];
+
+const concernStatusLabels = {
+  active: "活跃",
+  dormant: "休眠",
+  resolved: "已解决",
+};
 
 export function App() {
   const [state, setState] = useState<CharacterState>(seedState);
@@ -46,6 +53,8 @@ export function App() {
   const [activeStep, setActiveStep] = useState<keyof PipelineTrace>("event");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
+  const [deepseekApiKey, setDeepseekApiKey] = useState("");
+  const [deepseekStatus, setDeepseekStatus] = useState("DeepSeek 密钥尚未检查");
 
   const selectedTraceData = activeTrace ? activeTrace[activeStep] : undefined;
   const traceDisplay = formatTraceDisplay(activeStep, selectedTraceData);
@@ -53,6 +62,80 @@ export function App() {
     () => state.concerns.filter((concern) => state.runtime.activeConcernIds.includes(concern.id)).map((concern) => concern.title),
     [state.concerns, state.runtime.activeConcernIds],
   );
+
+  useEffect(() => {
+    fetch("/api/deepseek-config")
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("无法读取 DeepSeek 配置"))))
+      .then((config: { apiKeySaved: boolean; endpoint?: string; model?: string }) => {
+        setDeepseekStatus(config.apiKeySaved ? "DeepSeek 密钥已保存在项目根目录" : "DeepSeek 密钥尚未保存");
+        setLlmConfig((current) => ({
+          ...current,
+          endpoint: current.endpoint || config.endpoint || "/api/deepseek-chat",
+          model: current.model === "local-mock-llm" && config.model ? config.model : current.model,
+        }));
+      })
+      .catch(() => setDeepseekStatus("DeepSeek 配置接口不可用"));
+  }, []);
+
+  function handleProviderChange(provider: LlmConfig["provider"]) {
+    setLlmConfig((current) => ({
+      ...current,
+      provider,
+      endpoint: provider === "external" ? current.endpoint || "/api/deepseek-chat" : current.endpoint,
+      model: provider === "external" && current.model === "local-mock-llm" ? "deepseek-v4-flash" : current.model,
+    }));
+  }
+
+  async function handleSaveDeepseekConfig() {
+    if (!deepseekApiKey.trim()) {
+      setDeepseekStatus("请输入 DeepSeek 密钥后再保存");
+      return;
+    }
+
+    setDeepseekStatus("正在保存 DeepSeek 密钥...");
+    const response = await fetch("/api/deepseek-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        apiKey: deepseekApiKey.trim(),
+        model: llmConfig.model,
+        endpoint: llmConfig.endpoint || "/api/deepseek-chat",
+      }),
+    });
+
+    if (!response.ok) {
+      setDeepseekStatus("DeepSeek 密钥保存失败");
+      return;
+    }
+
+    setDeepseekApiKey("");
+    setDeepseekStatus("DeepSeek 密钥已保存在项目根目录");
+    setLlmConfig((current) => ({ ...current, provider: "external", endpoint: current.endpoint || "/api/deepseek-chat" }));
+  }
+
+  async function handleTestDeepseekConfig() {
+    setDeepseekStatus("正在测试 DeepSeek 连接...");
+    const response = await fetch(llmConfig.endpoint || "/api/deepseek-chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: llmConfig.model || "deepseek-v4-flash",
+        moduleName: "reply_generation",
+        inputMode: "natural_language",
+        outputMode: "natural_language",
+        prompt: "请只回复：连接成功",
+      }),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      setDeepseekStatus(`DeepSeek 连接失败：${response.status} ${detail.slice(0, 80)}`);
+      return;
+    }
+
+    const data = (await response.json()) as { reply?: string };
+    setDeepseekStatus(data.reply ? `DeepSeek 连接成功：${data.reply}` : "DeepSeek 连接成功");
+  }
 
   async function handleSend(event: FormEvent) {
     event.preventDefault();
@@ -63,7 +146,7 @@ export function App() {
     const userMessage: ChatMessage = {
       id: makeId("msg"),
       speaker: "user",
-      speakerName: "B",
+      speakerName: "当前对话者",
       content: input.trim(),
       timestamp: nowIso(),
     };
@@ -81,7 +164,7 @@ export function App() {
         {
           id: makeId("msg"),
           speaker: result.trace.llmOutput.reply ? "persona" : "system",
-          speakerName: result.trace.llmOutput.reply ? result.nextState.profile.name : "Silence",
+          speakerName: result.trace.llmOutput.reply ? result.nextState.profile.name : "沉默",
           content: reply,
           timestamp: nowIso(),
           trace: result.trace,
@@ -89,7 +172,7 @@ export function App() {
       ]);
       setInput("");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Pipeline failed");
+      setError(caught instanceof Error ? caught.message : "流程运行失败");
     } finally {
       setIsRunning(false);
     }
@@ -103,7 +186,7 @@ export function App() {
       {
         id: makeId("msg"),
         speaker: "system",
-        speakerName: "Dossier",
+        speakerName: "人物档案",
         content: `已生成 ${preview.profile.name} 的人物档案预览：${preview.concerns.map((concern) => concern.title).join("、")}`,
         timestamp: nowIso(),
       },
@@ -119,7 +202,7 @@ export function App() {
       {
         id: makeId("msg"),
         speaker: "system",
-        speakerName: "Dossier",
+        speakerName: "人物档案",
         content: `已应用 ${dossierPreview.profile.name} 的人物档案。`,
         timestamp: nowIso(),
       },
@@ -134,7 +217,7 @@ export function App() {
       {
         id: makeId("msg"),
         speaker: "system",
-        speakerName: "Scene",
+        speakerName: "场景",
         content: `已生成场景预览：${scene.title}。${scene.atmosphere}`,
         timestamp: nowIso(),
       },
@@ -150,7 +233,7 @@ export function App() {
       {
         id: makeId("msg"),
         speaker: "system",
-        speakerName: "Scene",
+        speakerName: "场景",
         content: `已应用场景：${scenePreview.title}。`,
         timestamp: nowIso(),
       },
@@ -175,22 +258,22 @@ export function App() {
             <Sparkles size={18} />
           </div>
           <div>
-            <h1>Persona Studio</h1>
-            <p>事件驱动 + 状态机 + LLM 表达器</p>
+            <h1>虚拟人心流工作台</h1>
+            <p>事件驱动 + 状态机 + 语言模型表达器</p>
           </div>
         </div>
         <div className="topbar-actions">
           <label className="provider-control">
-            <span>LLM</span>
+            <span>语言模型</span>
             <select
               value={llmConfig.provider}
-              onChange={(event) => setLlmConfig((current) => ({ ...current, provider: event.target.value as LlmConfig["provider"] }))}
+              onChange={(event) => handleProviderChange(event.target.value as LlmConfig["provider"])}
             >
-              <option value="simulated">Mock LLM</option>
-              <option value="external">External Endpoint</option>
+              <option value="simulated">模拟语言模型</option>
+              <option value="external">外部接口</option>
             </select>
           </label>
-          <button className="icon-button" type="button" onClick={handleReset} title="Reset">
+          <button className="icon-button" type="button" onClick={handleReset} title="重置">
             <RefreshCcw size={17} />
           </button>
         </div>
@@ -198,7 +281,7 @@ export function App() {
 
       <section className="workspace">
         <aside className="panel state-panel">
-          <PanelTitle icon={UserRound} title="State" />
+          <PanelTitle icon={UserRound} title="状态" />
 
           <div className="persona-card">
             <div>
@@ -223,52 +306,52 @@ export function App() {
           </div>
 
           <div className="metric-grid">
-            <RuntimeMetric label="Energy" value={state.runtime.energy.toFixed(2)} detail={state.runtime.signalProfiles.energy} />
-            <RuntimeMetric label="Mood" value={state.runtime.derivedMood.label} detail={state.runtime.signalProfiles.mood} />
-            <RuntimeMetric label="Valence" value={state.runtime.derivedMood.valence.toFixed(2)} detail={state.runtime.signalProfiles.valence} />
-            <RuntimeMetric label="Arousal" value={state.runtime.derivedMood.arousal.toFixed(2)} detail={state.runtime.signalProfiles.arousal} />
+            <RuntimeMetric label="能量" value={state.runtime.energy.toFixed(2)} detail={state.runtime.signalProfiles.energy} />
+            <RuntimeMetric label="情绪" value={state.runtime.derivedMood.label} detail={state.runtime.signalProfiles.mood} />
+            <RuntimeMetric label="情绪倾向" value={state.runtime.derivedMood.valence.toFixed(2)} detail={state.runtime.signalProfiles.valence} />
+            <RuntimeMetric label="唤醒度" value={state.runtime.derivedMood.arousal.toFixed(2)} detail={state.runtime.signalProfiles.arousal} />
           </div>
 
           <section className="subsection">
-            <h2>Concerns</h2>
+            <h2>关切</h2>
             <div className="list-stack">
               {state.concerns.map((concern) => (
                 <div className="mini-card" key={concern.id}>
                   <div className="mini-card-head">
                     <strong>{concern.title}</strong>
-                    <span className={concern.status === "active" ? "status-active" : "status-muted"}>{concern.status}</span>
+                    <span className={concern.status === "active" ? "status-active" : "status-muted"}>{concernStatusLabels[concern.status]}</span>
                   </div>
                   <p>{concern.description}</p>
                   <div className="meter">
                     <span style={{ width: `${concern.intensity * 100}%` }} />
                   </div>
-                  <small>triggers: {concern.triggers.slice(0, 5).join(" / ")}</small>
+                  <small>触发词：{concern.triggers.slice(0, 5).join(" / ")}</small>
                 </div>
               ))}
             </div>
           </section>
 
           <section className="subsection">
-            <h2>Dossier</h2>
+            <h2>人物档案</h2>
             <textarea value={dossierDescription} onChange={(event) => setDossierDescription(event.target.value)} />
             <button className="primary-button" type="button" onClick={handleGenerateDossier}>
-              <Eye size={16} /> Preview Dossier
+              <Eye size={16} /> 预览人物档案
             </button>
             {dossierPreview ? <DossierPreviewCard preview={dossierPreview} onApply={handleApplyDossier} /> : null}
           </section>
 
           <section className="subsection">
-            <h2>Scene</h2>
+            <h2>场景</h2>
             <textarea value={sceneDescription} onChange={(event) => setSceneDescription(event.target.value)} />
             <button className="secondary-button" type="button" onClick={handleGenerateScene}>
-              <Eye size={16} /> Preview Scene
+              <Eye size={16} /> 预览场景
             </button>
             {scenePreview ? <ScenePreviewCard preview={scenePreview} onApply={handleApplyScene} /> : null}
           </section>
         </aside>
 
         <section className="panel chat-panel">
-          <PanelTitle icon={MessageSquare} title="Chat" />
+          <PanelTitle icon={MessageSquare} title="对话" />
           <div className="scene-strip">
             <strong>{state.scene?.title}</strong>
             <span>{state.scene?.atmosphere}</span>
@@ -292,16 +375,16 @@ export function App() {
           </div>
 
           <form className="composer" onSubmit={handleSend}>
-            <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入一句话，观察多模块 LLM 数据流" />
+            <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入一句话，观察多模块语言模型数据流" />
             <button type="submit" disabled={isRunning}>
-              <Send size={17} /> {isRunning ? "Running" : "Send"}
+              <Send size={17} /> {isRunning ? "运行中" : "发送"}
             </button>
           </form>
           {error ? <p className="error-text">{error}</p> : null}
         </section>
 
         <aside className="panel trace-panel">
-          <PanelTitle icon={Activity} title="Pipeline Trace" />
+          <PanelTitle icon={Activity} title="流程追踪" />
 
           <div className="flow-rail">
             {traceSteps.map((step) => {
@@ -323,23 +406,45 @@ export function App() {
 
           <div className="llm-settings">
             <label>
-              <span>Model</span>
+              <span>模型</span>
               <input value={llmConfig.model} onChange={(event) => setLlmConfig((current) => ({ ...current, model: event.target.value }))} />
             </label>
             <label>
-              <span>Endpoint</span>
+              <span>接口地址</span>
               <input
                 value={llmConfig.endpoint}
                 onChange={(event) => setLlmConfig((current) => ({ ...current, endpoint: event.target.value }))}
-                placeholder="https://your-llm-endpoint"
+                placeholder="https://your-model-endpoint"
               />
             </label>
+            {llmConfig.provider === "external" ? (
+              <>
+                <label>
+                  <span>DeepSeek 密钥</span>
+                  <input
+                    value={deepseekApiKey}
+                    onChange={(event) => setDeepseekApiKey(event.target.value)}
+                    placeholder="输入后保存到项目根目录"
+                    type="password"
+                  />
+                </label>
+                <div className="llm-key-actions">
+                  <button className="secondary-button" type="button" onClick={handleSaveDeepseekConfig}>
+                    保存密钥
+                  </button>
+                  <button className="secondary-button" type="button" onClick={handleTestDeepseekConfig}>
+                    测试连接
+                  </button>
+                </div>
+                <small>{deepseekStatus}</small>
+              </>
+            ) : null}
           </div>
 
           <div className="json-view">
             <div className="json-head">
-              <strong>{traceSteps.find((step) => step.key === activeStep)?.label ?? "Trace"}</strong>
-              <span>{activeTrace ? "live" : "waiting"}</span>
+              <strong>{traceSteps.find((step) => step.key === activeStep)?.label ?? "追踪"}</strong>
+              <span>{activeTrace ? "实时" : "等待中"}</span>
             </div>
             <pre>{traceDisplay}</pre>
           </div>
@@ -400,7 +505,7 @@ function DossierPreviewCard({ preview, onApply }: { preview: CharacterState; onA
       <div className="preview-head">
         <strong>{preview.profile.name} 预览</strong>
         <button type="button" onClick={onApply}>
-          <Check size={14} /> Apply
+          <Check size={14} /> 应用
         </button>
       </div>
       <p>{preview.profile.personalitySummary}</p>
@@ -416,7 +521,7 @@ function ScenePreviewCard({ preview, onApply }: { preview: NonNullable<Character
       <div className="preview-head">
         <strong>{preview.title} 预览</strong>
         <button type="button" onClick={onApply}>
-          <Check size={14} /> Apply
+          <Check size={14} /> 应用
         </button>
       </div>
       <p>{preview.cognitiveNarrative}</p>

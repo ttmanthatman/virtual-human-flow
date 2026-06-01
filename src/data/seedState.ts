@@ -49,14 +49,14 @@ export const seedState: CharacterState = {
   concerns: [
     {
       id: "breakup_with_a",
-      title: "和 A 的关系没有完全结束",
-      object: "A",
+      title: "和前任的关系没有完全结束",
+      object: "前任",
       type: "loss_unresolved_hope",
-      description: "她仍然在意 A，对复合有残余期待，也害怕彻底失去。",
+      description: "她仍然在意前任，对复合有残余期待，也害怕彻底失去。",
       intensity: 0.85,
       valence: -0.7,
       arousal: 0.6,
-      triggers: ["A", "前任", "复合", "周末", "约会", "孤独", "爬山"],
+      triggers: ["前任", "复合", "周末", "约会", "孤独", "爬山"],
       possibleResolutions: ["复合", "确认彻底分手", "时间冲淡"],
       lastActivatedAt: nowIso(),
       createdAt: nowIso(),
@@ -81,22 +81,22 @@ export const seedState: CharacterState = {
   relationships: {
     user_b: {
       targetId: "user_b",
-      targetName: "B",
+      targetName: "当前对话者",
       familiarity: 0.4,
       trust: 0.45,
       affection: 0.1,
       tension: 0.1,
       recentTone: "平淡但友好",
       unresolvedIssues: [],
-      notes: ["B 偶尔会邀请林安参加活动，但并不了解她和 A 的细节。"],
+      notes: ["当前对话者偶尔会邀请林安参加活动，但并不了解她和前任的细节。"],
     },
   },
   shortTermMemory: [],
   longTermMemory: [
     {
       id: "memory_mountain_with_a",
-      summary: "林安曾经和 A 约好周末去爬山，但最后因为争吵没有成行。",
-      relatedPeople: ["A"],
+      summary: "林安曾经和前任约好周末去爬山，但最后因为争吵没有成行。",
+      relatedPeople: ["前任"],
       relatedConcerns: ["breakup_with_a"],
       emotionalValence: -0.72,
       emotionalIntensity: 0.86,
@@ -105,8 +105,8 @@ export const seedState: CharacterState = {
     },
     {
       id: "memory_user_b_hiking",
-      summary: "B 两周前聊过一次徒步，语气轻松，没有恶意。",
-      relatedPeople: ["user_b", "B"],
+      summary: "当前对话者两周前聊过一次徒步，语气轻松，没有恶意。",
+      relatedPeople: ["user_b", "当前对话者"],
       relatedConcerns: [],
       emotionalValence: 0.15,
       emotionalIntensity: 0.24,
@@ -115,7 +115,7 @@ export const seedState: CharacterState = {
     },
   ],
   runtime: {
-    attentionFocus: "还没完全放下 A，但不想表现出来",
+    attentionFocus: "还没完全放下前任，但不想表现出来",
     energy: 0.58,
     derivedMood: {
       valence: -0.34,
@@ -132,14 +132,14 @@ export const seedState: CharacterState = {
       mood: {
         label: "安静、被一点旧事压着",
         summary: "表层看起来平稳，底下有旧关系和未完成约定压着。",
-        considerations: ["周末、约会、爬山会把她带回 A 的记忆", "工作不确定感让她更想保持控制", "陌生或半熟关系里她会更收"],
+        considerations: ["周末、约会、爬山会把她带回前任的记忆", "工作不确定感让她更想保持控制", "陌生或半熟关系里她会更收"],
         cognitiveNarrative: "旧关系余波让她的注意力更容易向内收，表层平稳里带着慢半拍的停顿。",
       },
       valence: {
         label: "偏负面但不外放",
         summary: "她对当前生活不是全面低落，而是某些对象和话题会把感受拉低。",
-        considerations: ["A 相关内容更容易引发负面余波", "B 的普通闲聊不会自动让她低沉", "若出现明确善意，她可以短暂缓和"],
-        cognitiveNarrative: "负面感受主要依附在 A、未完成约定和失去感上，普通善意互动仍可能让她短暂缓和。",
+        considerations: ["前任相关内容更容易引发负面余波", "当前对话者的普通闲聊不会自动让她低沉", "若出现明确善意，她可以短暂缓和"],
+        cognitiveNarrative: "负面感受主要依附在前任、未完成约定和失去感上，普通善意互动仍可能让她短暂缓和。",
       },
       arousal: {
         label: "内在被牵动，外表压低",
@@ -168,8 +168,8 @@ export const seedMessages: ChatMessage[] = [
   {
     id: "msg_seed_1",
     speaker: "system",
-    speakerName: "System",
-    content: "MVP 已载入：输入一句话后，右侧会显示完整 pipeline 调用链。",
+    speakerName: "系统",
+    content: "最小原型已载入：输入一句话后，右侧会显示完整流程调用链。",
     timestamp: nowIso(),
   },
 ];

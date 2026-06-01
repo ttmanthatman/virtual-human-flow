@@ -35,10 +35,12 @@ npm run dev
 
 - 左侧：角色状态、关切、一键人物档案生成、一键场景生成。
 - 中间：聊天室。
-- 右侧：pipeline trace，展示 `Event -> Appraisal LLM -> Memory Recall LLM -> Decision LLM -> Reply Prompt -> Reply Output -> State Update LLM -> State Delta`。
+- 右侧：流程追踪，展示 `事件 -> 评估 -> 记忆召回 -> 回应决策 -> 回应提示词 -> 回应输出 -> 状态更新 -> 信号评估 -> 状态变化`。
 
-当前 LLM 默认为 mock adapter，只用于没有真实 API 时演示流程。正式架构中，每个认知步骤都必须调用 LLM：Appraisal、Memory Recall、Decision、State Update 都是独立的 LLM 模块。
+当前 LLM 默认为 mock adapter，只用于没有真实 API 时演示流程。正式架构中，每个认知步骤都必须调用 LLM：Appraisal、Memory Recall、Decision、State Update、Runtime Signal Evaluation 都是独立的 LLM 模块。
 
 角色回复这一步是例外中的硬规则：Reply LLM 只接收自然语言上下文，只生成角色说出口的话，不混入 JSON、字段名、输出约束或类似编程语言的内容。结构化状态更新由后续 State Update LLM 模块单独判断。
 
-左侧简化指标只用于人快速观察。性格标签、Energy、Mood、Valence、Arousal 等显示值不是提交给 LLM 的驱动材料；Reply LLM 使用的是人物档案、状态考量和场景语境的自然语言综合描述。Dossier 和 Scene 生成先产出预览，确认后再应用。
+左侧简化指标只用于人快速观察。性格标签、能量、情绪、情绪倾向、唤醒度等显示值不是提交给 LLM 的驱动材料；Reply LLM 使用的是人物档案、状态考量和场景语境的自然语言综合描述。人物档案和场景生成先产出预览，确认后再应用。
+
+DeepSeek 本地测试通过 Vite 代理 `/api/deepseek-chat` 访问官方 Chat Completions 接口。前端保存的密钥写入项目根目录 `.deepseek.local.json`，该文件已加入 `.gitignore`。

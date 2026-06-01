@@ -27,6 +27,17 @@ export interface RuntimeSignalProfile {
   cognitiveNarrative: string;
 }
 
+export interface RuntimeSignalEvaluationResult {
+  energy: number;
+  derivedMood: {
+    valence: number;
+    arousal: number;
+    label: string;
+  };
+  signalProfiles: Record<RuntimeSignalKey, RuntimeSignalProfile>;
+  rationale: string;
+}
+
 export interface CharacterProfile {
   id: string;
   name: string;
@@ -168,7 +179,7 @@ export interface ResponseDecision {
   rationale: string;
 }
 
-export type CognitiveModuleName = "appraisal" | "memory_retrieval" | "response_decision" | "reply_generation" | "state_update";
+export type CognitiveModuleName = "appraisal" | "memory_retrieval" | "response_decision" | "reply_generation" | "state_update" | "runtime_signal_evaluation";
 
 export interface CognitiveModuleRequest {
   moduleName: CognitiveModuleName;
@@ -238,6 +249,7 @@ export interface PipelineTrace {
   llmRequest: ExpressionLlmRequest;
   llmOutput: ReplyOutput;
   stateUpdate: CognitiveModuleTrace<StateUpdatePlan>;
+  runtimeSignalEvaluation: CognitiveModuleTrace<RuntimeSignalEvaluationResult>;
   stateDelta: StateDelta;
 }
 

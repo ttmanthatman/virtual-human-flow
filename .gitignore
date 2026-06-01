@@ -4,6 +4,7 @@ tmp/
 .DS_Store
 .env
 .env.local
+.deepseek.local.json
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts

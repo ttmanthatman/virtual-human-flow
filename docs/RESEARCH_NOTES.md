@@ -16,12 +16,12 @@
 
 3. OCC / Appraisal 情绪模型
    - 来源：https://pmc.ncbi.nlm.nih.gov/articles/PMC4243519/
-   - 结论：情绪更适合被看成事件与情境的评估结果，而不是一个全局 mood 数字。对本项目的启发是：用 `concern` 和 `relationship` 做核心状态，`derivedMood` 只是派生量。
-   - 补充：这篇文章强调情绪更像由情境意义、想法、感受、倾向和表达共同构成的结果。落地到本项目时，Energy/Mood/Valence/Arousal 不能变成“直接让 LLM 怎么回复”的控制杆，而应该只是综合状态的观察入口。
+   - 结论：情绪更适合被看成事件与情境的评估结果，而不是一个全局情绪数字。对本项目的启发是：用 `concern` 和 `relationship` 做核心状态，`derivedMood` 只是派生量。
+   - 补充：这篇文章强调情绪更像由情境意义、想法、感受、倾向和表达共同构成的结果。落地到本项目时，能量、情绪、情绪倾向、唤醒度不能变成“直接让 LLM 怎么回复”的控制杆，而应该只是综合状态的观察入口。
 
 4. ReAct
    - 来源：https://arxiv.org/abs/2210.03629
-   - 结论：推理和行动交替有助于让系统可解释、可追踪。对本项目的启发是：把 Event、Appraisal LLM、Memory Recall LLM、Decision LLM、Reply Prompt、Reply Output、State Update LLM、State Delta 逐步展示。
+   - 结论：推理和行动交替有助于让系统可解释、可追踪。对本项目的启发是：把事件、评估、记忆召回、回应决策、回应提示词、回应输出、状态更新、状态变化逐步展示。
 
 5. OpenAI Structured Outputs / Responses API
    - 来源：https://platform.openai.com/docs/guides/structured-outputs
@@ -52,7 +52,7 @@
 
 ## 2026-06-01 属性叙述与回复指令分离
 
-用户指出：Energy 等状态详情中出现“回复应短、轻、避开解释”这类句子，说明 AI 把人物属性叙述误写成了给 Reply LLM 的直接话术指令。
+用户指出：能量等状态详情中出现“回复应短、轻、避开解释”这类句子，说明 AI 把人物属性叙述误写成了给 Reply LLM 的直接话术指令。
 
 当前修正：
 

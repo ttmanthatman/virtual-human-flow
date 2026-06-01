@@ -77,7 +77,7 @@ export function generateNaturalPromptRequest(
     `她平常的说话质感是：${state.profile.speakingStyle}`,
     `类似情境里的表达样本是：${exampleNarrative}`,
     `此刻的场景语境是：${sceneNarrative}`,
-    `界面上的能量、心情、情绪方向和唤起程度只是给人看的观察摘要。她内部真正参与反应的是这些自然语言状态：${runtimeNarrative}`,
+    `界面上的能量、情绪、情绪倾向和唤醒度只是给人看的观察摘要。她内部真正参与反应的是这些自然语言状态：${runtimeNarrative}`,
     `${event.speakerName ?? "对方"}刚刚对她说：「${event.content}」`,
     concernNarrative,
     relationshipNarrative,

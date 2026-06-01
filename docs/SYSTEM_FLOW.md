@@ -10,7 +10,7 @@
 
 认知模块是另一类 LLM 调用。Appraisal、Memory Recall、Decision、State Update 都是独立的脑区式 LLM 模块；它们可以用结构化输入/输出约束，因为它们不是角色台词生成器，而是系统内部的判断模块。
 
-左侧 UI 里的性格标签、Energy、Mood、Valence、Arousal 是给人快速观察的摘要，不是 LLM 驱动材料。提交给 Reply LLM 的是 `personalitySummary`、`personalityFacets`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative` 等自然语言综合描述。
+左侧 UI 里的性格标签、能量、情绪、情绪倾向、唤醒度是给人快速观察的摘要。它们由专门的 Runtime Signal Evaluation LLM 模块评估，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `personalitySummary`、`personalityFacets`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative` 等自然语言综合描述。
 
 人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。Reply Prompt 的作用是把这些自然语言材料过一遍，让回复从人物整体状态中长出来，而不是让某个单独指标指挥台词风格。
 
@@ -57,26 +57,27 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    U[用户在 Chat 输入消息] --> E[EventInput]
-    E --> A[Appraisal LLM: 判断事件触发关切]
-    A --> M[Memory Recall LLM: 判断哪些记忆浮现]
-    M --> D[Decision LLM: 判断是否回应和回应姿态]
+    U[用户在对话区输入消息] --> E[事件输入]
+    E --> A[评估模块: 判断事件触发关切]
+    A --> M[记忆召回模块: 判断哪些记忆浮现]
+    M --> D[回应决策模块: 判断是否回应和回应姿态]
     D --> P[Prompt Generator: 生成自然语言回复上下文]
     P --> R[Reply LLM: 只生成角色台词]
-    R --> S[State Update LLM: 判断状态和记忆变化]
-    S --> W[确定性写回: clamp/append/commit]
+    R --> S[状态更新模块: 判断状态和记忆变化]
+    S --> G[信号评估模块: 评估能量/情绪/情绪倾向/唤醒度]
+    G --> W[确定性写回: clamp/append/commit]
     W --> C[聊天室显示回复]
-    W --> T[Pipeline Trace 面板显示每个 LLM 模块]
+    W --> T[流程追踪面板显示每个 LLM 模块]
 ```
 
 ## 生成预览路径
 
 ```mermaid
 flowchart TD
-    A[用户输入人物或场景描述] --> B[Generate Preview]
+    A[用户输入人物或场景描述] --> B[生成预览]
     B --> C{预览类型}
-    C -- Dossier --> D[补齐 personalitySummary/personalityFacets/concerns/runtimeSignalProfiles]
-    C -- Scene --> E[补齐 sensoryProfile/interactionPressure/cognitiveNarrative]
+    C -- 人物档案 --> D[补齐 personalitySummary/personalityFacets/concerns/runtimeSignalProfiles]
+    C -- 场景 --> E[补齐 sensoryProfile/interactionPressure/cognitiveNarrative]
     D --> F[左侧显示预览]
     E --> F
     F --> G{用户是否应用}
@@ -88,12 +89,12 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    LEFT[左侧 State/Dossier/Scene] --> PIPE[Conversation Pipeline]
-    CHAT[中间 Chat] --> PIPE
-    PIPE --> TRACE[右侧 Pipeline Trace]
-    TRACE --> JSON[Event/Appraisal LLM/Memory LLM/Decision LLM/Reply Prompt/Reply Output/State Update LLM/State Delta]
-    LEFT --> GEN1[Generate Dossier]
-    LEFT --> GEN2[Generate Scene]
+    LEFT[左侧状态/人物档案/场景] --> PIPE[对话流程]
+    CHAT[中间对话] --> PIPE
+    PIPE --> TRACE[右侧流程追踪]
+    TRACE --> JSON[事件/评估/记忆/决策/回应提示词/回应输出/状态更新/信号评估/状态变化]
+    LEFT --> GEN1[生成人物档案]
+    LEFT --> GEN2[生成场景]
 ```
 
 ## 待确认 MVP 架构问题
@@ -126,9 +127,9 @@ flowchart LR
 | 系统流程 | initialized | 已建立初始工作流图 |
 | MVP 业务模块 | initialized | 已实现本地可运行的三栏工作台 |
 | 人物档案生成 | initialized | 基于描述生成 profile 和 concerns，目前为规则版 |
-| 人物档案预览 | initialized | 先显示 Dossier 预览，用户确认后应用 |
+| 人物档案预览 | initialized | 先显示人物档案预览，用户确认后应用 |
 | 场景生成 | initialized | 基于描述生成 scene，目前为规则版 |
-| 场景预览 | initialized | 先显示 Scene 预览，用户确认后应用 |
-| 同步对话路径 | initialized | Event -> Appraisal LLM -> Memory LLM -> Decision LLM -> Reply Prompt -> Reply Output -> State Update LLM -> State Delta |
-| 真实 LLM 接入 | pending | 当前为 mock adapter；正式运行需要后端代理和 API Key，每个认知模块都应调用 LLM |
+| 场景预览 | initialized | 先显示场景预览，用户确认后应用 |
+| 同步对话路径 | initialized | 事件 -> 评估 -> 记忆召回 -> 回应决策 -> 回应提示词 -> 回应输出 -> 状态更新 -> 信号评估 -> 状态变化 |
+| 真实 LLM 接入 | initialized | 当前支持本地 DeepSeek 代理和根目录密钥文件；没有密钥时回到 mock adapter |
 | 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现 |
