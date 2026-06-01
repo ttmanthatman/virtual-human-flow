@@ -166,7 +166,6 @@ export interface ExpressionLlmRequest {
   provider: "simulated" | "external";
   model: string;
   prompt: string;
-  generatorNotes: string[];
 }
 
 export interface ReplyOutput {

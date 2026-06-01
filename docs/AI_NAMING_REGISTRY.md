@@ -80,7 +80,6 @@
 | `scene` | `CharacterState` | `SceneState` | 当前场景 | seed/generator | UI/promptBuilder | implemented |
 | `pipelineTrace` | `ChatMessage` | `PipelineTrace` | 一轮对话所有中间结果 | conversationPipeline | Pipeline Debug Panel | implemented |
 | `prompt` | `ExpressionLlmRequest` | `string` | 交给 Reply LLM 的自然语言上下文 | promptGenerator | llmClient/UI | implemented |
-| `generatorNotes` | `ExpressionLlmRequest` | `string[]` | 说明 Reply Prompt 的自然语言边界 | promptGenerator | UI/AI | implemented |
 | `outputContract` | `CognitiveModuleRequest` | `string` | 认知模块结构化输出约束，不进入 Reply LLM prompt | cognitive modules | cognitiveModuleClient/backend | implemented |
 | `stateUpdate` | `PipelineTrace` | `CognitiveModuleTrace<StateUpdatePlan>` | State Update LLM 的完整调用记录 | stateUpdater | Pipeline Debug Panel | implemented |
 

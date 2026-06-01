@@ -14,7 +14,7 @@ import {
   Sparkles,
   UserRound,
 } from "lucide-react";
-import { ChatMessage, CharacterState, ExpressionLlmRequest, LlmConfig, PipelineTrace } from "./core/types";
+import { ChatMessage, CharacterState, ExpressionLlmRequest, LlmConfig, PipelineTrace, ReplyOutput } from "./core/types";
 import { makeId, nowIso } from "./core/utils";
 import { defaultLlmConfig, seedMessages, seedState } from "./data/seedState";
 import { runConversationPipeline } from "./pipeline/conversationPipeline";
@@ -304,14 +304,12 @@ function formatTraceDisplay(activeStep: keyof PipelineTrace, selectedTraceData: 
 
   if (activeStep === "llmRequest") {
     const request = selectedTraceData as ExpressionLlmRequest;
-    return [
-      "Natural Prompt Sent To Reply LLM",
-      "",
-      request.prompt,
-      "",
-      "Generator Notes",
-      ...request.generatorNotes.map((note) => `- ${note}`),
-    ].join("\n");
+    return request.prompt;
+  }
+
+  if (activeStep === "llmOutput") {
+    const output = selectedTraceData as ReplyOutput;
+    return output.reply || "（林安看见了，但没有回复。）";
   }
 
   return JSON.stringify(selectedTraceData, null, 2);

@@ -73,11 +73,6 @@ export function generateNaturalPromptRequest(
     provider,
     model,
     prompt,
-    generatorNotes: [
-      "结构化 pipeline 结果只在 Prompt Generator 内部被理解，最终交给表达 LLM 的内容只有自然语言。",
-      "表达 LLM 不携带 JSON、字段名、输出契约或工程术语。",
-      "状态更新、关系更新等结构化判断由后续 state_update 认知模块单独调用 LLM 完成。",
-    ],
   };
 }
 
