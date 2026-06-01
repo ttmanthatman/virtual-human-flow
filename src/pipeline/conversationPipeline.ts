@@ -2,7 +2,7 @@ import { CharacterState, LlmConfig, PipelineTrace } from "../core/types";
 import { runAppraisal } from "./appraisal";
 import { retrieveMemory } from "./memoryRetrieval";
 import { decideResponse } from "./responseDecision";
-import { buildPromptRequest } from "./promptBuilder";
+import { generateNaturalPromptRequest } from "./promptBuilder";
 import { runLlm } from "./llmClient";
 import { applyStateUpdates } from "./stateUpdater";
 
@@ -29,7 +29,7 @@ export async function runConversationPipeline({ content, state, llmConfig }: Run
   const appraisal = runAppraisal(event, state);
   const memoryRecall = retrieveMemory(event, appraisal, state);
   const decision = decideResponse(appraisal, state);
-  const llmRequest = buildPromptRequest(event, state, appraisal, memoryRecall, decision, llmConfig.provider, llmConfig.model);
+  const llmRequest = generateNaturalPromptRequest(event, state, appraisal, memoryRecall, decision, llmConfig.provider, llmConfig.model);
   const llmOutput = await runLlm(llmRequest, llmConfig, { event, state, decision });
   const { nextState, stateDelta } = applyStateUpdates(state, event, llmOutput);
 

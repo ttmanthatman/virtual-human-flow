@@ -29,8 +29,9 @@
 | 关系档案 | `relationship` | domain entity | 虚拟人对某个对象的独立关系状态 | `friendship` |
 | 场景 | `scene` | domain entity | 当前对话发生的环境和氛围 | `background` |
 | 管线追踪 | `pipelineTrace` | runtime object | 一轮对话的完整中间结果 | `debugInfo` |
-| LLM 请求 | `llmRequest` | runtime object | 最后输入给 LLM 的 prompt 和结构要求 | `promptData` |
+| LLM 请求 | `llmRequest` | runtime object | 最后输入给 LLM 的自然语言 prompt 和独立输出约束 | `promptData` |
 | LLM 输出 | `llmOutput` | runtime object | LLM 回复和状态更新 JSON | `aiResult` |
+| Prompt 生成器 | `promptGenerator` | pipeline module | 把结构化中间结果转换成自然语言上下文 | `promptBuilder` 作为概念名 |
 
 ## 模块登记表
 
@@ -42,7 +43,7 @@
 | Appraisal | `src/pipeline/appraisal.ts` | 判断事件触发了哪些关切 | `EventInput`, `CharacterState` | `AppraisalResult` | Conversation Pipeline | Core Types |
 | Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 召回短期上下文和长期记忆 | event, appraisal, state | `MemoryRecallResult` | Conversation Pipeline | Core Types |
 | Response Decision | `src/pipeline/responseDecision.ts` | 决定是否回应和回应姿态 | appraisal, state | `ResponseDecision` | Conversation Pipeline | Core Types |
-| Prompt Builder | `src/pipeline/promptBuilder.ts` | 构造最终输入给 LLM 的材料 | event, state, appraisal, recall, decision | `LlmRequest` | Conversation Pipeline | Core Types |
+| Prompt Generator | `src/pipeline/promptBuilder.ts` | 将结构化 pipeline 结果转成自然语言 prompt，并单独保留输出约束 | event, state, appraisal, recall, decision | `LlmRequest` | Conversation Pipeline | Core Types |
 | LLM Client | `src/pipeline/llmClient.ts` | 调用模拟 LLM 或外部 endpoint | `LlmRequest`, `LlmConfig` | `LlmOutput` | Conversation Pipeline | 外部 LLM endpoint |
 | State Updater | `src/pipeline/stateUpdater.ts` | 校验并应用状态增量 | state, event, llmOutput | next state, `StateDelta` | Conversation Pipeline | Core Types |
 | Conversation Pipeline | `src/pipeline/conversationPipeline.ts` | 串联一轮同步响应路径 | content, state, llmConfig | next state, trace | App Shell | pipeline steps |
@@ -56,7 +57,7 @@
 | `runAppraisal` | `src/pipeline/appraisal.ts` | 事件到关切激活 | event, state | AppraisalResult | 无 | implemented |
 | `retrieveMemory` | `src/pipeline/memoryRetrieval.ts` | 召回相关记忆 | event, appraisal, state | MemoryRecallResult | 无 | implemented |
 | `decideResponse` | `src/pipeline/responseDecision.ts` | 决定回应姿态 | appraisal, state | ResponseDecision | 无 | implemented |
-| `buildPromptRequest` | `src/pipeline/promptBuilder.ts` | 构造 LLM 输入 | event, state, appraisal, recall, decision, provider, model | LlmRequest | 无 | implemented |
+| `generateNaturalPromptRequest` | `src/pipeline/promptBuilder.ts` | 生成自然语言 LLM 输入，避免结构化字段污染角色风格 | event, state, appraisal, recall, decision, provider, model | LlmRequest | 无 | implemented |
 | `runLlm` | `src/pipeline/llmClient.ts` | 模拟或调用外部 LLM | request, config, simulateInput | LlmOutput | 可调用外部 endpoint | implemented |
 | `applyStateUpdates` | `src/pipeline/stateUpdater.ts` | 应用 LLM 状态更新 | state, event, llmOutput | nextState, StateDelta | 写入记忆和状态 | implemented |
 | `generateDossierFromDescription` | `src/pipeline/generators.ts` | 一键生成人物档案 | description, current state | CharacterState | 替换 profile/concerns | implemented |
@@ -74,6 +75,9 @@
 | `runtime.derivedMood` | `RuntimeState` | object | 从 concerns 派生的当前心情 | seed/stateUpdater | UI/promptBuilder | implemented |
 | `scene` | `CharacterState` | `SceneState` | 当前场景 | seed/generator | UI/promptBuilder | implemented |
 | `pipelineTrace` | `ChatMessage` | `PipelineTrace` | 一轮对话所有中间结果 | conversationPipeline | Pipeline Debug Panel | implemented |
+| `prompt` | `LlmRequest` | `string` | 交给 LLM 的自然语言上下文 | promptGenerator | llmClient/UI | implemented |
+| `outputContract` | `LlmRequest` | `string` | LLM 结构化输出约束，真实后端应使用 Structured Outputs 应用 | promptGenerator | llmClient/backend | implemented |
+| `generatorNotes` | `LlmRequest` | `string[]` | 说明 Prompt Generator 的转换原则 | promptGenerator | UI/AI | implemented |
 
 ## 外部服务登记表
 

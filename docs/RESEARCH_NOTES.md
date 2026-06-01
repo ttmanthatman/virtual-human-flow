@@ -36,3 +36,14 @@
 | 主动性 | 暂未实现异步后台 | 先完成同步响应路径 |
 | LLM | simulated adapter + external endpoint 输入框 | 没有 API Key 和后端前，先保证数据流可见 |
 | UI | 三栏工作台 | 用户需要直观看到状态、聊天和 pipeline |
+
+## 2026-06-01 Prompt Generator 修正
+
+用户指出：不能把结构化语言和自然语言混在同一个 prompt 里直接交给 LLM，否则会污染虚拟人的输出风格。
+
+当前修正：
+
+- Appraisal、Memory Recall、Decision 继续保持结构化，供系统调试。
+- 新增 `Prompt Generator` 概念，把结构化中间结果翻译成自然语言上下文。
+- 最终 `prompt` 不再包含 JSON、字段名、激活分、工程术语。
+- JSON 输出约束改为单独的 `outputContract`，真实 LLM 后端应使用 Structured Outputs 或类似机制应用。

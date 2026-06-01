@@ -149,7 +149,8 @@ export interface LlmRequest {
   provider: "simulated" | "external";
   model: string;
   prompt: string;
-  expectedJsonShape: string;
+  outputContract: string;
+  generatorNotes: string[];
 }
 
 export interface LlmOutput {

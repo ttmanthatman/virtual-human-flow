@@ -14,7 +14,7 @@ import {
   Sparkles,
   UserRound,
 } from "lucide-react";
-import { ChatMessage, CharacterState, LlmConfig, PipelineTrace } from "./core/types";
+import { ChatMessage, CharacterState, LlmConfig, LlmRequest, PipelineTrace } from "./core/types";
 import { makeId, nowIso } from "./core/utils";
 import { defaultLlmConfig, seedMessages, seedState } from "./data/seedState";
 import { runConversationPipeline } from "./pipeline/conversationPipeline";
@@ -25,7 +25,7 @@ const traceSteps: { key: keyof PipelineTrace; label: string; icon: typeof Activi
   { key: "appraisal", label: "Appraisal", icon: Brain },
   { key: "memoryRecall", label: "Memory Recall", icon: Database },
   { key: "decision", label: "Decision", icon: ChevronsRight },
-  { key: "llmRequest", label: "Prompt", icon: FileText },
+  { key: "llmRequest", label: "Prompt Generator", icon: FileText },
   { key: "llmOutput", label: "LLM Output", icon: Braces },
   { key: "stateDelta", label: "State Delta", icon: Network },
 ];
@@ -43,6 +43,7 @@ export function App() {
   const [error, setError] = useState("");
 
   const selectedTraceData = activeTrace ? activeTrace[activeStep] : undefined;
+  const traceDisplay = formatTraceDisplay(activeStep, selectedTraceData);
   const activeConcernTitles = useMemo(
     () => state.concerns.filter((concern) => state.runtime.activeConcernIds.includes(concern.id)).map((concern) => concern.title),
     [state.concerns, state.runtime.activeConcernIds],
@@ -287,12 +288,35 @@ export function App() {
               <strong>{traceSteps.find((step) => step.key === activeStep)?.label ?? "Trace"}</strong>
               <span>{activeTrace ? "live" : "waiting"}</span>
             </div>
-            <pre>{JSON.stringify(selectedTraceData ?? { hint: "发送一条消息后，这里显示每一步调用数据。" }, null, 2)}</pre>
+            <pre>{traceDisplay}</pre>
           </div>
         </aside>
       </section>
     </main>
   );
+}
+
+function formatTraceDisplay(activeStep: keyof PipelineTrace, selectedTraceData: PipelineTrace[keyof PipelineTrace] | undefined) {
+  if (!selectedTraceData) {
+    return JSON.stringify({ hint: "发送一条消息后，这里显示每一步调用数据。" }, null, 2);
+  }
+
+  if (activeStep === "llmRequest") {
+    const request = selectedTraceData as LlmRequest;
+    return [
+      "Natural Prompt Sent To LLM",
+      "",
+      request.prompt,
+      "",
+      "Output Contract (separate from prompt)",
+      request.outputContract,
+      "",
+      "Generator Notes",
+      ...request.generatorNotes.map((note) => `- ${note}`),
+    ].join("\n");
+  }
+
+  return JSON.stringify(selectedTraceData, null, 2);
 }
 
 function PanelTitle({ icon: Icon, title }: { icon: typeof Activity; title: string }) {

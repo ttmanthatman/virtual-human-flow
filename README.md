@@ -34,6 +34,6 @@ npm run dev
 
 - 左侧：角色状态、关切、一键人物档案生成、一键场景生成。
 - 中间：聊天室。
-- 右侧：pipeline trace，展示 `Event -> Appraisal -> Memory Recall -> Decision -> Prompt -> LLM Output -> State Delta`。
+- 右侧：pipeline trace，展示 `Event -> Appraisal -> Memory Recall -> Decision -> Prompt Generator -> LLM Output -> State Delta`。
 
-当前 LLM 默认为 simulated adapter。真实 LLM 接入需要后端代理，避免把 API Key 暴露在浏览器里。
+当前 LLM 默认为 simulated adapter。真实 LLM 接入需要后端代理，避免把 API Key 暴露在浏览器里。`Prompt Generator` 会把结构化中间结果转换成自然语言上下文，再交给 LLM；JSON 输出约束单独通过 `outputContract` 传给后端。

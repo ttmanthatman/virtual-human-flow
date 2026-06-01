@@ -18,7 +18,7 @@ export async function runLlm(
       body: JSON.stringify({
         model: config.model,
         prompt: request.prompt,
-        expectedJsonShape: request.expectedJsonShape,
+        outputContract: request.outputContract,
       }),
     });
 

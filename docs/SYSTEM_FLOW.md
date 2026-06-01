@@ -6,6 +6,8 @@
 
 当前已建立第一版本地 MVP：三栏工作台展示人物状态、聊天室和 pipeline debug。系统能一键根据描述生成人物档案，一键生成场景，并在发送消息后展示 Event 到 LLM Output 再到 State Delta 的完整数据流。
 
+重要约束：结构化 pipeline 数据不能直接拼进最终 LLM prompt。`Prompt Generator` 必须先把结构化结果翻译成自然语言上下文，再交给 LLM。结构化 JSON 输出约束单独作为 `outputContract` 保留，真实后端应通过 Structured Outputs 或等价机制应用。
+
 ## 总体工作流
 
 ```mermaid
@@ -53,7 +55,7 @@ flowchart TD
     E --> A[runAppraisal: 事件触发关切]
     A --> M[retrieveMemory: 召回短期和长期记忆]
     M --> D[decideResponse: 是否回应和回应姿态]
-    D --> P[buildPromptRequest: 组装最终 LLM 输入]
+    D --> P[generateNaturalPromptRequest: 生成自然语言上下文]
     P --> L{runLlm}
     L -- simulated --> S[本地模拟结构化 JSON]
     L -- external endpoint --> X[外部 LLM 服务]
@@ -71,7 +73,7 @@ flowchart LR
     LEFT[左侧 State/Dossier/Scene] --> PIPE[Conversation Pipeline]
     CHAT[中间 Chat] --> PIPE
     PIPE --> TRACE[右侧 Pipeline Trace]
-    TRACE --> JSON[Event/Appraisal/Memory/Decision/Prompt/LLM Output/State Delta]
+    TRACE --> JSON[Event/Appraisal/Memory/Decision/Prompt Generator/LLM Output/State Delta]
     LEFT --> GEN1[Generate Dossier]
     LEFT --> GEN2[Generate Scene]
 ```
@@ -107,6 +109,6 @@ flowchart LR
 | MVP 业务模块 | initialized | 已实现本地可运行的三栏工作台 |
 | 人物档案生成 | initialized | 基于描述生成 profile 和 concerns，目前为规则版 |
 | 场景生成 | initialized | 基于描述生成 scene，目前为规则版 |
-| 同步对话路径 | initialized | Event -> Appraisal -> Memory -> Decision -> Prompt -> LLM Output -> State Delta |
+| 同步对话路径 | initialized | Event -> Appraisal -> Memory -> Decision -> Prompt Generator -> LLM Output -> State Delta |
 | 真实 LLM 接入 | pending | 当前为 simulated adapter；后续需要后端代理和 API Key |
 | 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现 |
