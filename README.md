@@ -18,6 +18,7 @@
 - `docs/AI_NAMING_REGISTRY.md`: 给 AI 使用的命名与关系登记表。
 - `docs/SYSTEM_FLOW.md`: 给用户和 AI 共同阅读的系统调用、数据流和架构图。
 - `docs/RESEARCH_NOTES.md`: 动手前调研过的相近项目、原理和踩坑。
+- `docs/ERROR_INSPECTIONS.md`: 用户指出错误后的勘验、根因和流程修正记录。
 
 ## 本地运行
 
