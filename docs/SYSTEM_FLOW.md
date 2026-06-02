@@ -115,7 +115,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     E[事件输入] --> Q[合成 naturalLanguageQuery]
-    A --> N[认知模块输出归一化]
+    A[事件评估输出] --> N[认知模块输出归一化]
     N --> Q
     C[激活关切] --> Q
     R[说话者关系] --> Q
@@ -193,6 +193,352 @@ flowchart TD
     V --> Z
     W --> Z
     X --> Z
+```
+
+## 模块级流程图
+
+以下流程图按 `docs/AI_NAMING_REGISTRY.md` 的模块登记表逐一展开。每张图只说明该模块自己的输入、内部步骤、输出和主要下游，方便逐个检查边界。
+
+### App Shell
+
+```mermaid
+flowchart TD
+    U["浏览器用户"] --> UI["App Shell: 三栏工作台"]
+    UI --> DOS["多人档案状态: dossiers/activeDossierId"]
+    UI --> CFG["DeepSeek 配置状态"]
+    UI --> CHAT["聊天输入和消息列表"]
+    CHAT --> PIPE["runConversationPipeline"]
+    PIPE --> TRACE["liveTrace / activeTrace"]
+    PIPE --> STATE["next CharacterState"]
+    STATE --> DOS
+    TRACE --> PANEL["右侧流程追踪面板"]
+    CFG --> PANEL
+    UI --> PREVIEW["人物/场景预览操作"]
+    PREVIEW --> GEN["Generators / Profile Scene Consistency"]
+```
+
+### Core Types
+
+```mermaid
+flowchart TD
+    TYPES["Core Types"] --> STATE["CharacterState / PersonaDossier"]
+    TYPES --> EVENT["EventInput"]
+    TYPES --> TRACE["PipelineTrace / CognitiveModuleTrace"]
+    TYPES --> MEMORY["ShortTermMemory / LongTermMemory / MemoryRecallResult"]
+    TYPES --> LLM["LlmConfig / CognitiveModuleRequest / ExpressionLlmRequest"]
+    STATE --> MODULES["全 pipeline 模块共享接口"]
+    EVENT --> MODULES
+    TRACE --> UI["App Shell trace 展示"]
+    LLM --> CLIENTS["Cognitive Module Client / LLM Client"]
+```
+
+### Seed State
+
+```mermaid
+flowchart TD
+    SEED["Seed State"] --> PROFILE["默认人物档案: 林安"]
+    SEED --> CONCERNS["初始关切"]
+    SEED --> REL["初始关系档案"]
+    SEED --> MEM["初始长期记忆"]
+    SEED --> RUNTIME["初始 runtime signals"]
+    SEED --> SCENE["初始场景"]
+    PROFILE --> APP["App 初次加载"]
+    CONCERNS --> APP
+    REL --> APP
+    MEM --> APP
+    RUNTIME --> APP
+    SCENE --> APP
+```
+
+### Cognitive Module Client
+
+```mermaid
+flowchart TD
+    REQ["CognitiveModuleRequest"] --> CLIENT["runCognitiveModule"]
+    CFG["LlmConfig"] --> CLIENT
+    CLIENT --> CHECK{"endpoint 可用?"}
+    CHECK -- "是" --> FETCH["POST /api/deepseek-chat"]
+    FETCH --> STREAM{"SSE?"}
+    STREAM -- "是" --> READ["readEventStream: 累积 delta / 解析 final JSON"]
+    STREAM -- "否" --> JSON["response.json"]
+    CHECK -- "否" --> MOCK["mockOutput"]
+    READ --> TRACE["CognitiveModuleTrace"]
+    JSON --> TRACE
+    MOCK --> TRACE
+    TRACE --> CALLER["Appraisal/Memory/Decision/State/Signals/Generators"]
+```
+
+### Appraisal
+
+```mermaid
+flowchart TD
+    E["EventInput"] --> LOCAL["本地候选: 触发词/对象/关系/强度"]
+    S["CharacterState"] --> LOCAL
+    LOCAL --> MOCK["本地 fallback AppraisalResult"]
+    E --> PROMPT["组装 Appraisal LLM prompt"]
+    S --> PROMPT
+    PROMPT --> CLIENT["Cognitive Module Client"]
+    MOCK --> CLIENT
+    CLIENT --> RAW["LLM AppraisalResult"]
+    RAW --> NORM["normalizeAppraisalResult"]
+    NORM --> OUT["稳定 AppraisalResult"]
+    OUT --> MEM["Memory Retrieval"]
+    OUT --> TRACE["流程追踪"]
+```
+
+### Memory Retrieval
+
+```mermaid
+flowchart TD
+    E["EventInput"] --> CTX["createMemoryRetrievalContext"]
+    A["AppraisalResult"] --> CTX
+    S["CharacterState"] --> CTX
+    CTX --> QUERY["naturalLanguageQuery"]
+    S --> LTM["longTermMemory"]
+    QUERY --> RANK["rankLongTermMemoryCandidates"]
+    LTM --> RANK
+    RANK --> FACTORS["自然语言/关切/关系/情绪/近期/词面因子"]
+    FACTORS --> CAND["召回候选"]
+    CAND --> PROMPT["Memory Recall LLM 复判"]
+    S --> STM["shortTermMemory 最近几轮"]
+    STM --> PROMPT
+    PROMPT --> CLIENT["Cognitive Module Client"]
+    CLIENT --> RAW["LLM MemoryRecallResult"]
+    RAW --> NORM["normalizeMemoryRecallResult"]
+    NORM --> OUT["稳定 MemoryRecallResult"]
+    OUT --> DECISION["Response Decision"]
+    OUT --> PROMPTGEN["Prompt Generator"]
+```
+
+### Response Decision
+
+```mermaid
+flowchart TD
+    A["AppraisalResult"] --> RULES["本地决策 fallback"]
+    M["MemoryRecallResult"] --> RULES
+    S["CharacterState"] --> RULES
+    RULES --> MOCK["ResponseDecision fallback"]
+    A --> PROMPT["组装 Decision prompt"]
+    M --> PROMPT
+    S --> PROMPT
+    PROMPT --> CLIENT["Cognitive Module Client"]
+    MOCK --> CLIENT
+    CLIENT --> RAW["LLM ResponseDecision"]
+    RAW --> NORM["normalizeResponseDecision"]
+    NORM --> OUT["shouldRespond / responseMode / delaySeconds / rationale"]
+    OUT --> PROMPTGEN["Prompt Generator"]
+    OUT --> TRACE["流程追踪"]
+```
+
+### Prompt Generator
+
+```mermaid
+flowchart TD
+    E["EventInput"] --> PG["generateNaturalPromptRequest"]
+    S["CharacterState"] --> PG
+    A["AppraisalResult"] --> PG
+    M["MemoryRecallResult"] --> PG
+    D["ResponseDecision"] --> PG
+    PG --> P1["人格/价值/边界/表达样本"]
+    PG --> P2["场景和 runtime cognitiveNarrative"]
+    PG --> P3["关切/关系/记忆/近期对话"]
+    P1 --> PROMPT["自然语言 Reply Prompt"]
+    P2 --> PROMPT
+    P3 --> PROMPT
+    PROMPT --> REQ["ExpressionLlmRequest"]
+    REQ --> LLM["LLM Client"]
+```
+
+### LLM Client
+
+```mermaid
+flowchart TD
+    REQ["ExpressionLlmRequest: 只有自然语言 prompt"] --> CLIENT["runLlm"]
+    CFG["LlmConfig"] --> CLIENT
+    CLIENT --> FETCH["POST /api/deepseek-chat moduleName=reply_generation"]
+    FETCH --> STREAM{"SSE?"}
+    STREAM -- "是" --> READ["readReplyEventStream"]
+    STREAM -- "否" --> JSON["response.json"]
+    READ --> OUT["ReplyOutput.reply"]
+    JSON --> OUT
+    OUT --> CHAT["聊天室显示"]
+    OUT --> STATE["State Updater"]
+    OUT --> TRACE["流程追踪"]
+```
+
+### State Updater
+
+```mermaid
+flowchart TD
+    S["当前 CharacterState"] --> PLAN["planStateUpdates"]
+    E["EventInput"] --> PLAN
+    R["ReplyOutput"] --> PLAN
+    C["Appraisal/Memory/Decision context"] --> PLAN
+    PLAN --> CLIENT["State Update LLM"]
+    CLIENT --> RAW["StateUpdatePlan raw"]
+    RAW --> NORM["normalizeStateUpdatePlan"]
+    NORM --> COMMIT["commitStateUpdates"]
+    S --> COMMIT
+    E --> COMMIT
+    R --> COMMIT
+    COMMIT --> STM["写入 shortTermMemory"]
+    COMMIT --> LTM["可写入 longTermMemory"]
+    COMMIT --> REL["更新 relationships"]
+    COMMIT --> CONCERN["更新 concerns"]
+    COMMIT --> NEXT["nextState + StateDelta"]
+    NEXT --> SIGNAL["Runtime Signal Evaluator"]
+```
+
+### Runtime Signal Evaluator
+
+```mermaid
+flowchart TD
+    S["State after State Update"] --> EVAL["evaluateRuntimeSignals"]
+    E["EventInput"] --> EVAL
+    R["ReplyOutput"] --> EVAL
+    C["Appraisal/Memory/Decision/StateUpdatePlan"] --> EVAL
+    EVAL --> CLIENT["Runtime Signal Evaluation LLM"]
+    CLIENT --> RAW["RuntimeSignalEvaluationResult raw"]
+    RAW --> NORM["normalizeRuntimeSignalEvaluation"]
+    NORM --> APPLY["applyRuntimeSignalEvaluation"]
+    APPLY --> ENERGY["runtime.energy"]
+    APPLY --> MOOD["runtime.derivedMood"]
+    APPLY --> PROFILES["runtime.signalProfiles"]
+    APPLY --> DELTA["追加 runtimeChanges"]
+    DELTA --> FINAL["最终 nextState + StateDelta"]
+```
+
+### Conversation Pipeline
+
+```mermaid
+flowchart TD
+    INPUT["用户消息 content"] --> EVENT["构造 EventInput"]
+    EVENT --> PROGRESS1["emit event progress"]
+    EVENT --> APPRAISAL["runAppraisal"]
+    APPRAISAL --> MEM["retrieveMemory"]
+    MEM --> DECISION["decideResponse"]
+    DECISION --> PROMPT["generateNaturalPromptRequest"]
+    PROMPT --> REPLY["runLlm"]
+    REPLY --> UPDATE["applyStateUpdates"]
+    UPDATE --> SIGNAL["evaluateRuntimeSignals"]
+    SIGNAL --> APPLY["applyRuntimeSignalEvaluation"]
+    APPLY --> RETURN["返回 nextState + PipelineTrace"]
+    PROGRESS1 --> TRACE["onProgress liveTrace"]
+    APPRAISAL --> TRACE
+    MEM --> TRACE
+    DECISION --> TRACE
+    REPLY --> TRACE
+    UPDATE --> TRACE
+    SIGNAL --> TRACE
+```
+
+### Generators
+
+```mermaid
+flowchart TD
+    INPUT["用户人物/场景素材"] --> TYPE{"生成类型"}
+    TYPE -- "人物档案" --> DOSSIER["generateDossierFromDescription"]
+    TYPE -- "场景" --> SCENE["generateSceneFromDescription"]
+    DOSSIER --> D_LLM["Dossier Interpretation LLM"]
+    SCENE --> S_LLM["Scene Interpretation LLM"]
+    D_LLM --> D_APPLY["applyDossierInterpretation"]
+    S_LLM --> S_APPLY["applySceneInterpretation"]
+    D_APPLY --> D_NORM["归一化 profile/concerns/memory/runtime"]
+    S_APPLY --> S_NORM["归一化 scene/concerns/memory/runtime/profile影响"]
+    D_NORM --> PREVIEW["CharacterState preview"]
+    S_NORM --> PREVIEW
+    PREVIEW --> CONSISTENCY["Profile Scene Consistency"]
+    PREVIEW --> UI["左侧预览卡片"]
+```
+
+### Profile Scene Consistency
+
+```mermaid
+flowchart TD
+    CAND["候选 CharacterState"] --> FALLBACK["本地硬冲突 fallback"]
+    CAND --> PROMPT["人物 + 场景一致性 prompt"]
+    PROMPT --> CLIENT["Profile Scene Consistency LLM"]
+    FALLBACK --> CLIENT
+    CLIENT --> RAW["ProfileSceneConsistencyResult raw"]
+    RAW --> NORM["normalizeProfileSceneConsistency"]
+    NORM --> GATE{"requiresDistortionPassword?"}
+    GATE -- "否" --> APPLY["应用候选状态"]
+    GATE -- "是" --> PASSWORD["打开扭曲时空密码门禁"]
+    PASSWORD --> APPLY
+    NORM --> TRACE["系统消息/一致性说明"]
+```
+
+### DeepSeek Local Proxy
+
+```mermaid
+flowchart TD
+    BROWSER["浏览器请求"] --> ROUTE{"API 路由"}
+    ROUTE -- "GET /api/deepseek-config" --> READCFG["读取 .deepseek.local.json 或环境变量状态"]
+    ROUTE -- "POST /api/deepseek-config" --> WRITECFG["保存本地密钥文件"]
+    ROUTE -- "POST /api/deepseek-chat" --> NORMALIZE["normalizeDeepseekModel"]
+    NORMALIZE --> BODY["组装 Chat Completions body"]
+    BODY --> THINKING["强制 thinking.disabled"]
+    THINKING --> DEEPSEEK["DeepSeek API"]
+    DEEPSEEK --> STREAM{"stream=true?"}
+    STREAM -- "是" --> SSE["streamDeepseek 转发 text/event-stream"]
+    STREAM -- "否" --> JSON["返回 JSON"]
+    READCFG --> RESP["响应前端"]
+    WRITECFG --> RESP
+    SSE --> RESP
+    JSON --> RESP
+```
+
+### Production Server
+
+```mermaid
+flowchart TD
+    REQ["生产 HTTP request"] --> SERVER["server.mjs"]
+    SERVER --> ROUTE{"路径类型"}
+    ROUTE -- "/health" --> HEALTH["返回 OK"]
+    ROUTE -- "/api/deepseek-config" --> CFG["读取/写入 .deepseek.local.json"]
+    ROUTE -- "/api/deepseek-chat" --> DS["代理 DeepSeek API"]
+    ROUTE -- "静态资源" --> STATIC["serveStatic dist 文件"]
+    ROUTE -- "SPA fallback" --> HTML["返回 dist/index.html"]
+    CFG --> RESP["HTTP response"]
+    DS --> RESP
+    STATIC --> RESP
+    HTML --> RESP
+    HEALTH --> RESP
+```
+
+### Production Auto Deploy
+
+```mermaid
+flowchart TD
+    PUSH["GitHub main push"] --> FILTER{"paths-ignore 是否跳过?"}
+    FILTER -- "跳过" --> END["不部署"]
+    FILTER -- "触发" --> CHECKOUT["checkout"]
+    CHECKOUT --> NODE["setup-node"]
+    NODE --> INSTALL["npm ci"]
+    INSTALL --> BUILD["npm run build"]
+    BUILD --> PACKAGE["打包 dist/server/package files"]
+    PACKAGE --> SECRETS["校验 Actions secrets"]
+    SECRETS --> SSH["准备 SSH key"]
+    SSH --> UPLOAD["上传 release 到 VPS /tmp"]
+    UPLOAD --> ACTIVATE["备份旧版本并解压新版本"]
+    ACTIVATE --> PM2["npm ci --omit=dev + PM2 restart"]
+    PM2 --> HEALTH["curl 127.0.0.1:4174/health"]
+    HEALTH --> RESULT["Actions success/failure"]
+```
+
+### Deployment Automation Runbook
+
+```mermaid
+flowchart TD
+    DOC["docs/DEPLOYMENT_AUTOMATION.md"] --> USER["用户/AI 查看部署说明"]
+    USER --> TRIGGER["确认触发方式: push main / workflow_dispatch"]
+    USER --> SECRETS["确认 GitHub Actions secrets"]
+    USER --> BOUNDARY["确认 VPS 操作边界"]
+    USER --> ROLLBACK["查看回滚方法"]
+    TRIGGER --> DEPLOY["Production Auto Deploy"]
+    SECRETS --> DEPLOY
+    BOUNDARY --> DEPLOY
+    ROLLBACK --> INCIDENT["部署失败或需要回滚时使用"]
 ```
 
 ## 当前 UI 结构
