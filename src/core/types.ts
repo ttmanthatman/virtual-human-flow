@@ -326,4 +326,5 @@ export interface LlmConfig {
   provider: "external";
   model: string;
   endpoint: string;
+  authToken?: string;
 }

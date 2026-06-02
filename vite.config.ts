@@ -3,6 +3,21 @@ import react from "@vitejs/plugin-react";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import {
+  appendConversationAudit,
+  createLocalSession,
+  deletePersonaDossier,
+  destroyLocalSession,
+  getRequestSession,
+  loginWithLiaoChatroom,
+  readConversationAudits,
+  readJsonBody,
+  readPersonaDossiers,
+  requireAdminSession,
+  requireSession,
+  sendJson,
+  upsertPersonaDossier,
+} from "./serverSupport.mjs";
 
 const deepseekConfigPath = resolve(process.cwd(), ".deepseek.local.json");
 const defaultDeepseekEndpoint = "https://api.deepseek.com/chat/completions";
@@ -19,6 +34,80 @@ function deepseekProxyPlugin(): Plugin {
     configureServer(server: ViteDevServer) {
       server.middlewares.use(async (request: IncomingMessage, response: ServerResponse, next: () => void) => {
         const pathname = request.url?.split("?")[0];
+        if (pathname === "/api/auth/session" && request.method === "GET") {
+          const session = getRequestSession(request);
+          sendJson(response, 200, {
+            authenticated: Boolean(session),
+            user: session?.user ?? null,
+          });
+          return;
+        }
+
+        if (pathname === "/api/auth/login" && request.method === "POST") {
+          const body = await readJsonBody(request);
+          const username = typeof body.username === "string" ? body.username.trim() : "";
+          const password = typeof body.password === "string" ? body.password : "";
+          if (!username || !password) {
+            sendJson(response, 400, { error: "请输入用户名和密码" });
+            return;
+          }
+
+          try {
+            const liaoUser = await loginWithLiaoChatroom(username, password);
+            const session = createLocalSession(liaoUser);
+            sendJson(response, 200, { success: true, token: session.token, user: session.user, expiresAt: session.expiresAt });
+          } catch (error) {
+            sendJson(response, 401, { error: error instanceof Error ? error.message : "登录失败" });
+          }
+          return;
+        }
+
+        if (pathname === "/api/auth/logout" && request.method === "POST") {
+          const session = getRequestSession(request);
+          if (session) destroyLocalSession(session.token);
+          sendJson(response, 200, { success: true });
+          return;
+        }
+
+        if (pathname === "/api/persona-dossiers" && request.method === "GET") {
+          if (!requireSession(request, response)) return;
+          sendJson(response, 200, { dossiers: readPersonaDossiers() });
+          return;
+        }
+
+        if (pathname === "/api/persona-dossiers" && request.method === "POST") {
+          const session = requireAdminSession(request, response);
+          if (!session) return;
+          const body = await readJsonBody(request);
+          if (!body.dossier || typeof body.dossier.id !== "string") {
+            sendJson(response, 400, { error: "缺少有效档案" });
+            return;
+          }
+          sendJson(response, 200, { dossier: upsertPersonaDossier(body.dossier, session.user) });
+          return;
+        }
+
+        if (pathname?.startsWith("/api/persona-dossiers/") && request.method === "DELETE") {
+          if (!requireAdminSession(request, response)) return;
+          const dossierId = decodeURIComponent(pathname.replace("/api/persona-dossiers/", ""));
+          sendJson(response, 200, deletePersonaDossier(dossierId));
+          return;
+        }
+
+        if (pathname === "/api/conversation-audits" && request.method === "POST") {
+          const session = requireSession(request, response);
+          if (!session) return;
+          const body = await readJsonBody(request);
+          sendJson(response, 200, { entry: appendConversationAudit(body, session.user) });
+          return;
+        }
+
+        if (pathname === "/api/conversation-audits" && request.method === "GET") {
+          if (!requireAdminSession(request, response)) return;
+          sendJson(response, 200, { entries: readConversationAudits() });
+          return;
+        }
+
         if (pathname === "/api/deepseek-config" && request.method === "GET") {
           const config = readDeepseekConfig();
           sendJson(response, 200, {
@@ -30,6 +119,7 @@ function deepseekProxyPlugin(): Plugin {
         }
 
         if (pathname === "/api/deepseek-config" && request.method === "POST") {
+          if (!requireAdminSession(request, response)) return;
           const body = await readJsonBody(request);
           const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
           if (!apiKey) {
@@ -57,6 +147,7 @@ function deepseekProxyPlugin(): Plugin {
 
         if (pathname === "/api/deepseek-chat" && request.method === "POST") {
           try {
+            if (!requireSession(request, response)) return;
             const body = await readJsonBody(request);
             const config = readDeepseekConfig();
             const apiKey = config.apiKey || process.env.DEEPSEEK_API_KEY;
@@ -235,28 +326,6 @@ function parseJsonContent(content: string) {
     .replace(/```$/i, "")
     .trim();
   return JSON.parse(withoutFence);
-}
-
-function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
-  return new Promise((resolveBody, reject) => {
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-    request.on("end", () => {
-      try {
-        const text = Buffer.concat(chunks).toString("utf-8");
-        resolveBody(text ? (JSON.parse(text) as Record<string, unknown>) : {});
-      } catch (error) {
-        reject(error);
-      }
-    });
-    request.on("error", reject);
-  });
-}
-
-function sendJson(response: ServerResponse, statusCode: number, data: unknown) {
-  response.statusCode = statusCode;
-  response.setHeader("Content-Type", "application/json; charset=utf-8");
-  response.end(JSON.stringify(data));
 }
 
 function sendSse(response: ServerResponse, data: unknown) {

@@ -21,6 +21,8 @@
 | --- | --- | --- | --- | --- |
 | 项目 | `virtual-human-flow` | project | 当前 MVP 的工程代号 | `test-app`, `demo` |
 | 用户 | `user` | domain entity | 使用或配置虚拟人的真人 | `client` |
+| 登录会话 | `authSession` | permission/session object | 本项目本地会话，来源于 liao 聊天室登录校验，不保存密码 | `loginState`, `tokenState` |
+| 管理员用户 | `adminUser` | permission role | liao 聊天室返回 `isAdmin` 的用户，可维护共享档案和查看审计 | `superUser`, `rootUser` |
 | 虚拟人 | `persona` | domain entity | 可被配置、对话、呈现的虚拟角色 | `bot`, `agent` |
 | 对话会话 | `conversationSession` | domain concept | 一次连续交互过程 | `chat`, `talk` |
 | 消息 | `message` | domain entity | 用户或虚拟人的单条输入输出 | `contentItem` |
@@ -43,6 +45,8 @@
 | 人物档案解读 | `dossierInterpretation` | cognitive module | 将用户人物素材重新解读为展示摘要、长期记忆、人性/人格、标签、关切和状态信号 | `profileRewrite`, `rawDossierPreview` |
 | 场景解读 | `sceneInterpretation` | cognitive module | 将用户场景素材重新解读为场景摘要、状态影响、人物影响、长期记忆和关切变化 | `sceneRewrite`, `rawScenePreview` |
 | 人物档案组合 | `personaDossier` | UI/domain object | 一个可切换的多人档案条目，绑定人物状态、人物素材和配套场景素材 | `profileSlot`, `characterTab` |
+| 共享人物档案 | `sharedPersonaDossier` | persisted domain object | 管理员保存到后台、所有登录用户可读取和使用的多人档案 | `globalProfile`, `publicDossier` |
+| 对话审计记录 | `conversationAuditEntry` | persisted audit object | 记录每个登录用户的一次输入、虚拟人输出和失败信息，仅管理员可读 | `chatLog`, `debugRecord` |
 | 人物场景一致性 | `profileSceneConsistency` | cognitive module | 判断人物档案和场景是否处于同一世界观、时代和社会语境 | `settingMatch`, `sceneFit` |
 | 扭曲时空密码 | `distortionPassword` | permission gate | 人物和场景硬冲突时允许继续应用的本地门禁短语 | `overrideCode`, `adminPassword` |
 | 混合记忆召回 | `hybridMemoryRetrieval` | pipeline design | 记忆召回同时参考自然语言相关度、关切关联、关系关联、情绪显著、近期性和词面线索 | `keywordMemorySearch`, `sensitiveWordRecall` |
@@ -73,6 +77,7 @@
 | Profile Scene Consistency | `src/pipeline/profileSceneConsistency.ts` | 通过 LLM 判断人物档案和场景是否匹配，并返回是否需要扭曲时空密码 | `CharacterState`, `LlmConfig` | `ProfileSceneConsistencyResult` | App Shell | Cognitive Module Client |
 | DeepSeek Local Proxy | `vite.config.ts` | 在本地开发服务器中代理 DeepSeek Chat Completions，固定 flash 模型、关闭 thinking 并保存根目录密钥文件 | `/api/deepseek-config`, `/api/deepseek-chat` | DeepSeek 响应或配置状态 | App Shell | DeepSeek API |
 | Production Server | `server.mjs` | 生产环境服务 `dist/` 并提供 DeepSeek API 代理 | HTTP request, `.deepseek.local.json` | HTML/assets/API/SSE | nginx reverse proxy | DeepSeek API |
+| Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、共享档案存储和对话审计存储 | HTTP request, liao login response, local runtime JSON | auth session, persona dossiers, audit entries | Vite Dev Server/Production Server | liao Chatroom, local runtime files |
 | Production Auto Deploy | `.github/workflows/deploy-production.yml` | GitHub `main` 新提交后自动构建、上传 release、备份线上目录、重启 PM2 并健康检查 | GitHub push/workflow_dispatch, Actions secrets | 线上新版本、备份文件、Actions 结果 | GitHub Actions | production VPS, PM2 |
 | Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录自动部署触发方式、Secrets、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | GitHub Actions |
 
@@ -120,6 +125,16 @@
 | `normalizeDeepseekModel` | `vite.config.ts` / `src/App.tsx` | 避免使用 `deepseek-reasoner`，改为非思考模型 | model | model | 无 | implemented |
 | `sendSse` | `vite.config.ts` | 写出本地 SSE data 事件 | response, data | void | 写 HTTP response | implemented |
 | `serveStatic` | `server.mjs` | 生产环境返回 `dist/` 静态文件并支持 SPA fallback | pathname, method, response | HTML/assets | 读取 dist | implemented |
+| `loginWithLiaoChatroom` | `serverSupport.mjs` | 用 liao 聊天室 `/api/login` 校验用户名和密码，不修改聊天室数据、不保存密码 | username, password | liao user payload | 读取外部登录接口 | implemented |
+| `createLocalSession` | `serverSupport.mjs` | 将 liao 登录结果转换成本项目本地会话 token | liao user payload | token, user, expiresAt | 写入内存会话表 | implemented |
+| `getRequestSession` | `serverSupport.mjs` | 从 Authorization Bearer token 读取当前本地登录会话 | HTTP request | auth session? | 清理过期会话 | implemented |
+| `requireSession` | `serverSupport.mjs` | 保护需要登录的 API | HTTP request/response | auth session? | 可能返回 401 | implemented |
+| `requireAdminSession` | `serverSupport.mjs` | 保护只有管理员可执行的 API | HTTP request/response | auth session? | 可能返回 401/403 | implemented |
+| `readPersonaDossiers` | `serverSupport.mjs` | 读取后台共享多人档案 | 无 | PersonaDossier[] | 读取 `.persona-dossiers.local.json` | implemented |
+| `upsertPersonaDossier` | `serverSupport.mjs` | 管理员新增或覆盖共享多人档案 | dossier, user | PersonaDossier | 写入 `.persona-dossiers.local.json` | implemented |
+| `deletePersonaDossier` | `serverSupport.mjs` | 管理员删除共享多人档案 | dossierId | deleted flag | 写入 `.persona-dossiers.local.json` | implemented |
+| `appendConversationAudit` | `serverSupport.mjs` | 记录登录用户的一次输入输出 | entry, user | ConversationAuditEntry | 写入 `.conversation-audits.local.json` | implemented |
+| `readConversationAudits` | `serverSupport.mjs` | 管理员读取最近用户输入输出 | limit | ConversationAuditEntry[] | 读取 `.conversation-audits.local.json` | implemented |
 
 ## 数据字段登记表
 
@@ -159,15 +174,29 @@
 | `deepseekStatus` | App state | `string` | DeepSeek 密钥保存和真实连接测试的人类可读状态 | `/api/deepseek-config` / `/api/deepseek-chat` | App Shell | implemented |
 | `appVersionLabel` | App constant | `string` | 页面左上角显示的版本号，如 `v0.1.0` | `package.json` | App Shell | implemented |
 | `githubRepositoryUrl` | App constant | `string` | 页面左上角 GitHub 链接地址 | GitHub remote | App Shell | implemented |
+| `authToken` | App state / `LlmConfig` | `string` | 本项目本地登录 token，用于保护 DeepSeek 代理、共享档案和审计 API | `/api/auth/login` | App Shell/pipeline LLM clients | implemented |
+| `authUser` | App state | `AuthUser?` | 当前登录用户，包含是否管理员 | `/api/auth/login` `/api/auth/session` | App Shell permission gates | implemented |
+| `isAdmin` | App derived state | `boolean` | 当前用户是否可维护共享档案和查看审计 | `authUser.isAdmin` | App Shell permission gates | implemented |
+| `dossierSyncStatus` | App state | `string` | 后台共享档案读取/保存状态文案 | shared dossier API | UI | implemented |
+| `conversationAuditEntry.userInput` | ConversationAuditEntry | `string` | 登录用户发送给虚拟人的输入 | App Shell | Admin audit UI | implemented |
+| `conversationAuditEntry.personaOutput` | ConversationAuditEntry | `string` | 虚拟人回复或失败时为空 | App Shell | Admin audit UI | implemented |
 
 ## API 路由登记表
 
 | 路由 | 方法 | 责任 | 密钥/风险 | 状态 |
 | --- | --- | --- | --- | --- |
 | `/api/deepseek-config` | GET | 返回本地 DeepSeek 密钥是否已保存、默认 endpoint 和 `deepseek-v4-flash` 模型 | 不返回密钥明文 | implemented |
-| `/api/deepseek-config` | POST | 将 DeepSeek 密钥保存到项目根目录 `.deepseek.local.json`，模型固定为 `deepseek-v4-flash` | 文件必须被 `.gitignore` 忽略 | implemented |
-| `/api/deepseek-chat` | POST | 本地代理 DeepSeek Chat Completions，避免浏览器直接携带密钥请求外网；支持 SSE 流式返回 | 从 `.deepseek.local.json` 或 `DEEPSEEK_API_KEY` 读取密钥；强制关闭 thinking 并纠正 reasoner 模型 | implemented |
+| `/api/deepseek-config` | POST | 管理员将 DeepSeek 密钥保存到项目根目录 `.deepseek.local.json`，模型固定为 `deepseek-v4-flash` | 需要管理员会话；文件必须被 `.gitignore` 忽略 | implemented |
+| `/api/deepseek-chat` | POST | 登录用户可调用的本地 DeepSeek Chat Completions 代理；支持 SSE 流式返回 | 需要登录会话；从 `.deepseek.local.json` 或 `DEEPSEEK_API_KEY` 读取密钥；强制关闭 thinking 并纠正 reasoner 模型 | implemented |
 | `/health` | GET | 线上 nginx 健康检查 | 只返回 OK | implemented |
+| `/api/auth/session` | GET | 返回当前本地会话是否有效和用户摘要 | 不返回 liao token 或密码 | implemented |
+| `/api/auth/login` | POST | 用 liao 聊天室账号密码登录本项目 | 请求会发送到 `liaoChatroomOrigin` 的 `/api/login`；本项目不保存密码 | implemented |
+| `/api/auth/logout` | POST | 销毁本项目内存会话 | 不修改 liao 聊天室数据 | implemented |
+| `/api/persona-dossiers` | GET | 登录用户读取后台共享多人档案 | 需要本项目登录会话 | implemented |
+| `/api/persona-dossiers` | POST | 管理员新增或更新后台共享多人档案 | 需要管理员会话；写 `.persona-dossiers.local.json` | implemented |
+| `/api/persona-dossiers/:id` | DELETE | 管理员删除后台共享多人档案 | 需要管理员会话；写 `.persona-dossiers.local.json` | implemented |
+| `/api/conversation-audits` | POST | 登录用户记录一次输入输出 | 需要登录会话；写 `.conversation-audits.local.json` | implemented |
+| `/api/conversation-audits` | GET | 管理员读取所有用户输入输出 | 需要管理员会话 | implemented |
 
 ## 外部服务登记表
 
@@ -181,3 +210,4 @@
 | Nginx 站点 | `okXiaogushiUsNginxSite` | 将 `ok.xiaogushi.us` 反代到 `127.0.0.1:4174` | `/etc/nginx/sites-available/ok.xiaogushi.us.conf` | 只修改该域名配置 |
 | DeepSeek API | `deepseekApi` | 本地真实 LLM 测试，驱动认知模块和 Reply LLM | `.deepseek.local.json` 或 `DEEPSEEK_API_KEY`，不进 git | 通过 Vite 本地代理调用；固定 `deepseek-v4-flash` 并强制 `thinking.disabled` |
 | 外部 LLM Endpoint | `externalLlmEndpoint` | DeepSeek 本地代理入口 | 不在前端保存密钥；由 Vite 代理读取本地密钥 | 当前由 `/api/deepseek-chat` 承担本地代理，不作为 UI 可选模拟模式 |
+| liao 聊天室 | `liaoChatroom` | 本项目用户来源和密码校验来源 | `https://liao.xiaogushi.us/api/login`；本项目只调用登录校验，不写聊天室数据 | 上游接口不可用时无法登录 |

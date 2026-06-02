@@ -5,6 +5,8 @@ tmp/
 .env
 .env.local
 .deepseek.local.json
+.persona-dossiers.local.json
+.conversation-audits.local.json
 .vps.local.json
 *.tsbuildinfo
 vite.config.js

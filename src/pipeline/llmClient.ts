@@ -15,7 +15,11 @@ export async function runLlm(
   if (config.provider === "external" && config.endpoint.trim()) {
     const response = await fetch(config.endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        ...(config.authToken ? { Authorization: `Bearer ${config.authToken}` } : {}),
+      },
       body: JSON.stringify({
         model: config.model,
         moduleName: "reply_generation",

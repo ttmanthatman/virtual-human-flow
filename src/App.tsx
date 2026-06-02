@@ -8,16 +8,22 @@ import {
   Database,
   Eye,
   FileText,
+  LogIn,
+  LogOut,
   Lock,
   MessageSquare,
   Network,
   Play,
   Plus,
   RefreshCcw,
+  Save,
+  ScrollText,
   Send,
+  ShieldCheck,
   Sparkles,
   Trash2,
   UserRound,
+  X,
 } from "lucide-react";
 import { ChatMessage, CharacterState, LlmConfig, PersonaDossier, PipelineStepProgress, PipelineTrace, ProfileSceneConsistencyResult } from "./core/types";
 import { makeId, nowIso } from "./core/utils";
@@ -55,8 +61,27 @@ type ConsistencyGate = {
   target: "dossier" | "scene";
   password: string;
 };
+type AuthUser = {
+  userId: number;
+  username: string;
+  nickname: string;
+  avatar: string;
+  isAdmin: boolean;
+};
+type ConversationAuditEntry = {
+  id: string;
+  createdAt: string;
+  username: string;
+  nickname: string;
+  dossierTitle: string;
+  userInput: string;
+  personaOutput: string;
+  status: "completed" | "failed";
+  error?: string;
+};
 
 const distortionPassword = "扭曲时空密码";
+const authTokenStorageKey = "virtualHumanFlowAuthToken";
 
 function createPersonaDossier(state: CharacterState, dossierDescription: string, sceneDescription: string, title?: string): PersonaDossier {
   const timestamp = nowIso();
@@ -96,9 +121,22 @@ export function App() {
   const [deepseekConnected, setDeepseekConnected] = useState(false);
   const [isGeneratingDossier, setIsGeneratingDossier] = useState(false);
   const [isGeneratingScene, setIsGeneratingScene] = useState(false);
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem(authTokenStorageKey) || "");
+  const [authUser, setAuthUser] = useState<AuthUser | undefined>();
+  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [dossierSyncStatus, setDossierSyncStatus] = useState("登录后读取后台共享档案");
+  const [auditEntries, setAuditEntries] = useState<ConversationAuditEntry[]>([]);
+  const [auditPanelOpen, setAuditPanelOpen] = useState(false);
+  const [auditStatus, setAuditStatus] = useState("管理员可查看用户输入输出");
 
   const selectedTraceData = liveTrace[activeStep] ?? buildCompletedTraceProgress(activeStep, activeTrace);
   const traceDisplay = formatTraceDisplay(selectedTraceData);
+  const isAuthenticated = Boolean(authToken && authUser);
+  const isAdmin = Boolean(authUser?.isAdmin);
   const activeConcernTitles = useMemo(
     () => state.concerns.filter((concern) => state.runtime.activeConcernIds.includes(concern.id)).map((concern) => concern.title),
     [state.concerns, state.runtime.activeConcernIds],
@@ -124,6 +162,192 @@ export function App() {
       });
   }, []);
 
+  useEffect(() => {
+    setLlmConfig((current) => ({ ...current, authToken }));
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!authToken) return;
+    fetch("/api/auth/session", { headers: authHeaders(authToken) })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("登录态不可用"))))
+      .then((session: { authenticated: boolean; user?: AuthUser | null }) => {
+        if (!session.authenticated || !session.user) {
+          clearLocalAuth();
+          return;
+        }
+        setAuthUser(session.user);
+        void loadSharedDossiers(authToken);
+      })
+      .catch(() => {
+        clearLocalAuth();
+      });
+  }, []);
+
+  function authHeaders(token = authToken, extra: Record<string, string> = {}) {
+    return {
+      ...extra,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+  }
+
+  function clearLocalAuth() {
+    localStorage.removeItem(authTokenStorageKey);
+    setAuthToken("");
+    setAuthUser(undefined);
+    setLlmConfig((current) => ({ ...current, authToken: "" }));
+    setDossierSyncStatus("登录后读取后台共享档案");
+  }
+
+  function requireLogin(action: string) {
+    if (isAuthenticated) return true;
+    setLoginModalOpen(true);
+    setLoginError("");
+    setError(`${action}需要先登录。`);
+    return false;
+  }
+
+  function requireAdmin(action: string) {
+    if (!requireLogin(action)) return false;
+    if (isAdmin) return true;
+    setError("只有管理员可以添加或修改档案。");
+    return false;
+  }
+
+  async function loadSharedDossiers(token = authToken) {
+    if (!token) return;
+    setDossierSyncStatus("正在读取后台共享档案...");
+    try {
+      const response = await fetch("/api/persona-dossiers", { headers: authHeaders(token) });
+      if (!response.ok) {
+        setDossierSyncStatus(response.status === 401 ? "登录后读取后台共享档案" : "后台共享档案读取失败");
+        return;
+      }
+      const data = (await response.json()) as { dossiers?: PersonaDossier[] };
+      if (Array.isArray(data.dossiers) && data.dossiers.length > 0) {
+        setDossiers(data.dossiers);
+        const nextActive = data.dossiers[0];
+        setActiveDossierId(nextActive.id);
+        setState(nextActive.state);
+        setDossierDescription(nextActive.dossierDescription);
+        setSceneDescription(nextActive.sceneDescription);
+      }
+      setDossierSyncStatus(data.dossiers?.length ? "已读取后台共享档案" : "后台暂无共享档案，管理员可保存当前档案");
+    } catch {
+      setDossierSyncStatus("后台共享档案读取失败");
+    }
+  }
+
+  async function persistPersonaDossier(dossier = activeDossier) {
+    if (!dossier || !requireAdmin("保存档案")) return;
+    setDossierSyncStatus("正在保存后台档案...");
+    const response = await fetch("/api/persona-dossiers", {
+      method: "POST",
+      headers: authHeaders(authToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ dossier }),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      setDossierSyncStatus(`保存失败：${detail.slice(0, 80)}`);
+      return;
+    }
+    const data = (await response.json()) as { dossier?: PersonaDossier };
+    if (data.dossier) {
+      setDossiers((items) => items.map((item) => (item.id === data.dossier?.id ? data.dossier : item)));
+    }
+    setDossierSyncStatus("后台档案已保存");
+  }
+
+  async function handleLogin(event: FormEvent) {
+    event.preventDefault();
+    if (!loginUsername.trim() || !loginPassword) {
+      setLoginError("请输入用户名和密码");
+      return;
+    }
+
+    setIsLoggingIn(true);
+    setLoginError("");
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUsername.trim(), password: loginPassword }),
+      });
+      const data = (await response.json()) as { token?: string; user?: AuthUser; error?: string };
+      if (!response.ok || !data.token || !data.user) {
+        setLoginError(data.error || "登录失败");
+        return;
+      }
+
+      const loggedInUser = data.user;
+      localStorage.setItem(authTokenStorageKey, data.token);
+      setAuthToken(data.token);
+      setAuthUser(loggedInUser);
+      setLoginPassword("");
+      setLoginModalOpen(false);
+      setError("");
+      setMessages((items) => [
+        ...items,
+        {
+          id: makeId("msg"),
+          speaker: "system",
+          speakerName: "登录",
+          content: `已登录为 ${loggedInUser.nickname || loggedInUser.username}${loggedInUser.isAdmin ? "（管理员）" : ""}。`,
+          timestamp: nowIso(),
+        },
+      ]);
+      await loadSharedDossiers(data.token);
+    } catch {
+      setLoginError("登录失败");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  }
+
+  async function handleLogout() {
+    if (authToken) {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: authHeaders(),
+      }).catch(() => undefined);
+    }
+    clearLocalAuth();
+    setAuditPanelOpen(false);
+    setMessages((items) => [
+      ...items,
+      {
+        id: makeId("msg"),
+        speaker: "system",
+        speakerName: "登录",
+        content: "已退出登录。界面仍可查看，操作前需要重新登录。",
+        timestamp: nowIso(),
+      },
+    ]);
+  }
+
+  async function recordConversationAudit(entry: Pick<ConversationAuditEntry, "dossierTitle" | "userInput" | "personaOutput" | "status" | "error"> & { dossierId: string }) {
+    if (!authToken) return;
+    await fetch("/api/conversation-audits", {
+      method: "POST",
+      headers: authHeaders(authToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify(entry),
+    }).catch(() => undefined);
+  }
+
+  async function loadConversationAudits() {
+    if (!requireAdmin("查看审计记录")) return;
+    setAuditStatus("正在读取审计记录...");
+    const response = await fetch("/api/conversation-audits", { headers: authHeaders() });
+    if (!response.ok) {
+      const detail = await response.text();
+      setAuditStatus(`审计读取失败：${detail.slice(0, 80)}`);
+      return;
+    }
+    const data = (await response.json()) as { entries?: ConversationAuditEntry[] };
+    setAuditEntries(Array.isArray(data.entries) ? data.entries : []);
+    setAuditPanelOpen(true);
+    setAuditStatus(data.entries?.length ? "已读取用户输入输出" : "暂无用户输入输出记录");
+  }
+
   function updateActiveDossier(patch: Partial<Pick<PersonaDossier, "state" | "dossierDescription" | "sceneDescription" | "title">>) {
     setDossiers((items) =>
       items.map((item) =>
@@ -139,6 +363,7 @@ export function App() {
   }
 
   function handleSelectDossier(dossier: PersonaDossier) {
+    if (!requireLogin("切换档案")) return;
     setActiveDossierId(dossier.id);
     setState(dossier.state);
     setDossierDescription(dossier.dossierDescription);
@@ -149,7 +374,8 @@ export function App() {
     setError("");
   }
 
-  function handleCreateDossier() {
+  async function handleCreateDossier() {
+    if (!requireAdmin("新建档案")) return;
     const nextState: CharacterState = {
       ...seedState,
       profile: {
@@ -189,6 +415,7 @@ export function App() {
     const nextDossier = createPersonaDossier(nextState, "", "", nextState.profile.name);
     setDossiers((items) => [...items, nextDossier]);
     handleSelectDossier(nextDossier);
+    await persistPersonaDossier(nextDossier);
     setMessages((items) => [
       ...items,
       {
@@ -201,9 +428,20 @@ export function App() {
     ]);
   }
 
-  function handleDeleteDossier(id: string) {
+  async function handleDeleteDossier(id: string) {
+    if (!requireAdmin("删除档案")) return;
     if (dossiers.length <= 1) {
       setError("至少保留一个档案。");
+      return;
+    }
+
+    const response = await fetch(`/api/persona-dossiers/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      setError(`后台删除失败：${detail.slice(0, 80)}`);
       return;
     }
 
@@ -223,16 +461,27 @@ export function App() {
   }
 
   function handleDossierDescriptionChange(value: string) {
+    if (!isAdmin) {
+      if (!isAuthenticated) setLoginModalOpen(true);
+      setError(isAuthenticated ? "只有管理员可以修改人物档案。" : "修改人物档案需要先登录。");
+      return;
+    }
     setDossierDescription(value);
     updateActiveDossier({ dossierDescription: value });
   }
 
   function handleSceneDescriptionChange(value: string) {
+    if (!isAdmin) {
+      if (!isAuthenticated) setLoginModalOpen(true);
+      setError(isAuthenticated ? "只有管理员可以修改场景。" : "修改场景需要先登录。");
+      return;
+    }
     setSceneDescription(value);
     updateActiveDossier({ sceneDescription: value });
   }
 
   async function handleSaveDeepseekConfig() {
+    if (!requireAdmin("保存 DeepSeek 密钥")) return;
     if (!deepseekApiKey.trim()) {
       setDeepseekConnected(false);
       setDeepseekStatus("请输入 DeepSeek 密钥后再保存");
@@ -242,7 +491,7 @@ export function App() {
     setDeepseekStatus("正在保存 DeepSeek 密钥...");
     const response = await fetch("/api/deepseek-config", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(authToken, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         apiKey: deepseekApiKey.trim(),
         model: "deepseek-v4-flash",
@@ -263,10 +512,11 @@ export function App() {
   }
 
   async function handleTestDeepseekConfig() {
+    if (!requireLogin("测试 DeepSeek 连接")) return;
     setDeepseekStatus("正在测试 DeepSeek 连接...");
     const response = await fetch("/api/deepseek-chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders(authToken, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         model: "deepseek-v4-flash",
         moduleName: "reply_generation",
@@ -290,6 +540,7 @@ export function App() {
 
   async function handleSend(event: FormEvent) {
     event.preventDefault();
+    if (!requireLogin("发送消息")) return;
     if (!input.trim() || isRunning) return;
     setIsRunning(true);
     setError("");
@@ -337,10 +588,25 @@ export function App() {
           trace: result.trace,
         },
       ]);
+      await recordConversationAudit({
+        dossierId: activeDossierId,
+        dossierTitle: result.nextState.profile.name,
+        userInput: userMessage.content,
+        personaOutput: reply,
+        status: "completed",
+      });
       setInput("");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "流程运行失败";
       setError(message);
+      await recordConversationAudit({
+        dossierId: activeDossierId,
+        dossierTitle: activeDossier?.title ?? state.profile.name,
+        userInput: userMessage.content,
+        personaOutput: "",
+        status: "failed",
+        error: message,
+      });
       setLiveTrace((current) => ({
         ...current,
         [activeStep]: {
@@ -356,6 +622,7 @@ export function App() {
   }
 
   async function handleGenerateDossier() {
+    if (!requireAdmin("预览人物档案")) return;
     if (!dossierDescription.trim() || isGeneratingDossier) return;
     setIsGeneratingDossier(true);
     setError("");
@@ -382,11 +649,13 @@ export function App() {
   }
 
   async function handleApplyDossier() {
+    if (!requireAdmin("应用人物档案")) return;
     if (!dossierPreview) return;
     await applyCandidateState(dossierPreview, "dossier");
   }
 
   async function handleGenerateScene() {
+    if (!requireAdmin("预览场景")) return;
     if (!sceneDescription.trim() || isGeneratingScene) return;
     setIsGeneratingScene(true);
     setError("");
@@ -413,11 +682,13 @@ export function App() {
   }
 
   async function handleApplyScene() {
+    if (!requireAdmin("应用场景")) return;
     if (!scenePreview) return;
     await applyCandidateState(scenePreview, "scene");
   }
 
   async function applyCandidateState(candidate: CharacterState, target: "dossier" | "scene", bypassDistortionPassword = false) {
+    if (!requireAdmin("应用档案变更")) return;
     setError("");
     const consistency = await evaluateProfileSceneConsistency(candidate, llmConfig);
 
@@ -446,8 +717,15 @@ export function App() {
 
   function commitCandidateState(candidate: CharacterState, target: "dossier" | "scene", consistency?: ProfileSceneConsistencyResult) {
     setError("");
+    const nextDossier: PersonaDossier = {
+      ...activeDossier,
+      state: candidate,
+      title: candidate.profile.name,
+      updatedAt: nowIso(),
+    };
     setState(candidate);
-    updateActiveDossier({ state: candidate, title: candidate.profile.name });
+    setDossiers((items) => items.map((item) => (item.id === activeDossierId ? nextDossier : item)));
+    void persistPersonaDossier(nextDossier);
     if (target === "dossier") setDossierPreview(undefined);
     if (target === "scene") setScenePreview(undefined);
     setConsistencyGate(undefined);
@@ -471,6 +749,7 @@ export function App() {
   }
 
   function handleConfirmDistortionPassword() {
+    if (!requireAdmin("应用档案变更")) return;
     if (!consistencyGate) return;
     if (consistencyGate.password.trim() !== distortionPassword) {
       setError("扭曲时空密码不正确。");
@@ -481,6 +760,7 @@ export function App() {
   }
 
   function handleReset() {
+    if (!requireLogin("重置工作台")) return;
     const resetDossierDescription = "林安，27岁，自由插画师，刚结束一段关系，性格克制敏感，不喜欢直接表达脆弱。";
     const resetSceneDescription = "雨夜的私人工作室，窗外有雨，桌上放着未完成的画稿和一杯快冷掉的茶。";
     const resetDossier = createPersonaDossier(seedState, resetDossierDescription, resetSceneDescription);
@@ -517,6 +797,22 @@ export function App() {
           </div>
         </div>
         <div className="topbar-actions">
+          <div className={isAuthenticated ? "auth-pill signed-in" : "auth-pill"}>
+            {isAuthenticated ? <ShieldCheck size={15} /> : <LogIn size={15} />}
+            <div>
+              <strong>{isAuthenticated ? authUser?.nickname || authUser?.username : "未登录"}</strong>
+              <span>{isAdmin ? "管理员" : isAuthenticated ? "普通用户" : "只可查看界面"}</span>
+            </div>
+          </div>
+          {isAuthenticated ? (
+            <button className="icon-button" type="button" onClick={handleLogout} title="退出登录">
+              <LogOut size={17} />
+            </button>
+          ) : (
+            <button className="secondary-button topbar-login" type="button" onClick={() => setLoginModalOpen(true)}>
+              <LogIn size={15} /> 登录
+            </button>
+          )}
           <div className={deepseekConnected ? "connection-pill connected" : "connection-pill"}>
             <Check size={15} />
             <div>
@@ -541,6 +837,7 @@ export function App() {
                 <Plus size={15} />
               </button>
             </div>
+            <small className="sync-status">{dossierSyncStatus}</small>
             <div className="dossier-tabs">
               {dossiers.map((dossier) => (
                 <button
@@ -554,9 +851,14 @@ export function App() {
                 </button>
               ))}
             </div>
-            <button className="secondary-button danger-button" type="button" onClick={() => handleDeleteDossier(activeDossierId)} disabled={dossiers.length <= 1}>
-              <Trash2 size={15} /> 删除当前档案
-            </button>
+            <div className="dossier-actions">
+              <button className="secondary-button" type="button" onClick={() => persistPersonaDossier()}>
+                <Save size={15} /> 保存后台档案
+              </button>
+              <button className="secondary-button danger-button" type="button" onClick={() => handleDeleteDossier(activeDossierId)} disabled={dossiers.length <= 1}>
+                <Trash2 size={15} /> 删除当前档案
+              </button>
+            </div>
           </section>
 
           <div className="persona-card">
@@ -609,7 +911,15 @@ export function App() {
 
           <section className="subsection">
             <h2>人物档案</h2>
-            <textarea value={dossierDescription} onChange={(event) => handleDossierDescriptionChange(event.target.value)} />
+            <textarea
+              value={dossierDescription}
+              onChange={(event) => handleDossierDescriptionChange(event.target.value)}
+              onFocus={() => {
+                if (!isAuthenticated) setLoginModalOpen(true);
+                if (!isAdmin) setError(isAuthenticated ? "只有管理员可以修改人物档案。" : "修改人物档案需要先登录。");
+              }}
+              readOnly={!isAdmin}
+            />
             <button className="primary-button" type="button" onClick={handleGenerateDossier} disabled={isGeneratingDossier}>
               <Eye size={16} /> {isGeneratingDossier ? "解读中" : "预览人物档案"}
             </button>
@@ -618,7 +928,15 @@ export function App() {
 
           <section className="subsection">
             <h2>场景</h2>
-            <textarea value={sceneDescription} onChange={(event) => handleSceneDescriptionChange(event.target.value)} />
+            <textarea
+              value={sceneDescription}
+              onChange={(event) => handleSceneDescriptionChange(event.target.value)}
+              onFocus={() => {
+                if (!isAuthenticated) setLoginModalOpen(true);
+                if (!isAdmin) setError(isAuthenticated ? "只有管理员可以修改场景。" : "修改场景需要先登录。");
+              }}
+              readOnly={!isAdmin}
+            />
             <button className="secondary-button" type="button" onClick={handleGenerateScene} disabled={isGeneratingScene}>
               <Eye size={16} /> {isGeneratingScene ? "解读中" : "预览场景"}
             </button>
@@ -671,7 +989,14 @@ export function App() {
           </div>
 
           <form className="composer" onSubmit={handleSend}>
-            <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="输入一句话，观察多模块语言模型数据流" />
+            <input
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onFocus={() => {
+                if (!isAuthenticated) setLoginModalOpen(true);
+              }}
+              placeholder="输入一句话，观察多模块语言模型数据流"
+            />
             <button type="submit" disabled={isRunning}>
               <Send size={17} /> {isRunning ? "运行中" : "发送"}
             </button>
@@ -715,7 +1040,12 @@ export function App() {
                 <input
                   value={deepseekApiKey}
                   onChange={(event) => setDeepseekApiKey(event.target.value)}
+                  onFocus={() => {
+                    if (!isAuthenticated) setLoginModalOpen(true);
+                    if (!isAdmin) setError(isAuthenticated ? "只有管理员可以保存 DeepSeek 密钥。" : "保存 DeepSeek 密钥需要先登录。");
+                  }}
                   placeholder="输入后保存到项目根目录"
+                  readOnly={!isAdmin}
                   type="password"
                 />
               </label>
@@ -731,6 +1061,16 @@ export function App() {
             </div>
           )}
 
+          <div className="audit-box">
+            <div>
+              <strong>输入输出审计</strong>
+              <small>{auditStatus}</small>
+            </div>
+            <button className="secondary-button" type="button" onClick={loadConversationAudits}>
+              <ScrollText size={15} /> 查看记录
+            </button>
+          </div>
+
           <div className="json-view">
             <div className="json-head">
               <strong>{traceSteps.find((step) => step.key === activeStep)?.label ?? "追踪"}</strong>
@@ -740,6 +1080,73 @@ export function App() {
           </div>
         </aside>
       </section>
+
+      {loginModalOpen ? (
+        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setLoginModalOpen(false)}>
+          <form className="login-modal" onSubmit={handleLogin}>
+            <div className="modal-head">
+              <div>
+                <strong>登录后使用</strong>
+                <span>使用 liao.xiaogushi.us 的账号和原密码</span>
+              </div>
+              <button className="icon-button compact" type="button" onClick={() => setLoginModalOpen(false)} title="关闭">
+                <X size={15} />
+              </button>
+            </div>
+            <label>
+              <span>用户名</span>
+              <input value={loginUsername} onChange={(event) => setLoginUsername(event.target.value)} autoComplete="username" autoFocus />
+            </label>
+            <label>
+              <span>密码</span>
+              <input value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} autoComplete="current-password" type="password" />
+            </label>
+            {loginError ? <p className="error-text">{loginError}</p> : null}
+            <button className="primary-button" type="submit" disabled={isLoggingIn}>
+              <LogIn size={15} /> {isLoggingIn ? "登录中" : "登录"}
+            </button>
+          </form>
+        </div>
+      ) : null}
+
+      {auditPanelOpen ? (
+        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setAuditPanelOpen(false)}>
+          <section className="audit-modal">
+            <div className="modal-head">
+              <div>
+                <strong>用户输入输出</strong>
+                <span>仅管理员可见，后台保留最近 1000 条</span>
+              </div>
+              <button className="icon-button compact" type="button" onClick={() => setAuditPanelOpen(false)} title="关闭">
+                <X size={15} />
+              </button>
+            </div>
+            <div className="audit-list">
+              {auditEntries.length ? (
+                auditEntries.map((entry) => (
+                  <article className="audit-entry" key={entry.id}>
+                    <div className="audit-entry-head">
+                      <strong>{entry.nickname || entry.username}</strong>
+                      <span>{new Date(entry.createdAt).toLocaleString("zh-CN")}</span>
+                    </div>
+                    <small>{entry.dossierTitle || "未记录档案"} · {entry.status === "failed" ? "失败" : "完成"}</small>
+                    <section>
+                      <h3>输入</h3>
+                      <p>{entry.userInput}</p>
+                    </section>
+                    <section>
+                      <h3>输出</h3>
+                      <p>{entry.status === "failed" ? entry.error || "流程失败" : entry.personaOutput}</p>
+                    </section>
+                  </article>
+                ))
+              ) : (
+                <p className="empty-audit">暂无记录。</p>
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }

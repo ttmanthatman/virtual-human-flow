@@ -6,6 +6,12 @@
 
 当前已建立第一版本地 MVP：三栏工作台展示多人档案、人物状态、聊天室和流程追踪。系统能根据用户素材预览人物档案和配套场景，并在发送消息后展示多模块 LLM 数据流。
 
+当前系统已接入登录和权限边界。未登录用户可以看到完整工作台界面，但发送消息、切换档案、生成或应用档案、保存 DeepSeek 密钥、测试 DeepSeek、查看审计等操作会打开登录浮窗。登录账号来自 `https://liao.xiaogushi.us/` 聊天室用户；本项目只调用 liao 聊天室 `/api/login` 校验用户名和密码，不保存密码，不修改聊天室数据。
+
+管理员权限沿用 liao 聊天室登录结果里的 `isAdmin`。只有管理员可以新增、保存、删除或应用共享多人档案；普通登录用户只能读取、选择和使用管理员保存的共享档案。用户对话时的角色状态变化只在当前浏览器会话内写回，不自动覆盖后台共享档案。
+
+后台会记录每个登录用户的一次输入和虚拟人输出。审计记录写入 `.conversation-audits.local.json`，共享档案写入 `.persona-dossiers.local.json`；二者都是运行时文件，被 `.gitignore` 忽略，只有管理员可以通过 `/api/conversation-audits` 读取审计。
+
 重要约束：Reply LLM 只接收自然语言上下文，只生成角色说出口的话。不能把 JSON、字段名、输出契约、工程术语或类似编程语言的内容混进这一步。
 
 认知模块是另一类 LLM 调用。Appraisal、Memory Recall、Decision、State Update 都是独立的脑区式 LLM 模块；它们可以用结构化输入/输出约束，因为它们不是角色台词生成器，而是系统内部的判断模块。
@@ -91,7 +97,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    U[用户在对话区输入消息] --> E[事件输入]
+    U[用户在对话区输入消息] --> AUTH{是否已登录}
+    AUTH -- 否 --> LOGIN[打开登录浮窗]
+    AUTH -- 是 --> E[事件输入]
     E --> A[评估模块: 判断事件触发关切]
     A --> M[记忆召回模块: 混合相关度候选 + LLM复判]
     M --> D[回应决策模块: 判断是否回应和回应姿态]
@@ -102,6 +110,7 @@ flowchart TD
     G --> W[确定性写回: clamp/append/commit]
     W --> C[聊天室显示回复]
     W --> T[流程追踪面板显示每个模块输入/输出/状态]
+    W --> AUDIT[后台审计: 记录用户输入和虚拟人输出]
     A -. 流式输出 .-> T
     M -. 流式输出 .-> T
     D -. 流式输出 .-> T
@@ -109,6 +118,26 @@ flowchart TD
     S -. 流式输出 .-> T
     G -. 流式输出 .-> T
 ```
+
+## 登录与权限路径
+
+```mermaid
+flowchart TD
+    A[未登录用户看到工作台] --> B{用户发起操作}
+    B -- 查看界面 --> C[允许查看]
+    B -- 发送/切换/保存/审计/测试 --> D[打开登录浮窗]
+    D --> E[提交用户名和原密码]
+    E --> F[Server Support: POST liaoChatroom /api/login]
+    F --> G{liao 返回 success?}
+    G -- 否 --> H[显示登录失败]
+    G -- 是 --> I[createLocalSession: 生成本项目 token]
+    I --> J[App Shell 保存 authToken/authUser]
+    J --> K{isAdmin?}
+    K -- 是 --> L[可维护共享档案和查看审计]
+    K -- 否 --> M[可选择共享档案和对话]
+```
+
+本项目的本地 `authSession` 存在内存中，服务重启后需要重新登录。上游 liao token 不返回前端，也不写入仓库；用户密码只在登录请求中转发给 liao 聊天室校验。
 
 ## 记忆召回路径
 
@@ -159,14 +188,37 @@ flowchart TD
 ```mermaid
 flowchart TD
     A[左栏多人档案列表] --> B{用户操作}
-    B -- 新建 --> C[创建 personaDossier: 空人物素材 + 空场景素材 + 待配置状态]
-    B -- 切换 --> D[读取 personaDossier.state]
+    B -- 新建/保存/删除/应用预览 --> ADMIN{是否管理员}
+    ADMIN -- 否 --> BLOCK[阻止修改或打开登录浮窗]
+    ADMIN -- 是 --> C[写入后台 sharedPersonaDossier]
+    B -- 切换 --> LOGIN{是否已登录}
+    LOGIN -- 否 --> POP[打开登录浮窗]
+    LOGIN -- 是 --> D[读取 personaDossier.state]
     B -- 删除 --> E{是否最后一个}
     E -- 是 --> F[阻止删除]
-    E -- 否 --> G[移除档案并切换到剩余档案]
+    E -- 否 --> ADMIN
+    C --> STORE[.persona-dossiers.local.json]
+    STORE --> READ[登录用户读取共享档案]
+    READ --> D
     D --> H[左栏人物/场景输入同步切换]
     H --> I[聊天室后续使用当前档案状态]
-    I --> J[对话状态更新写回当前 personaDossier]
+    I --> J[对话状态更新写回当前浏览器会话]
+```
+
+管理员保存的多人档案是共享初始档案。普通用户选择它之后可以对话使用；对话产生的短期记忆、runtime 状态和关系变化不自动写回 `.persona-dossiers.local.json`。
+
+## 对话审计路径
+
+```mermaid
+flowchart TD
+    U[登录用户发送消息] --> PIPE[同步对话 pipeline]
+    PIPE --> OUT[虚拟人输出或失败信息]
+    OUT --> AUDIT[POST /api/conversation-audits]
+    AUDIT --> STORE[.conversation-audits.local.json]
+    ADMIN[管理员点击输入输出审计] --> READ[GET /api/conversation-audits]
+    READ --> STORE
+    READ --> UI[右侧审计浮层展示每个用户输入输出]
+    USER[普通用户] -. 请求读取 .-> DENY[403: 只有管理员可以执行此操作]
 ```
 
 ## 生成预览写回边界
@@ -204,17 +256,23 @@ flowchart TD
 ```mermaid
 flowchart TD
     U["浏览器用户"] --> UI["App Shell: 三栏工作台"]
+    UI --> AUTH["authToken/authUser 登录状态"]
     UI --> DOS["多人档案状态: dossiers/activeDossierId"]
     UI --> CFG["DeepSeek 配置状态"]
     UI --> CHAT["聊天输入和消息列表"]
+    AUTH --> GATE["权限门禁: 未登录弹窗 / 非管理员只读档案"]
+    GATE --> CHAT
+    GATE --> DOS
     CHAT --> PIPE["runConversationPipeline"]
     PIPE --> TRACE["liveTrace / activeTrace"]
     PIPE --> STATE["next CharacterState"]
     STATE --> DOS
+    PIPE --> AUDIT["POST /api/conversation-audits"]
     TRACE --> PANEL["右侧流程追踪面板"]
     CFG --> PANEL
     UI --> PREVIEW["人物/场景预览操作"]
     PREVIEW --> GEN["Generators / Profile Scene Consistency"]
+    UI --> ADMIN["管理员审计浮层"]
 ```
 
 ### Core Types
@@ -474,8 +532,12 @@ flowchart TD
 flowchart TD
     BROWSER["浏览器请求"] --> ROUTE{"API 路由"}
     ROUTE -- "GET /api/deepseek-config" --> READCFG["读取 .deepseek.local.json 或环境变量状态"]
-    ROUTE -- "POST /api/deepseek-config" --> WRITECFG["保存本地密钥文件"]
-    ROUTE -- "POST /api/deepseek-chat" --> NORMALIZE["normalizeDeepseekModel"]
+    ROUTE -- "POST /api/deepseek-config" --> ADMIN{"管理员会话?"}
+    ADMIN -- "否" --> DENY["401/403"]
+    ADMIN -- "是" --> WRITECFG["保存本地密钥文件"]
+    ROUTE -- "POST /api/deepseek-chat" --> SESSION{"登录会话?"}
+    SESSION -- "否" --> DENY
+    SESSION -- "是" --> NORMALIZE["normalizeDeepseekModel"]
     NORMALIZE --> BODY["组装 Chat Completions body"]
     BODY --> THINKING["强制 thinking.disabled"]
     THINKING --> DEEPSEEK["DeepSeek API"]
@@ -488,6 +550,23 @@ flowchart TD
     JSON --> RESP
 ```
 
+### Server Support
+
+```mermaid
+flowchart TD
+    REQ["认证/档案/审计 API request"] --> SUPPORT["serverSupport.mjs"]
+    SUPPORT --> LIAO["liaoChatroom /api/login"]
+    SUPPORT --> SESS["内存 authSession"]
+    SUPPORT --> DOS[".persona-dossiers.local.json"]
+    SUPPORT --> AUD[".conversation-audits.local.json"]
+    LIAO --> SESS
+    SESS --> PERM["requireSession / requireAdminSession"]
+    PERM --> DOS
+    PERM --> AUD
+    DOS --> APP["App Shell 共享档案"]
+    AUD --> ADMINUI["管理员审计 UI"]
+```
+
 ### Production Server
 
 ```mermaid
@@ -495,11 +574,17 @@ flowchart TD
     REQ["生产 HTTP request"] --> SERVER["server.mjs"]
     SERVER --> ROUTE{"路径类型"}
     ROUTE -- "/health" --> HEALTH["返回 OK"]
+    ROUTE -- "/api/auth/*" --> AUTH["Server Support: liao 登录 + 本地会话"]
+    ROUTE -- "/api/persona-dossiers" --> DOS["Server Support: 共享档案读写"]
+    ROUTE -- "/api/conversation-audits" --> AUD["Server Support: 输入输出审计"]
     ROUTE -- "/api/deepseek-config" --> CFG["读取/写入 .deepseek.local.json"]
     ROUTE -- "/api/deepseek-chat" --> DS["代理 DeepSeek API"]
     ROUTE -- "静态资源" --> STATIC["serveStatic dist 文件"]
     ROUTE -- "SPA fallback" --> HTML["返回 dist/index.html"]
     CFG --> RESP["HTTP response"]
+    AUTH --> RESP
+    DOS --> RESP
+    AUD --> RESP
     DS --> RESP
     STATIC --> RESP
     HTML --> RESP
@@ -545,11 +630,13 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    TOP[左上角版本/GitHub 链接] --> LEFT
+    TOP[左上角版本/GitHub 链接 + 登录状态] --> LEFT
     LEFT[左侧状态/人物档案/场景] --> PIPE[对话流程]
     CHAT[中间对话] --> PIPE
     PIPE --> TRACE[右侧流程追踪]
     TRACE --> JSON[事件/评估/记忆/决策/回应提示词/回应输出/状态更新/信号评估/状态变化]
+    TRACE --> AUDIT[管理员输入输出审计]
+    TOP --> LOGIN[登录浮窗]
     LEFT --> DOS[多人档案: 新建/切换/删除]
     LEFT --> GEN1[生成人物档案]
     LEFT --> GEN2[生成场景]
@@ -575,7 +662,7 @@ flowchart LR
 
 | 资源 | 状态 | 说明 |
 | --- | --- | --- |
-| 前置对话链接 | blocked | 链接打开后需要登录，AI 无法读取实际内容 |
+| liao 聊天室用户源 | known | 可读取公开前端脚本确认 `/api/login` 返回 token/user/isAdmin；本项目只用它校验登录，不修改聊天室数据 |
 | GitHub 账号 | known | 用户主页为 `ttmanthatman` |
 | GitHub 仓库 | known | `ttmanthatman/virtual-human-flow`，`main` 分支 push 触发自动部署 |
 | VPS | known | 仅允许后续部署 `ok.xiaogushi.us` 对应内容 |
@@ -590,6 +677,10 @@ flowchart LR
 | 系统流程 | initialized | 已建立初始工作流图 |
 | MVP 业务模块 | initialized | 已实现本地可运行的三栏工作台 |
 | 多人档案 | initialized | 左侧可新建、切换、删除 `personaDossier`；每个档案绑定人物状态和配套场景素材 |
+| 登录机制 | initialized | 用户来自 `liao.xiaogushi.us` 聊天室登录接口；未登录可看界面但操作会弹登录浮窗 |
+| 权限控制 | initialized | `isAdmin` 用户可维护共享档案和查看审计；普通登录用户只可选择共享档案并对话 |
+| 共享多人档案 | initialized | 管理员保存到 `.persona-dossiers.local.json`，所有登录用户可读取和使用 |
+| 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，仅管理员可查看 |
 | 人物档案生成 | initialized | 通过 Dossier Interpretation LLM 重新解读用户素材，生成 profile、concerns、longTermMemory 和 runtime 预览 |
 | 人物档案预览 | initialized | 左侧只展示 `profile.displaySummary` 等摘要信息，用户确认后应用 |
 | 场景生成 | initialized | 通过 Scene Interpretation LLM 重新解读用户素材，生成 scene、状态影响、人物影响、关切和记忆预览 |

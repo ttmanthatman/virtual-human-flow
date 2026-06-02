@@ -46,6 +46,12 @@ npm run start
 - 中间：聊天室。
 - 右侧：流程追踪，展示 `事件 -> 评估 -> 记忆召回 -> 回应决策 -> 回应提示词 -> 回应输出 -> 状态更新 -> 信号评估 -> 状态变化`。
 
+当前版本增加了登录和权限边界：未登录用户可以看到工作台界面，但发送消息、切换或修改档案、测试 DeepSeek、查看审计等操作都会弹出登录浮窗。登录账号来自 `https://liao.xiaogushi.us/` 的聊天室用户，密码保持原密码；本项目只调用 liao 聊天室 `/api/login` 做校验，不保存密码，也不修改聊天室数据。
+
+多人档案现在支持后台共享。只有 liao 聊天室里的管理员用户可以新增、保存、删除或应用人物/场景档案；管理员保存的共享档案会写入运行时文件 `.persona-dossiers.local.json`，所有登录用户都可以读取、选择和使用。普通用户对话时产生的角色状态变化只在当前浏览器会话中使用，不会写回共享档案。
+
+后台会记录每个登录用户的一次输入和虚拟人输出，写入运行时文件 `.conversation-audits.local.json`；只有管理员可以在右侧“输入输出审计”里查看这些记录。这两个运行时文件和 `.deepseek.local.json` 一样被 `.gitignore` 忽略，不能提交。
+
 当前 LLM 入口固定为真实 DeepSeek 本地代理，不再在 UI 中提供模拟语言模型选项。每个认知步骤都必须调用 LLM：Appraisal、Memory Recall、Decision、State Update、Runtime Signal Evaluation 都是独立的 LLM 模块。
 
 Memory Recall 当前是混合召回，不是敏感词召回。触发词可以参与，但系统会先构建自然语言召回查询，并按自然语言相关度、当前关切、说话者关系、情绪显著、近期性和词面线索排序长期记忆候选，再交给 Memory Recall LLM 复判。这个入口也预留了未来异步生命路径使用的召回来源字段。
@@ -54,7 +60,7 @@ Memory Recall 当前是混合召回，不是敏感词召回。触发词可以参
 
 左侧简化指标只用于人快速观察。性格标签、能量、情绪、情绪倾向、唤醒度等显示值不是提交给 LLM 的驱动材料；Reply LLM 使用的是人物档案、状态考量和场景语境的自然语言综合描述。人物档案和场景预览必须先经过独立 LLM 解读：人物素材会被拆成长期记忆、人性/人格、标签和状态信号；场景素材会被拆成场景本身、状态影响和可能影响人物的记忆或关切。人物档案和场景作为一个配套档案保存，切换档案时会同时切换人物与场景。确认应用前还会由一致性检测 LLM 判断人物和场景是否处在同一世界观；若出现现代人物配古代场景这类硬冲突，需要输入“扭曲时空密码”才能继续。
 
-DeepSeek 本地测试通过 Vite 代理 `/api/deepseek-chat` 访问官方 Chat Completions 接口。前端保存的密钥写入项目根目录 `.deepseek.local.json`，该文件已加入 `.gitignore`。代理层固定使用 `deepseek-v4-flash`，强制 `thinking: { type: "disabled" }`，并把 `deepseek-reasoner` 纠正为 `deepseek-v4-flash`，避免打开思考模式。
+DeepSeek 本地测试通过 Vite 代理 `/api/deepseek-chat` 访问官方 Chat Completions 接口。前端保存的密钥写入项目根目录 `.deepseek.local.json`，该文件已加入 `.gitignore`。代理层固定使用 `deepseek-v4-flash`，强制 `thinking: { type: "disabled" }`，并把 `deepseek-reasoner` 纠正为 `deepseek-v4-flash`，避免打开思考模式。`/api/deepseek-chat` 需要登录用户，保存密钥需要管理员。
 
 流程追踪面板会在每个模块开始时自动切换到当前模块，并分区显示输入、输出和状态。外部 DeepSeek 调用使用流式返回，输出到达时会逐步更新。
 
