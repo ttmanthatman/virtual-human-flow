@@ -45,6 +45,10 @@
 | 人物档案组合 | `personaDossier` | UI/domain object | 一个可切换的多人档案条目，绑定人物状态、人物素材和配套场景素材 | `profileSlot`, `characterTab` |
 | 人物场景一致性 | `profileSceneConsistency` | cognitive module | 判断人物档案和场景是否处于同一世界观、时代和社会语境 | `settingMatch`, `sceneFit` |
 | 扭曲时空密码 | `distortionPassword` | permission gate | 人物和场景硬冲突时允许继续应用的本地门禁短语 | `overrideCode`, `adminPassword` |
+| 混合记忆召回 | `hybridMemoryRetrieval` | pipeline design | 记忆召回同时参考自然语言相关度、关切关联、关系关联、情绪显著、近期性和词面线索 | `keywordMemorySearch`, `sensitiveWordRecall` |
+| 召回自然语言查询 | `naturalLanguageQuery` | runtime field | 将事件、评估、激活关切和关系摘要合成的召回语义查询 | `keywordQuery`, `searchText` |
+| 召回因子 | `memoryRecallFactor` | runtime object | 解释某条记忆为什么浮现的分项评分 | `matchReasonOnly`, `keywordScore` |
+| 召回来源 | `memoryRecallSource` | runtime field | 标识召回来自同步响应路径还是未来异步生命路径 | `triggerType` |
 
 ## 模块登记表
 
@@ -55,7 +59,7 @@
 | Seed State | `src/data/seedState.ts` | 提供林安初始状态和默认消息 | 无 | `CharacterState` | App Shell | Core Types |
 | Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Appraisal/Memory/Decision/State Update | 外部 LLM endpoint |
 | Appraisal | `src/pipeline/appraisal.ts` | 通过 LLM 判断事件触发了哪些关切 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | Conversation Pipeline | Cognitive Module Client |
-| Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 通过 LLM 判断哪些记忆会浮现 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` | Conversation Pipeline | Cognitive Module Client |
+| Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 用混合召回候选和 LLM 复判判断哪些记忆会浮现；召回不能退化为敏感词过滤 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` | Conversation Pipeline | Cognitive Module Client |
 | Response Decision | `src/pipeline/responseDecision.ts` | 通过 LLM 决定是否回应和回应姿态 | appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | Conversation Pipeline | Cognitive Module Client |
 | Prompt Generator | `src/pipeline/promptBuilder.ts` | 将认知模块输出转成只给 Reply LLM 的自然语言 prompt | event, state, appraisal, recall, decision | `ExpressionLlmRequest` | Conversation Pipeline | Core Types |
 | LLM Client | `src/pipeline/llmClient.ts` | 调用 Reply LLM；正式模式只传自然语言 prompt | `ExpressionLlmRequest`, `LlmConfig` | `ReplyOutput` | Conversation Pipeline | 外部 LLM endpoint |
@@ -75,6 +79,10 @@
 | `runCognitiveModule` | `src/pipeline/cognitiveModuleClient.ts` | 执行一个认知脑区式 LLM 模块 | request, config, mockOutput | CognitiveModuleTrace | 可调用外部 endpoint | implemented |
 | `runAppraisal` | `src/pipeline/appraisal.ts` | 通过 LLM 做事件到关切评估 | event, state, llmConfig | CognitiveModuleTrace<AppraisalResult> | 可调用外部 endpoint | implemented |
 | `retrieveMemory` | `src/pipeline/memoryRetrieval.ts` | 通过 LLM 召回相关记忆 | event, appraisal, state, llmConfig | CognitiveModuleTrace<MemoryRecallResult> | 可调用外部 endpoint | implemented |
+| `createMemoryRetrievalContext` | `src/pipeline/memoryRetrieval.ts` | 将事件、评估、激活关切、说话者关系合成召回上下文，供同步和未来异步路径复用 | event, appraisal, state, source | MemoryRetrievalContext | 无 | implemented |
+| `rankLongTermMemoryCandidates` | `src/pipeline/memoryRetrieval.ts` | 对长期记忆做混合召回排序 | memories, context | RankedMemoryCandidate[] | 无 | implemented |
+| `scoreLongTermMemory` | `src/pipeline/memoryRetrieval.ts` | 计算单条长期记忆的自然语言相关、关切、关系、情绪、近期和词面因子 | memory, context | RankedMemoryCandidate | 无 | implemented |
+| `calculateNaturalLanguageRelevance` | `src/pipeline/memoryRetrieval.ts` | 用语义片段重合估算自然语言相关度，后续可替换为 embedding 评分器 | query, summary | number | 无 | implemented |
 | `decideResponse` | `src/pipeline/responseDecision.ts` | 通过 LLM 决定回应姿态 | appraisal, recall, state, llmConfig | CognitiveModuleTrace<ResponseDecision> | 可调用外部 endpoint | implemented |
 | `generateNaturalPromptRequest` | `src/pipeline/promptBuilder.ts` | 生成只含自然语言的 Reply LLM 输入 | event, state, appraisal, recall, decision, provider, model | ExpressionLlmRequest | 无 | implemented |
 | `runLlm` | `src/pipeline/llmClient.ts` | 调用 Reply LLM | request, config, simulateInput | ReplyOutput | 可调用外部 endpoint | implemented |
@@ -131,6 +139,10 @@
 | `pipelineTrace` | `ChatMessage` | `PipelineTrace` | 一轮对话所有中间结果 | conversationPipeline | Pipeline Debug Panel | implemented |
 | `prompt` | `ExpressionLlmRequest` | `string` | 交给 Reply LLM 的自然语言上下文 | promptGenerator | llmClient/UI | implemented |
 | `outputContract` | `CognitiveModuleRequest` | `string` | 认知模块结构化输出约束，不进入 Reply LLM prompt | cognitive modules | cognitiveModuleClient/backend | implemented |
+| `memoryRecall.source` | `MemoryRecallResult` | `MemoryRecallSource` | 说明本次召回来自同步响应路径或未来异步生命路径 | memoryRetrieval | Decision/Prompt Generator/Pipeline Debug Panel | implemented |
+| `memoryRecall.retrievalMode` | `MemoryRecallResult` | `"hybrid_relevance"` | 标识当前使用混合相关度召回，不是敏感词召回 | memoryRetrieval | Pipeline Debug Panel | implemented |
+| `memoryRecall.naturalLanguageQuery` | `MemoryRecallResult` | `string` | 召回时交给本地排序和 LLM 复判的自然语言语义查询 | memoryRetrieval | Pipeline Debug Panel | implemented |
+| `memoryRecall.longTermMemories[].factors` | `MemoryRecallResult` | `MemoryRecallFactor[]` | 每条长期记忆被召回的分项原因和评分 | memoryRetrieval | Pipeline Debug Panel/Decision/Prompt Generator | implemented |
 | `stateUpdate` | `PipelineTrace` | `CognitiveModuleTrace<StateUpdatePlan>` | State Update LLM 的完整调用记录 | stateUpdater | Pipeline Debug Panel | implemented |
 | `runtimeSignalEvaluation` | `PipelineTrace` | `CognitiveModuleTrace<RuntimeSignalEvaluationResult>` | Runtime Signal Evaluation LLM 的完整调用记录 | runtimeSignalEvaluator | Pipeline Debug Panel | implemented |
 | `pipelineStepProgress` | App state | `PipelineStepProgress` | 执行中某一步的输入、输出、状态和 transport，用于 live trace | conversationPipeline | App Shell | implemented |

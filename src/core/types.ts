@@ -182,13 +182,33 @@ export interface AppraisalResult {
   appraisalSummary: string;
 }
 
+export type MemoryRecallSource = "sync_response" | "async_life";
+
+export type MemoryRecallFactorName =
+  | "natural_language_relevance"
+  | "concern_affinity"
+  | "relationship_affinity"
+  | "affective_salience"
+  | "recency"
+  | "lexical_hint";
+
+export interface MemoryRecallFactor {
+  name: MemoryRecallFactorName;
+  score: number;
+  reason: string;
+}
+
 export interface MemoryRecallResult {
+  source?: MemoryRecallSource;
+  retrievalMode?: "hybrid_relevance";
+  naturalLanguageQuery?: string;
   shortTermContext: ShortTermMemory[];
   longTermMemories: {
     memoryId: string;
     summary: string;
     score: number;
     reason: string;
+    factors?: MemoryRecallFactor[];
   }[];
 }
 

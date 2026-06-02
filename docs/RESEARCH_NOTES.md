@@ -37,7 +37,7 @@
 
 | 方向 | 当前选择 | 原因 |
 | --- | --- | --- |
-| 记忆 | 短期原文 + 长期摘要 | 先做可观察闭环，不急着引入向量库 |
+| 记忆 | 短期原文 + 长期摘要 + 混合相关度召回 | 先避免敏感词召回和全历史塞 prompt；embedding/向量库等到记忆规模变大后再接 |
 | 情绪 | `concern` + `relationship` + `derivedMood` | 避免把心理状态压成一个数字 |
 | 主动性 | 暂未实现异步后台 | 先完成同步响应路径 |
 | LLM | DeepSeek 本地代理 + `deepseek-v4-flash` | 用户要求一切测试来真的，UI 不再暴露模拟模型选项 |
@@ -65,3 +65,15 @@
 - Runtime signal 和 Scene 只描述内部状态、成因、身体感、注意力落点、关系距离，不写“应该怎么回复”。
 - Prompt Generator 在 Reply Prompt 中重新过一遍性格、价值、边界、表达样本、场景、状态、关切、关系和记忆。
 - Reply Prompt 仍保持自然语言，但不让单个状态指标绕过整体人格和情境综合。
+
+## 2026-06-02 记忆召回机制修正
+
+用户指出：记忆召回可以有敏感词，但不能只有敏感词；它应该像真人一样按自然语言相关度和心理显著性浮现，并且以后要接异步架构。
+
+当前修正：
+
+- Memory Retrieval 不再使用拆字式命中作为主要依据。
+- 新增混合召回候选层：自然语言相关度、关切关联、关系关联、情绪显著、近期性、词面线索共同评分。
+- Memory Recall LLM 的 prompt 明确要求复判候选：语义相关但没有关键词命中的记忆可以上浮，只是撞词但语义无关的记忆要降权。
+- `MemoryRecallResult` 增加 `source`、`retrievalMode`、`naturalLanguageQuery` 和 `factors`，为未来异步生命路径复用召回上下文做准备。
+- 当前仍不引入向量库。原因是 MVP 记忆量很小，先用轻量语义片段排序 + LLM 复判验证体验；后续当长期记忆增长后，可以把 `calculateNaturalLanguageRelevance` 替换为 embedding 相似度。

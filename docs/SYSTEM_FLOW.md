@@ -10,6 +10,8 @@
 
 认知模块是另一类 LLM 调用。Appraisal、Memory Recall、Decision、State Update 都是独立的脑区式 LLM 模块；它们可以用结构化输入/输出约束，因为它们不是角色台词生成器，而是系统内部的判断模块。
 
+Memory Recall 不是敏感词召回。触发词可以作为线索，但记忆浮现必须同时参考自然语言相关度、当前关切、说话者关系、情绪显著、近期性和词面线索。当前同步路径先在本地构建混合召回候选，再交给 Memory Recall LLM 复判；未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
+
 左侧 UI 里的性格标签、能量、情绪、情绪倾向、唤醒度是给人快速观察的摘要。它们由专门的 Runtime Signal Evaluation LLM 模块评估，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `personalitySummary`、`personalityFacets`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative` 等自然语言综合描述。
 
 人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。Reply Prompt 的作用是把这些自然语言材料过一遍，让回复从人物整体状态中长出来，而不是让某个单独指标指挥台词风格。
@@ -81,7 +83,7 @@ flowchart TD
 flowchart TD
     U[用户在对话区输入消息] --> E[事件输入]
     E --> A[评估模块: 判断事件触发关切]
-    A --> M[记忆召回模块: 判断哪些记忆浮现]
+    A --> M[记忆召回模块: 混合相关度候选 + LLM复判]
     M --> D[回应决策模块: 判断是否回应和回应姿态]
     D --> P[Prompt Generator: 生成自然语言回复上下文]
     P --> R[DeepSeek Flash Reply LLM: 只生成角色台词]
@@ -97,6 +99,27 @@ flowchart TD
     S -. 流式输出 .-> T
     G -. 流式输出 .-> T
 ```
+
+## 记忆召回路径
+
+```mermaid
+flowchart TD
+    E[事件输入] --> Q[合成 naturalLanguageQuery]
+    A[事件评估输出] --> Q
+    C[激活关切] --> Q
+    R[说话者关系] --> Q
+    Q --> S[长期记忆本地混合排序]
+    L[长期记忆库] --> S
+    S --> F[召回因子: 自然语言相关/关切/关系/情绪/近期/词面]
+    F --> M[Memory Recall LLM 复判]
+    B[短期记忆最近几轮] --> M
+    M --> O[MemoryRecallResult]
+    O --> D[回应决策]
+    O --> P[Prompt Generator]
+    X[未来异步生命路径] -. 复用召回上下文 .-> Q
+```
+
+本地混合排序只是候选层，不是最终心理判断。它的责任是避免把整个历史粗暴塞给模型，同时避免只按敏感词命中决定召回。Memory Recall LLM 可以提升“没有词面命中但语义相关”的记忆，也可以压低“只是撞词但语义无关”的记忆。
 
 ## 生成预览路径
 
@@ -215,7 +238,7 @@ flowchart LR
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |
 | 生产部署 | initialized | `ok.xiaogushi.us` 通过 nginx 反代 PM2 进程 `ok-xiaogushi-us`，线上目录 `/var/www/ok.xiaogushi.us/app` |
-| 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现 |
+| 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现；记忆召回上下文已预留 `async_life` 来源 |
 
 ## 部署记录
 

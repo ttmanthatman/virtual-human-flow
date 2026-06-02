@@ -37,7 +37,24 @@ export async function runConversationPipeline({ content, state, llmConfig, onPro
   );
   emit({ step: "appraisal", status: "completed", output: JSON.stringify(appraisal.output, null, 2), transport: appraisal.transport });
 
-  emit({ step: "memoryRecall", status: "running", input: "记忆召回模块输入\n\n" + JSON.stringify({ event, appraisal: appraisal.output, memories: state.longTermMemory }, null, 2), output: "等待模型输出..." });
+  emit({
+    step: "memoryRecall",
+    status: "running",
+    input:
+      "记忆召回模块输入\n\n" +
+      JSON.stringify(
+        {
+          event,
+          appraisal: appraisal.output,
+          shortTermMemory: state.shortTermMemory.slice(-8),
+          longTermMemory: state.longTermMemory,
+          runtime: state.runtime,
+        },
+        null,
+        2,
+      ),
+    output: "等待模型输出...",
+  });
   const memoryRecall = await retrieveMemory(event, appraisal.output, state, llmConfig, (output) =>
     emit({ step: "memoryRecall", status: "streaming", output }),
   );
