@@ -47,23 +47,23 @@ jobs:
         env:
           PRODUCTION_SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
           PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
-          PRODUCTION_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          PRODUCTION_SSH_KEY_B64: ${{ secrets.PRODUCTION_SSH_KEY_B64 }}
         run: |
           set -euo pipefail
           test -n "$PRODUCTION_SSH_HOST"
           test -n "$PRODUCTION_SSH_USER"
-          test -n "$PRODUCTION_SSH_KEY"
+          test -n "$PRODUCTION_SSH_KEY_B64"
 
       - name: Prepare SSH
         env:
           PRODUCTION_SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
-          PRODUCTION_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
           PRODUCTION_SSH_PORT: ${{ secrets.PRODUCTION_SSH_PORT }}
+          PRODUCTION_SSH_KEY_B64: ${{ secrets.PRODUCTION_SSH_KEY_B64 }}
         run: |
           set -euo pipefail
           ssh_port="${PRODUCTION_SSH_PORT:-22}"
           mkdir -p ~/.ssh
-          printf '%s' "$PRODUCTION_SSH_KEY" > ~/.ssh/production_key
+          printf '%s' "$PRODUCTION_SSH_KEY_B64" | base64 --decode > ~/.ssh/production_key
           chmod 600 ~/.ssh/production_key
           ssh-keyscan -p "$ssh_port" -H "$PRODUCTION_SSH_HOST" >> ~/.ssh/known_hosts
 

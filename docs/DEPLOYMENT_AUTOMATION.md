@@ -19,7 +19,7 @@
 | --- | --- |
 | `PRODUCTION_SSH_HOST` | VPS 主机名或 IP |
 | `PRODUCTION_SSH_USER` | SSH 用户，必须有权限操作 `/var/www/ok.xiaogushi.us/app`、PM2 和备份目录 |
-| `PRODUCTION_SSH_KEY` | 只用于部署的私钥内容 |
+| `PRODUCTION_SSH_KEY_B64` | 只用于部署的私钥内容，使用 base64 单行格式 |
 | `PRODUCTION_SSH_PORT` | 可选；不填默认 `22` |
 
 不要把 VPS 密码、私钥、DeepSeek 密钥写入仓库。线上 DeepSeek 凭据仍然保留在服务器的 `.deepseek.local.json` 或环境变量中，GitHub Actions 不上传、不覆盖。
