@@ -281,3 +281,74 @@ AI 把“本地可回溯”误当成了“用户可在 GitHub 继续接手”。
 - 运行 `git log --oneline origin/main..HEAD`；如果存在本地未推送提交，必须 push，除非用户明确要求暂不推送。
 - push 后再次运行 `git status -sb` 或等效命令，确认本地分支不再领先 `origin/main`。
 - 最终回复必须明确说明 GitHub 是否已同步，以及同步到哪个分支。
+
+## 2026-06-02 自动部署配置过程中的验证和凭据格式错误
+
+### 用户指出的问题
+
+用户要求总结刚才配置 GitHub Actions 自动部署过程中 AI 犯了哪些错误，以及以后如何避免。
+
+本次配置目标是：新版本 push 到 GitHub `main` 后，GitHub Actions 自动构建并同步到 `ok.xiaogushi.us` VPS，不再依赖手动部署。
+
+### 错误现象
+
+1. 第一次 GitHub Actions 自动部署失败在 `Upload release` 步骤。
+2. 失败日志显示 runner 读取 SSH 私钥时报 `Load key "...": error in libcrypto`。
+3. AI 在本地轮询 GitHub Actions 状态时，两次写了 CommonJS 脚本却使用 top-level `await`，导致本地监控脚本先报语法错误。
+4. AI 把 `PRODUCTION_SSH_PORT=22` 也写成 GitHub secret，导致 Actions 日志里普通端口号被遮罩成 `***`，增加排障噪音。
+5. 初版 workflow 没有排除纯文档变更，虽然最终补了 `paths-ignore`，但这本应在自动部署设计阶段就考虑到，避免部署记录文档 push 造成重复部署。
+
+### 错误类型
+
+- 验证标准错误：AI 只验证了本地 build、YAML 解析和 secret 是否存在，没有在首次 push 前验证“GitHub runner 能否正确还原并使用 SSH 私钥”。
+- 实现边界错误：多行私钥作为普通 Actions secret 传入 shell 环境变量，格式稳定性不足；应该从一开始就用 base64 单行格式或成熟 SSH action。
+- 流程执行错误：监控脚本本身没有先跑通，导致排查过程多产生两次无关错误。
+- 运维设计疏漏：端口号这类非敏感常量不应放进 secret；纯文档变更不应触发生产部署。
+
+### 根因
+
+AI 把“本地能用这把 SSH key 登录 VPS”误当成了“GitHub Actions runner 一定能以同样格式使用 secret 里的私钥”。这忽略了 CI secret 注入的格式边界：多行文本经过 secret、环境变量、shell `printf`、OpenSSH 读取链路时，任何换行或末尾字符处理不稳都会导致私钥解析失败。
+
+第二个根因是 AI 把自动部署当成一次性配置任务，而没有把它当成一个需要先设计失败路径的运维系统。自动部署不仅要会成功，还要避免误触发、便于排障、减少 secret 遮罩带来的日志噪音。
+
+第三个根因是临时调试脚本写得太快。项目本身是 ESM，Node 临时脚本又用 `--input-type=commonjs`，但脚本里保留了 top-level `await`，说明 AI 没有先把辅助工具自身当成验收对象。
+
+### 为什么之前验证没有发现
+
+本地验证覆盖了：
+
+- `npm run build`
+- workflow YAML 解析
+- GitHub secrets 名称存在
+- VPS 免密 SSH 可用
+- PM2 和目标目录存在
+
+但缺少三项关键验证：
+
+1. 在 GitHub runner 环境中实际解码/读取 SSH 私钥。
+2. 首次 push 后立即按 job step 级别检查失败点，而不是只看最终失败状态。
+3. 检查 workflow 触发条件是否会因为部署记录文档而重复触发。
+
+### 修正
+
+1. 将 `PRODUCTION_SSH_KEY` 改为 `PRODUCTION_SSH_KEY_B64`，在本地把部署私钥 base64 成单行 secret，在 workflow 中 `base64 --decode` 还原为 key 文件。
+2. 删除旧的多行 `PRODUCTION_SSH_KEY` secret。
+3. 删除 `PRODUCTION_SSH_PORT` secret，让端口使用 workflow 默认值 `22`，避免普通常量被日志遮罩。
+4. workflow 增加 `paths-ignore`，纯 `docs/**` 和 `README.md` 变更不触发生产部署。
+5. 重新 push 后验证 GitHub Actions run #2 和 run #3 成功，公网 `/health` 返回 `OK`，PM2 `ok-xiaogushi-us` online。
+6. 部署成功后把最终部署记录写入 `docs/SYSTEM_FLOW.md`，并确认纯文档 commit 没有触发新的部署 run。
+
+### 新增验证标准
+
+以后配置或修改自动部署必须验证：
+
+- SSH 私钥类 secret 优先使用 base64 单行格式，workflow 中显式解码后再使用。
+- 只有真正敏感的值进入 GitHub secrets；端口号、目录名、PM2 进程名等常量放在 workflow `env` 或脚本常量里。
+- 首次启用自动部署后必须检查 GitHub Actions 的 job step 结果，并记录成功 run URL。
+- 修改 workflow 后必须验证 `paths-ignore` 或触发条件，避免纯文档变更造成生产重启。
+- 用于排障的本地脚本也要先跑通；CommonJS 脚本不得使用 top-level `await`，除非改为 ESM。
+- 最终验收同时包含 GitHub Actions 成功、公网 `/health`、PM2 online、最新备份路径和本地/远程 git 同步状态。
+
+### 仍需注意
+
+当前自动部署已经可用，但它仍依赖 GitHub Actions secrets 和 VPS 上的 deploy key。如果以后轮换 VPS、换 SSH 用户、改端口或迁移仓库，需要同步更新 GitHub secrets、VPS `authorized_keys` 和 `docs/DEPLOYMENT_AUTOMATION.md`。
