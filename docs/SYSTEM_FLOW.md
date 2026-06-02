@@ -196,6 +196,7 @@ flowchart TD
 
 ```mermaid
 flowchart LR
+    TOP[左上角版本/GitHub 链接] --> LEFT
     LEFT[左侧状态/人物档案/场景] --> PIPE[对话流程]
     CHAT[中间对话] --> PIPE
     PIPE --> TRACE[右侧流程追踪]
@@ -206,6 +207,8 @@ flowchart LR
     GEN1 --> FIT[人物场景一致性检测]
     GEN2 --> FIT
 ```
+
+左上角版本信息由 App Shell 读取 `package.json` 的 `version` 生成 `appVersionLabel`，并链接到 GitHub 仓库 `ttmanthatman/virtual-human-flow`。它只是页面元信息，不参与对话状态或认知模块数据流。
 
 ## 待确认 MVP 架构问题
 

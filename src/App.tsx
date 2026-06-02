@@ -25,6 +25,10 @@ import { defaultLlmConfig, seedMessages, seedState } from "./data/seedState";
 import { runConversationPipeline } from "./pipeline/conversationPipeline";
 import { generateDossierFromDescription, generateSceneFromDescription } from "./pipeline/generators";
 import { evaluateProfileSceneConsistency } from "./pipeline/profileSceneConsistency";
+import packageInfo from "../package.json";
+
+const githubRepositoryUrl = "https://github.com/ttmanthatman/virtual-human-flow";
+const appVersionLabel = `v${packageInfo.version}`;
 
 const traceSteps: { key: keyof PipelineTrace; label: string; icon: typeof Activity }[] = [
   { key: "event", label: "事件", icon: Play },
@@ -504,7 +508,12 @@ export function App() {
           </div>
           <div>
             <h1>虚拟人心流工作台</h1>
-            <p>事件驱动 + 状态机 + 语言模型表达器</p>
+            <p>
+              <span>事件驱动 + 状态机 + 语言模型表达器</span>
+              <a className="version-link" href={githubRepositoryUrl} target="_blank" rel="noreferrer" title="打开 GitHub 仓库">
+                {appVersionLabel} · GitHub
+              </a>
+            </p>
           </div>
         </div>
         <div className="topbar-actions">

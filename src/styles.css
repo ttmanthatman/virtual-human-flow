@@ -83,9 +83,24 @@ textarea {
 }
 
 .brand p {
+  align-items: center;
   color: #617179;
+  display: flex;
   font-size: 12px;
+  gap: 8px;
   margin-top: 2px;
+}
+
+.version-link {
+  border-left: 1px solid #c9d5da;
+  color: #0f766e;
+  font-weight: 760;
+  padding-left: 8px;
+  text-decoration: none;
+}
+
+.version-link:hover {
+  text-decoration: underline;
 }
 
 .topbar-actions {
