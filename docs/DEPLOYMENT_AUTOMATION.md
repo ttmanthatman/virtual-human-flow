@@ -6,7 +6,7 @@
 
 `.github/workflows/deploy-production.yml` 会在以下场景运行：
 
-- push 到 `main`
+- push 到 `main`，但纯 `docs/**` 或 `README.md` 变更不会触发部署
 - 在 GitHub Actions 页面手动点击 `workflow_dispatch`
 
 工作流只允许在 `ttmanthatman/virtual-human-flow` 仓库运行，避免 fork 或错误仓库误触发生产部署。
