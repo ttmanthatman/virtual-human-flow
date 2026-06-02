@@ -49,6 +49,7 @@
 | 召回自然语言查询 | `naturalLanguageQuery` | runtime field | 将事件、评估、激活关切和关系摘要合成的召回语义查询 | `keywordQuery`, `searchText` |
 | 召回因子 | `memoryRecallFactor` | runtime object | 解释某条记忆为什么浮现的分项评分 | `matchReasonOnly`, `keywordScore` |
 | 召回来源 | `memoryRecallSource` | runtime field | 标识召回来自同步响应路径还是未来异步生命路径 | `triggerType` |
+| 生产自动部署 | `productionAutoDeploy` | deployment workflow | GitHub `main` 新版本自动构建并同步到 `ok.xiaogushi.us` VPS | `manualDeploy`, `vpsSyncBot` |
 
 ## 模块登记表
 
@@ -70,6 +71,8 @@
 | Profile Scene Consistency | `src/pipeline/profileSceneConsistency.ts` | 通过 LLM 判断人物档案和场景是否匹配，并返回是否需要扭曲时空密码 | `CharacterState`, `LlmConfig` | `ProfileSceneConsistencyResult` | App Shell | Cognitive Module Client |
 | DeepSeek Local Proxy | `vite.config.ts` | 在本地开发服务器中代理 DeepSeek Chat Completions，固定 flash 模型、关闭 thinking 并保存根目录密钥文件 | `/api/deepseek-config`, `/api/deepseek-chat` | DeepSeek 响应或配置状态 | App Shell | DeepSeek API |
 | Production Server | `server.mjs` | 生产环境服务 `dist/` 并提供 DeepSeek API 代理 | HTTP request, `.deepseek.local.json` | HTML/assets/API/SSE | nginx reverse proxy | DeepSeek API |
+| Production Auto Deploy | `.github/workflows/deploy-production.yml` | GitHub `main` 新提交后自动构建、上传 release、备份线上目录、重启 PM2 并健康检查 | GitHub push/workflow_dispatch, Actions secrets | 线上新版本、备份文件、Actions 结果 | GitHub Actions | production VPS, PM2 |
+| Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录自动部署触发方式、Secrets、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | GitHub Actions |
 
 ## 函数登记表
 
@@ -163,6 +166,8 @@
 | 服务 | 标准名称 | 用途 | 权限/密钥位置 | 风险 |
 | --- | --- | --- | --- | --- |
 | GitHub | `github` | 代码远程同步和版本回溯 | 本机 GitHub CLI 或 GitHub 连接器 | 需要确认仓库名和可见性 |
+| GitHub Actions | `githubActions` | `main` 分支自动构建和部署生产版本 | GitHub Actions secrets 中的部署 SSH 凭据 | secrets 配置错误会导致自动部署失败 |
+| GitHub Actions Secrets | `githubActionsSecrets` | 保存自动部署 SSH host/user/key/port | GitHub 仓库 Settings，不进入 git | 私钥泄漏风险，必须使用专用部署密钥 |
 | VPS | `productionVps` | MVP 部署 | 不写入仓库 | 只允许操作 `ok.xiaogushi.us` |
 | PM2 进程 | `okXiaogushiUsPm2Process` | 运行线上 Node 生产服务 | root 用户 PM2，仅新增 `ok-xiaogushi-us` | 不触碰其他 PM2 应用 |
 | Nginx 站点 | `okXiaogushiUsNginxSite` | 将 `ok.xiaogushi.us` 反代到 `127.0.0.1:4174` | `/etc/nginx/sites-available/ok.xiaogushi.us.conf` | 只修改该域名配置 |

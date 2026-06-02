@@ -1,0 +1,119 @@
+name: Deploy ok.xiaogushi.us
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-ok-xiaogushi-us
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  PRODUCTION_APP_DIR: /var/www/ok.xiaogushi.us/app
+  PRODUCTION_BACKUP_DIR: /root/ok.xiaogushi.us-backups
+  PRODUCTION_PM2_NAME: ok-xiaogushi-us
+  PRODUCTION_PORT: "4174"
+  RELEASE_ARCHIVE: ok-xiaogushi-us-release.tgz
+
+jobs:
+  deploy:
+    name: Build and deploy production
+    runs-on: ubuntu-latest
+    if: github.repository == 'ttmanthatman/virtual-human-flow'
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Package release
+        run: tar --create --gzip --file "$RELEASE_ARCHIVE" dist server.mjs package.json package-lock.json
+
+      - name: Validate deployment secrets
+        env:
+          PRODUCTION_SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
+          PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+          PRODUCTION_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$PRODUCTION_SSH_HOST"
+          test -n "$PRODUCTION_SSH_USER"
+          test -n "$PRODUCTION_SSH_KEY"
+
+      - name: Prepare SSH
+        env:
+          PRODUCTION_SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
+          PRODUCTION_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+          PRODUCTION_SSH_PORT: ${{ secrets.PRODUCTION_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          ssh_port="${PRODUCTION_SSH_PORT:-22}"
+          mkdir -p ~/.ssh
+          printf '%s' "$PRODUCTION_SSH_KEY" > ~/.ssh/production_key
+          chmod 600 ~/.ssh/production_key
+          ssh-keyscan -p "$ssh_port" -H "$PRODUCTION_SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload release
+        env:
+          PRODUCTION_SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
+          PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+          PRODUCTION_SSH_PORT: ${{ secrets.PRODUCTION_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          ssh_port="${PRODUCTION_SSH_PORT:-22}"
+          scp -P "$ssh_port" -i ~/.ssh/production_key "$RELEASE_ARCHIVE" \
+            "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST:/tmp/$RELEASE_ARCHIVE"
+
+      - name: Activate release
+        env:
+          PRODUCTION_SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
+          PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+          PRODUCTION_SSH_PORT: ${{ secrets.PRODUCTION_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          ssh_port="${PRODUCTION_SSH_PORT:-22}"
+          ssh -p "$ssh_port" -i ~/.ssh/production_key "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
+            "APP_DIR='$PRODUCTION_APP_DIR' BACKUP_DIR='$PRODUCTION_BACKUP_DIR' PM2_NAME='$PRODUCTION_PM2_NAME' PORT='$PRODUCTION_PORT' RELEASE_ARCHIVE='/tmp/$RELEASE_ARCHIVE' bash -s" <<'REMOTE_SCRIPT'
+          set -euo pipefail
+
+          if [ "$APP_DIR" != "/var/www/ok.xiaogushi.us/app" ]; then
+            echo "Refusing to deploy outside ok.xiaogushi.us app directory: $APP_DIR" >&2
+            exit 1
+          fi
+
+          timestamp="$(date +%Y%m%d%H%M%S)"
+          mkdir -p "$APP_DIR" "$BACKUP_DIR"
+
+          if [ -d "$APP_DIR" ] && [ "$(find "$APP_DIR" -mindepth 1 -maxdepth 1 | head -n 1)" ]; then
+            tar --create --gzip --file "$BACKUP_DIR/$timestamp.tgz" --directory "$APP_DIR" .
+            echo "Backed up current app to $BACKUP_DIR/$timestamp.tgz"
+          fi
+
+          tar --extract --gzip --file "$RELEASE_ARCHIVE" --directory "$APP_DIR"
+          cd "$APP_DIR"
+          npm ci --omit=dev
+
+          if pm2 describe "$PM2_NAME" >/dev/null 2>&1; then
+            PORT="$PORT" pm2 restart "$PM2_NAME" --update-env
+          else
+            PORT="$PORT" pm2 start server.mjs --name "$PM2_NAME" --update-env
+          fi
+
+          pm2 save
+          curl --fail --silent --show-error "http://127.0.0.1:$PORT/health"
+          rm -f "$RELEASE_ARCHIVE"
+          REMOTE_SCRIPT

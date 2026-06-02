@@ -67,15 +67,23 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    B[本地 npm run build] --> D[生成 dist]
-    D --> S[上传到 /var/www/ok.xiaogushi.us/app]
-    S --> N[server.mjs: 服务前端和 DeepSeek API]
-    N --> P[PM2 ok-xiaogushi-us: 127.0.0.1:4174]
-    P --> X[Nginx ok.xiaogushi.us.conf]
-    X --> U[https://ok.xiaogushi.us]
-    N --> K[.deepseek.local.json: 线上本地密钥文件]
-    N --> A[DeepSeek API]
+    G[推送 GitHub main] --> GA[GitHub Actions productionAutoDeploy]
+    GA --> BUILD[npm ci + npm run build]
+    BUILD --> PKG[打包 dist/server/package files]
+    PKG --> UPLOAD[SSH 上传 release archive 到 VPS /tmp]
+    UPLOAD --> BACKUP[备份 /var/www/ok.xiaogushi.us/app]
+    BACKUP --> EXTRACT[解压新版本到 /var/www/ok.xiaogushi.us/app]
+    EXTRACT --> INSTALL[npm ci --omit=dev]
+    INSTALL --> SRV[server.mjs: 服务前端和 DeepSeek API]
+    SRV --> PM2[PM2 ok-xiaogushi-us: 127.0.0.1:4174]
+    PM2 --> NGINX[Nginx ok.xiaogushi.us.conf]
+    NGINX --> SITE[https://ok.xiaogushi.us]
+    SRV --> KEY[.deepseek.local.json: 线上本地密钥文件]
+    SRV --> DS[DeepSeek API]
+    PM2 --> HEALTH[health check: 127.0.0.1:4174/health]
 ```
+
+生产自动部署由 `.github/workflows/deploy-production.yml` 执行，触发条件是 `main` 分支 push 或 GitHub Actions 手动触发。工作流使用 GitHub Actions secrets 里的 SSH 凭据进入 VPS，但只允许操作 `/var/www/ok.xiaogushi.us/app`、`/root/ok.xiaogushi.us-backups` 和 PM2 进程 `ok-xiaogushi-us`。线上 `.deepseek.local.json` 不由 GitHub Actions 上传或覆盖。
 
 ## 当前 MVP 同步响应路径
 
@@ -216,7 +224,8 @@ flowchart LR
 | 资源 | 状态 | 说明 |
 | --- | --- | --- |
 | 前置对话链接 | blocked | 链接打开后需要登录，AI 无法读取实际内容 |
-| GitHub 账号 | known | 用户主页为 `ttmanthatman`，仓库名未确认 |
+| GitHub 账号 | known | 用户主页为 `ttmanthatman` |
+| GitHub 仓库 | known | `ttmanthatman/virtual-human-flow`，`main` 分支 push 触发自动部署 |
 | VPS | known | 仅允许后续部署 `ok.xiaogushi.us` 对应内容 |
 | 域名 | known | `ok.xiaogushi.us` |
 
@@ -238,6 +247,7 @@ flowchart LR
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |
 | 生产部署 | initialized | `ok.xiaogushi.us` 通过 nginx 反代 PM2 进程 `ok-xiaogushi-us`，线上目录 `/var/www/ok.xiaogushi.us/app` |
+| 生产自动部署 | initialized | GitHub Actions 在 `main` 分支新版本后自动构建、上传、备份、重启 PM2，并检查 `/health` |
 | 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现；记忆召回上下文已预留 `async_life` 来源 |
 
 ## 部署记录
