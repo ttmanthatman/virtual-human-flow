@@ -352,3 +352,86 @@ AI 把“本地能用这把 SSH key 登录 VPS”误当成了“GitHub Actions r
 ### 仍需注意
 
 当前自动部署已经可用，但它仍依赖 GitHub Actions secrets 和 VPS 上的 deploy key。如果以后轮换 VPS、换 SSH 用户、改端口或迁移仓库，需要同步更新 GitHub secrets、VPS `authorized_keys` 和 `docs/DEPLOYMENT_AUTOMATION.md`。
+
+## 2026-06-02 发送消息后记忆召回阶段读取 undefined.length
+
+### 用户指出的问题
+
+用户点击“发送”后，输入框下方出现红色错误：
+
+```text
+Cannot read properties of undefined (reading 'length')
+```
+
+截图显示错误发生在发送默认消息“周末一起去爬山吗？”后，页面没有继续完成对话流程。
+
+### 错误现象
+
+复现后，右侧流程追踪停在“记忆召回 / 输入已发送”。Appraisal LLM 已返回输出，但该输出包含形状漂移：
+
+- `speakerRelationship` 返回成字符串 `"current_conversation_partner"`，不是 `Relationship` 对象。
+- `activatedConcerns` 中出现未知 concern id `waiting_for_project_reply`，不是当前状态里的标准 id。
+- 下游 `memoryRetrieval` 在合成说话者关系摘要时读取 `appraisal.speakerRelationship.unresolvedIssues.length`，因为 `speakerRelationship` 不是对象，最终触发 `undefined.length`。
+
+### 错误类型
+
+- 实现边界错误：认知模块输出被当作强类型对象直接传给下游，但真实 LLM 的结构化 JSON 仍可能漏字段、错类型或 hallucinate id。
+- 验证标准错误：之前验证了 happy path 和 build，没有用“坏结构化输出”作为回归输入验证模块边界。
+- 架构假设错误：AI 假设 `outputContract` 足以保证真实 LLM 输出完全符合 TypeScript 类型，但这个假设不成立。
+
+### 根因
+
+`runCognitiveModule<TOutput>` 只负责调用外部 LLM 并把 JSON cast 成 `TOutput`。TypeScript 的类型只在编译期存在，不能证明真实模型返回的对象符合接口。
+
+因此，Appraisal、Memory Recall、Decision、State Update 这些结构化认知模块都需要“模块出口归一化层”。此前只有 Runtime Signal Evaluation 有专门归一化，其他模块没有同等级别的保护。
+
+### 为什么之前验证没有发现
+
+之前的验证只覆盖：
+
+- `npm run build`
+- 浏览器中正常点击发送
+- 线上 `/health`
+- 页面无 console error
+
+这些验证没有模拟真实 LLM 常见的结构漂移，例如：
+
+- 对象字段返回成字符串。
+- 数组字段缺失。
+- 枚举值超出允许范围。
+- concern id 或 relationship id 不在当前状态中。
+
+因为没有这种坏输出回归，`speakerRelationship.unresolvedIssues.length` 这样的隐含假设就留在了代码里。
+
+### 修正
+
+1. `runAppraisal` 在返回前调用 `normalizeAppraisalResult`：
+   - `speakerRelationship` 如果不是对象，就回退到当前说话者的关系档案。
+   - `eventId` 强制使用当前事件 id。
+   - `activatedConcerns` 只保留当前状态中已知的 concern id；如果全无有效项，回退到本地候选。
+   - `matchedTriggers` 字符串或缺失时归一化为数组。
+2. `retrieveMemory` 返回前调用 `normalizeMemoryRecallResult`：
+   - `shortTermContext` 和 `longTermMemories` 保证为数组。
+   - 空数组被视为合法判断，不误回退。
+3. `decideResponse` 返回前调用 `normalizeResponseDecision`：
+   - `responseMode` 必须落在 `ResponseMode` 枚举中，否则回退。
+4. `applyStateUpdates` 的 LLM 计划返回前调用 `normalizeStateUpdatePlan`：
+   - `concernUpdates`、`relationshipUpdates` 和 `newConcerns` 缺失时回退。
+   - 空数组被视为合法判断。
+   - 未知 concern id 被过滤。
+5. `memoryRetrieval` 内部读取 `unresolvedIssues` 前也增加数组判断，避免再次依赖裸 `.length`。
+6. 更新命名登记和系统流程，明确结构化认知模块输出必须先归一化再进入下游。
+
+### 新增验证标准
+
+以后涉及认知模块结构化输出必须验证：
+
+- Appraisal 输出中 `speakerRelationship` 为字符串时，发送流程仍能完成。
+- `activatedConcerns` 包含未知 concern id 时，下游不会崩溃。
+- Memory Recall / State Update 返回空数组时，应被当作合法判断，而不是错误。
+- 页面点击默认消息后，流程能到达“状态变化 / 完成”，且不显示红色错误。
+- 每个新增结构化认知模块都要有出口归一化层；不能只依赖 TypeScript 类型或 prompt 的 `outputContract`。
+
+### 仍需注意
+
+当前修正是确定性归一化，不是严格 JSON Schema 校验。后续如果更换支持 schema 的模型或代理层，应在 `/api/deepseek-chat` 侧增加 schema validation，让坏输出在模块边界就被重试或修复，而不是只靠前端归一化兜底。

@@ -2,6 +2,7 @@ import {
   AppraisalResult,
   CharacterState,
   CognitiveModuleTrace,
+  ConcernStatus,
   EventInput,
   LlmConfig,
   MemoryRecallResult,
@@ -69,7 +70,7 @@ async function planStateUpdates(
       : "这次对话没有明显戳中她的心事。",
   };
 
-  return runCognitiveModule<StateUpdatePlan>(
+  const trace = await runCognitiveModule<StateUpdatePlan>(
     {
       moduleName: "state_update",
       inputMode: "structured_context",
@@ -90,6 +91,11 @@ async function planStateUpdates(
     mockOutput,
     { onStream },
   );
+
+  return {
+    ...trace,
+    output: normalizeStateUpdatePlan(trace.output, mockOutput, state),
+  };
 }
 
 function commitStateUpdates(state: CharacterState, event: EventInput, replyOutput: ReplyOutput, stateUpdatePlan: StateUpdatePlan): { nextState: CharacterState; stateDelta: StateDelta } {
@@ -241,4 +247,77 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
       runtimeChanges,
     },
   };
+}
+
+function normalizeStateUpdatePlan(result: unknown, fallback: StateUpdatePlan, state: CharacterState): StateUpdatePlan {
+  if (!isRecord(result)) return fallback;
+  const knownConcernIds = new Set(state.concerns.map((concern) => concern.id));
+  const concernUpdates = normalizeConcernUpdates(result.concernUpdates, fallback.concernUpdates, knownConcernIds);
+  const relationshipUpdates = normalizeRelationshipUpdates(result.relationshipUpdates, fallback.relationshipUpdates);
+
+  return {
+    concernUpdates,
+    relationshipUpdates,
+    newConcerns: Array.isArray(result.newConcerns) ? result.newConcerns : fallback.newConcerns,
+    internalStateNote:
+      typeof result.internalStateNote === "string" && result.internalStateNote.trim()
+        ? result.internalStateNote
+        : typeof result.internal_state_note === "string" && result.internal_state_note.trim()
+          ? result.internal_state_note
+          : fallback.internalStateNote,
+  };
+}
+
+function normalizeConcernUpdates(value: unknown, fallback: StateUpdatePlan["concernUpdates"], knownConcernIds: Set<string>) {
+  if (!Array.isArray(value)) return fallback;
+  const normalized: StateUpdatePlan["concernUpdates"] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const concernId = typeof item.concernId === "string" ? item.concernId : "";
+    if (!knownConcernIds.has(concernId)) continue;
+
+    normalized.push({
+      concernId,
+      intensityDelta: normalizeOptionalNumber(item.intensityDelta, -1, 1),
+      valenceDelta: normalizeOptionalNumber(item.valenceDelta, -2, 2),
+      arousalDelta: normalizeOptionalNumber(item.arousalDelta, -1, 1),
+      status: normalizeConcernStatus(item.status),
+      note: typeof item.note === "string" && item.note.trim() ? item.note : "模型未给出明确状态变化说明。",
+    });
+  }
+
+  return normalized;
+}
+
+function normalizeRelationshipUpdates(value: unknown, fallback: StateUpdatePlan["relationshipUpdates"]) {
+  if (!Array.isArray(value)) return fallback;
+  const normalized: StateUpdatePlan["relationshipUpdates"] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const targetId = typeof item.targetId === "string" && item.targetId.trim() ? item.targetId : "";
+    if (!targetId) continue;
+
+    normalized.push({
+      targetId,
+      familiarityDelta: normalizeOptionalNumber(item.familiarityDelta, -1, 1),
+      trustDelta: normalizeOptionalNumber(item.trustDelta, -1, 1),
+      affectionDelta: normalizeOptionalNumber(item.affectionDelta, -2, 2),
+      tensionDelta: normalizeOptionalNumber(item.tensionDelta, -1, 1),
+      note: typeof item.note === "string" && item.note.trim() ? item.note : "模型未给出明确关系变化说明。",
+    });
+  }
+
+  return normalized;
+}
+
+function normalizeOptionalNumber(value: unknown, min: number, max: number) {
+  return typeof value === "number" ? clamp(value, min, max) : undefined;
+}
+
+function normalizeConcernStatus(value: unknown): ConcernStatus | undefined {
+  return value === "active" || value === "dormant" || value === "resolved" ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

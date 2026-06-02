@@ -10,6 +10,8 @@
 
 认知模块是另一类 LLM 调用。Appraisal、Memory Recall、Decision、State Update 都是独立的脑区式 LLM 模块；它们可以用结构化输入/输出约束，因为它们不是角色台词生成器，而是系统内部的判断模块。
 
+真实 LLM 的结构化输出必须先经过确定性归一化，再交给下游模块。Appraisal、Memory Recall、Decision 和 State Update 都有模块出口归一化层，用来处理数组缺失、关系对象变成字符串、未知 concern id、枚举漂移等情况。归一化层不能改变 Reply LLM 的自然语言边界，它只保护内部认知模块的数据契约。
+
 Memory Recall 不是敏感词召回。触发词可以作为线索，但记忆浮现必须同时参考自然语言相关度、当前关切、说话者关系、情绪显著、近期性和词面线索。当前同步路径先在本地构建混合召回候选，再交给 Memory Recall LLM 复判；未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
 
 左侧 UI 里的性格标签、能量、情绪、情绪倾向、唤醒度是给人快速观察的摘要。它们由专门的 Runtime Signal Evaluation LLM 模块评估，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `personalitySummary`、`personalityFacets`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative` 等自然语言综合描述。
@@ -113,7 +115,8 @@ flowchart TD
 ```mermaid
 flowchart TD
     E[事件输入] --> Q[合成 naturalLanguageQuery]
-    A[事件评估输出] --> Q
+    A --> N[认知模块输出归一化]
+    N --> Q
     C[激活关切] --> Q
     R[说话者关系] --> Q
     Q --> S[长期记忆本地混合排序]

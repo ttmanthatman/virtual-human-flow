@@ -83,16 +83,20 @@
 | `runConversationPipeline` | `src/pipeline/conversationPipeline.ts` | 运行完整对话 pipeline | content, state, llmConfig | nextState, trace | 写入状态 | implemented |
 | `runCognitiveModule` | `src/pipeline/cognitiveModuleClient.ts` | 执行一个认知脑区式 LLM 模块 | request, config, mockOutput | CognitiveModuleTrace | 可调用外部 endpoint | implemented |
 | `runAppraisal` | `src/pipeline/appraisal.ts` | 通过 LLM 做事件到关切评估 | event, state, llmConfig | CognitiveModuleTrace<AppraisalResult> | 可调用外部 endpoint | implemented |
+| `normalizeAppraisalResult` | `src/pipeline/appraisal.ts` | 将 Appraisal LLM 输出归一化，防止关系、关切数组和事件 ID 形状漂移传入下游 | result, fallback, event, state | AppraisalResult | 无 | implemented |
 | `retrieveMemory` | `src/pipeline/memoryRetrieval.ts` | 通过 LLM 召回相关记忆 | event, appraisal, state, llmConfig | CognitiveModuleTrace<MemoryRecallResult> | 可调用外部 endpoint | implemented |
 | `createMemoryRetrievalContext` | `src/pipeline/memoryRetrieval.ts` | 将事件、评估、激活关切、说话者关系合成召回上下文，供同步和未来异步路径复用 | event, appraisal, state, source | MemoryRetrievalContext | 无 | implemented |
 | `rankLongTermMemoryCandidates` | `src/pipeline/memoryRetrieval.ts` | 对长期记忆做混合召回排序 | memories, context | RankedMemoryCandidate[] | 无 | implemented |
 | `scoreLongTermMemory` | `src/pipeline/memoryRetrieval.ts` | 计算单条长期记忆的自然语言相关、关切、关系、情绪、近期和词面因子 | memory, context | RankedMemoryCandidate | 无 | implemented |
 | `calculateNaturalLanguageRelevance` | `src/pipeline/memoryRetrieval.ts` | 用语义片段重合估算自然语言相关度，后续可替换为 embedding 评分器 | query, summary | number | 无 | implemented |
+| `normalizeMemoryRecallResult` | `src/pipeline/memoryRetrieval.ts` | 将 Memory Recall LLM 输出归一化，保证短期上下文和长期记忆字段始终是数组 | result, fallback | MemoryRecallResult | 无 | implemented |
 | `decideResponse` | `src/pipeline/responseDecision.ts` | 通过 LLM 决定回应姿态 | appraisal, recall, state, llmConfig | CognitiveModuleTrace<ResponseDecision> | 可调用外部 endpoint | implemented |
+| `normalizeResponseDecision` | `src/pipeline/responseDecision.ts` | 将 Response Decision LLM 输出归一化，保证回应模式枚举和是否回应字段稳定 | result, fallback | ResponseDecision | 无 | implemented |
 | `generateNaturalPromptRequest` | `src/pipeline/promptBuilder.ts` | 生成只含自然语言的 Reply LLM 输入 | event, state, appraisal, recall, decision, provider, model | ExpressionLlmRequest | 无 | implemented |
 | `runLlm` | `src/pipeline/llmClient.ts` | 调用 Reply LLM | request, config, simulateInput | ReplyOutput | 可调用外部 endpoint | implemented |
 | `readReplyEventStream` | `src/pipeline/llmClient.ts` | 读取 Reply LLM 的 SSE 输出并累积为回复文本 | response, onStream | ReplyOutput-like object | 调用 onStream 更新 live trace | implemented |
 | `applyStateUpdates` | `src/pipeline/stateUpdater.ts` | 调用 State Update LLM 并写回状态 | state, event, replyOutput, context, llmConfig | nextState, StateDelta, stateUpdate | 写入记忆和状态 | implemented |
+| `normalizeStateUpdatePlan` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 输出归一化，保证 concernUpdates、relationshipUpdates 和 internalStateNote 稳定 | result, fallback, state | StateUpdatePlan | 无 | implemented |
 | `evaluateRuntimeSignals` | `src/pipeline/runtimeSignalEvaluator.ts` | 调用 Runtime Signal Evaluation LLM 评估能量、情绪、情绪倾向、唤醒度 | state, event, replyOutput, context, llmConfig | CognitiveModuleTrace<RuntimeSignalEvaluationResult> | 可调用外部 endpoint | implemented |
 | `applyRuntimeSignalEvaluation` | `src/pipeline/runtimeSignalEvaluator.ts` | 将信号评估结果写回 runtime 并追加 trace 变化 | state, stateDelta, evaluation | nextState, StateDelta | 写入 runtime signals | implemented |
 | `normalizeRuntimeSignalEvaluation` | `src/pipeline/runtimeSignalEvaluator.ts` | 将模型返回的信号评估结果归一化为稳定 UI 结构 | state, evaluation | RuntimeSignalEvaluationResult | 防止模型形状漂移导致 UI 崩溃 | implemented |

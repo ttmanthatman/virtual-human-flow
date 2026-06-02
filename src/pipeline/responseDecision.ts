@@ -1,5 +1,16 @@
-import { AppraisalResult, CharacterState, CognitiveModuleTrace, LlmConfig, MemoryRecallResult, ResponseDecision } from "../core/types";
+import { AppraisalResult, CharacterState, CognitiveModuleTrace, LlmConfig, MemoryRecallResult, ResponseDecision, ResponseMode } from "../core/types";
 import { runCognitiveModule } from "./cognitiveModuleClient";
+
+const responseModes: ResponseMode[] = [
+  "warm_reply",
+  "neutral_reply",
+  "short_avoidance",
+  "topic_shift",
+  "question_back",
+  "silence",
+  "delayed_reply",
+  "emotional_outburst",
+];
 
 export async function decideResponse(
   appraisal: AppraisalResult,
@@ -76,5 +87,26 @@ function runDecisionModule(
     llmConfig,
     mockOutput,
     { onStream },
-  );
+  ).then((trace) => ({
+    ...trace,
+    output: normalizeResponseDecision(trace.output, mockOutput),
+  }));
+}
+
+function normalizeResponseDecision(result: unknown, fallback: ResponseDecision): ResponseDecision {
+  if (!isRecord(result)) return fallback;
+  const responseMode = typeof result.responseMode === "string" && responseModes.includes(result.responseMode as ResponseMode)
+    ? (result.responseMode as ResponseMode)
+    : fallback.responseMode;
+
+  return {
+    shouldRespond: typeof result.shouldRespond === "boolean" ? result.shouldRespond : fallback.shouldRespond,
+    responseMode,
+    delaySeconds: typeof result.delaySeconds === "number" ? Math.max(0, Math.min(30, result.delaySeconds)) : fallback.delaySeconds,
+    rationale: typeof result.rationale === "string" && result.rationale.trim() ? result.rationale : fallback.rationale,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

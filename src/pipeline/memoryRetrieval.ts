@@ -48,7 +48,7 @@ export async function retrieveMemory(
     longTermMemories,
   };
 
-  return runCognitiveModule<MemoryRecallResult>(
+  const trace = await runCognitiveModule<MemoryRecallResult>(
     {
       moduleName: "memory_retrieval",
       inputMode: "structured_context",
@@ -71,6 +71,11 @@ export async function retrieveMemory(
     mockOutput,
     { onStream },
   );
+
+  return {
+    ...trace,
+    output: normalizeMemoryRecallResult(trace.output, mockOutput),
+  };
 }
 
 function createMemoryRetrievalContext(
@@ -99,7 +104,7 @@ function createMemoryRetrievalContext(
         `信任 ${appraisal.speakerRelationship.trust}`,
         `紧张 ${appraisal.speakerRelationship.tension}`,
         `最近气氛：${appraisal.speakerRelationship.recentTone}`,
-        appraisal.speakerRelationship.unresolvedIssues.length > 0
+        Array.isArray(appraisal.speakerRelationship.unresolvedIssues) && appraisal.speakerRelationship.unresolvedIssues.length > 0
           ? `未解决：${appraisal.speakerRelationship.unresolvedIssues.join("、")}`
           : "",
       ]
@@ -124,6 +129,43 @@ function createMemoryRetrievalContext(
     speakerNames,
     speakerRelationshipSummary,
   };
+}
+
+function normalizeMemoryRecallResult(result: unknown, fallback: MemoryRecallResult): MemoryRecallResult {
+  if (!isRecord(result)) return fallback;
+
+  return {
+    source: result.source === "async_life" || result.source === "sync_response" ? result.source : fallback.source,
+    retrievalMode: result.retrievalMode === "hybrid_relevance" ? result.retrievalMode : fallback.retrievalMode,
+    naturalLanguageQuery:
+      typeof result.naturalLanguageQuery === "string" && result.naturalLanguageQuery.trim()
+        ? result.naturalLanguageQuery
+        : fallback.naturalLanguageQuery,
+    shortTermContext: Array.isArray(result.shortTermContext) ? result.shortTermContext : fallback.shortTermContext,
+    longTermMemories: normalizeRecalledMemories(result.longTermMemories, fallback.longTermMemories),
+  };
+}
+
+function normalizeRecalledMemories(value: unknown, fallback: MemoryRecallResult["longTermMemories"]) {
+  if (!Array.isArray(value)) return fallback;
+
+  const normalized: MemoryRecallResult["longTermMemories"] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const memoryId = typeof item.memoryId === "string" ? item.memoryId : "";
+    const summary = typeof item.summary === "string" ? item.summary : "";
+    if (!memoryId || !summary) continue;
+
+    normalized.push({
+      memoryId,
+      summary,
+      score: round(clamp(typeof item.score === "number" ? item.score : 0.3, 0, 1)),
+      reason: typeof item.reason === "string" && item.reason.trim() ? item.reason : "模型未给出明确原因，已按低强度召回保留。",
+      factors: Array.isArray(item.factors) ? (item.factors as MemoryRecallFactor[]) : undefined,
+    });
+  }
+
+  return normalized.slice(0, 5);
 }
 
 function rankLongTermMemoryCandidates(memories: LongTermMemory[], context: MemoryRetrievalContext): RankedMemoryCandidate[] {
@@ -301,4 +343,8 @@ function describeRecallFactor(name: MemoryRecallFactor["name"]) {
     case "lexical_hint":
       return "词面线索";
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
