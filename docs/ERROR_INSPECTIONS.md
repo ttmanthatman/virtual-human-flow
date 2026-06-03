@@ -435,3 +435,76 @@ Cannot read properties of undefined (reading 'length')
 ### 仍需注意
 
 当前修正是确定性归一化，不是严格 JSON Schema 校验。后续如果更换支持 schema 的模型或代理层，应在 `/api/deepseek-chat` 侧增加 schema validation，让坏输出在模块边界就被重试或修复，而不是只靠前端归一化兜底。
+
+## 2026-06-03 推送登录审计后线上 502
+
+### 用户指出的问题
+
+用户打开 `https://ok.xiaogushi.us/` 后看到：
+
+```text
+502 Bad Gateway
+nginx/1.24.0 (Ubuntu)
+```
+
+故障发生在 `ce1dead feat: add liao auth and audit logging` 推送并触发自动部署之后。
+
+### 错误现象
+
+公网 `curl https://ok.xiaogushi.us/` 复现 502。nginx 仍在响应，但上游 `127.0.0.1:4174` 的 Node/PM2 服务不可用。
+
+本地按 GitHub Actions 原部署包清单复现：
+
+```bash
+tar --create --gzip --file release.tgz dist server.mjs package.json package-lock.json
+tar --extract --gzip --file release.tgz --directory /tmp/release
+cd /tmp/release
+node server.mjs
+```
+
+得到：
+
+```text
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '.../serverSupport.mjs' imported from .../server.mjs
+```
+
+### 错误类型
+
+- 实现边界错误：生产入口 `server.mjs` 新增了对 `serverSupport.mjs` 的运行时依赖，但自动部署的 release archive 清单没有同步更新。
+- 验证标准错误：本地验证只跑了仓库完整工作树里的 `npm run build` 和 `npm run start`，没有用“部署归档内容”启动一次服务。
+- 流程错误：推送后没有立即等待并核对 GitHub Actions 部署结果和公网 `/health`，导致用户先发现线上 502。
+
+### 根因
+
+`.github/workflows/deploy-production.yml` 的打包步骤仍是旧清单：
+
+```text
+dist server.mjs package.json package-lock.json
+```
+
+新增登录、共享档案和审计能力时，服务端公共逻辑被拆到 `serverSupport.mjs`，但 deployment package 没有包含它。GitHub Actions 解压新版本后，`server.mjs` 在 Node ESM import 阶段找不到 `serverSupport.mjs`，PM2 服务无法正常启动，nginx 反代因此返回 502。
+
+### 为什么之前验证没有发现
+
+之前验证运行在完整仓库目录中，`serverSupport.mjs` 本地存在，所以 `npm run build` 和本地生产服务都能通过。这个验证没有模拟 GitHub Actions 的发布包边界，也没有检查 tar 包内是否包含所有生产运行时文件。
+
+更深层的问题是：生产服务入口文件新增依赖时，AI 只更新了代码和常规文档，没有把“生产归档清单”当成同等重要的模块协作边界。
+
+### 修正
+
+1. 修改 `.github/workflows/deploy-production.yml` 的 `Package release` 步骤，把 `serverSupport.mjs` 加入 release archive。
+2. 同一步骤增加 `tar --list ... | grep -Fx serverSupport.mjs`，让 workflow 在归档缺少该运行时依赖时直接失败，而不是部署后才由 PM2 暴露。
+3. 更新 `docs/SYSTEM_FLOW.md` 的生产部署路径，明确部署包包含 `server.mjs` 和 `serverSupport.mjs`。
+
+### 新增验证标准
+
+以后新增或移动生产服务端运行时文件时必须验证：
+
+- GitHub Actions release archive 清单包含所有被 `server.mjs` 直接或间接 import 的本地文件。
+- 本地至少跑一次“按 release archive 解压后启动 `node server.mjs`”的部署包边界验证。
+- 推送触发生产部署后，必须等待 GitHub Actions 完成，并重新验证公网 `/health` 和首页。
+- 生产部署 workflow 应在归档阶段检查关键运行时文件存在，不能只依赖 PM2 启动失败作为反馈。
+
+### 仍需注意
+
+当前生产部署包仍使用手写 tar 清单。后续如果服务端文件继续增多，应考虑改成明确的 `server/` 目录或生成部署 manifest，避免每次新增运行时文件都需要人工同步 tar 清单。

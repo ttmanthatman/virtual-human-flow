@@ -77,7 +77,7 @@ flowchart LR
 flowchart TD
     G[推送 GitHub main] --> GA[GitHub Actions productionAutoDeploy]
     GA --> BUILD[npm ci + npm run build]
-    BUILD --> PKG[打包 dist/server/package files]
+    BUILD --> PKG[打包 dist/server.mjs/serverSupport.mjs/package files]
     PKG --> UPLOAD[SSH 上传 release archive 到 VPS /tmp]
     UPLOAD --> BACKUP[备份 /var/www/ok.xiaogushi.us/app]
     BACKUP --> EXTRACT[解压新版本到 /var/www/ok.xiaogushi.us/app]
@@ -601,7 +601,7 @@ flowchart TD
     CHECKOUT --> NODE["setup-node"]
     NODE --> INSTALL["npm ci"]
     INSTALL --> BUILD["npm run build"]
-    BUILD --> PACKAGE["打包 dist/server/package files"]
+    BUILD --> PACKAGE["打包 dist/server.mjs/serverSupport.mjs/package files"]
     PACKAGE --> SECRETS["校验 Actions secrets"]
     SECRETS --> SSH["准备 SSH key"]
     SSH --> UPLOAD["上传 release 到 VPS /tmp"]
