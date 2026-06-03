@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Brain,
@@ -118,6 +118,7 @@ function createPersonaDossier(state: CharacterState, dossierDescription: string,
     state,
     dossierDescription,
     sceneDescription,
+    previewStatus: "pending",
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -165,6 +166,7 @@ export function App() {
   const [isUpdatingApp, setIsUpdatingApp] = useState(false);
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateLogs, setUpdateLogs] = useState<AppUpdateLogEntry[]>([]);
+  const generatingPreviewIds = useRef(new Set<string>());
 
   const selectedTraceData = liveTrace[activeStep] ?? buildCompletedTraceProgress(activeStep, activeTrace);
   const traceDisplay = formatTraceDisplay(selectedTraceData);
@@ -192,6 +194,12 @@ export function App() {
         : appUpdateStatus
           ? "已是最新"
           : "检查更新";
+
+  useEffect(() => {
+    if (!activeDossier || !isAuthenticated || !deepseekConnected) return;
+    if (activeDossier.previewSummary || generatingPreviewIds.current.has(activeDossier.id)) return;
+    void ensureDossierPreview(activeDossier);
+  }, [activeDossier?.id, activeDossier?.previewSummary, isAuthenticated, deepseekConnected]);
 
   useEffect(() => {
     fetch("/api/deepseek-config")
@@ -311,6 +319,69 @@ export function App() {
       setDossiers((items) => items.map((item) => (item.id === data.dossier?.id ? data.dossier : item)));
     }
     setDossierSyncStatus("后台档案已保存");
+  }
+
+  async function ensureDossierPreview(dossier: PersonaDossier) {
+    generatingPreviewIds.current.add(dossier.id);
+    setDossiers((items) => items.map((item) => (item.id === dossier.id ? { ...item, previewStatus: "generating" } : item)));
+    try {
+      const detail = formatDossierDetailForPreview(dossier);
+      const response = await fetch("/api/deepseek-chat", {
+        method: "POST",
+        headers: authHeaders(authToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          model: "deepseek-v4-flash",
+          moduleName: "dossier_preview",
+          inputMode: "natural_language",
+          outputMode: "natural_language",
+          prompt: [
+            "请为下面这个虚拟人物档案生成一段给左侧列表使用的中文预览。",
+            "只输出预览文本本身，不要标题、编号、解释或引号。",
+            "预览控制在 45 到 70 个中文字符之间，要体现此人的社会角色、核心张力和区别于其他人的气质。",
+            detail,
+          ].join("\n\n"),
+        }),
+      });
+      if (!response.ok) throw new Error("DeepSeek 预览生成失败");
+      const data = (await response.json()) as { reply?: string };
+      const previewSummary = data.reply?.trim();
+      if (!previewSummary) throw new Error("DeepSeek 没有返回预览文本");
+
+      const saveResponse = await fetch(`/api/persona-dossiers/${encodeURIComponent(dossier.id)}/preview`, {
+        method: "POST",
+        headers: authHeaders(authToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ previewSummary }),
+      });
+      const saveData = (await saveResponse.json()) as { dossier?: PersonaDossier; error?: string };
+      if (!saveResponse.ok || !saveData.dossier) throw new Error(saveData.error || "预览全局保存失败");
+      setDossiers((items) => items.map((item) => (item.id === dossier.id ? saveData.dossier! : item)));
+      setDossierSyncStatus("人物预览已由 DeepSeek 生成并全局保存");
+    } catch (caught) {
+      setDossiers((items) => items.map((item) => (item.id === dossier.id ? { ...item, previewStatus: "pending" } : item)));
+      setDossierSyncStatus(caught instanceof Error ? caught.message : "人物预览生成失败");
+    } finally {
+      generatingPreviewIds.current.delete(dossier.id);
+    }
+  }
+
+  async function syncConversationState(nextState: CharacterState, interaction: { userInput: string; personaOutput: string }) {
+    const response = await fetch(`/api/persona-dossiers/${encodeURIComponent(activeDossierId)}/conversation-state`, {
+      method: "POST",
+      headers: authHeaders(authToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ state: nextState, interaction }),
+    });
+    if (!response.ok) return;
+    const data = (await response.json()) as { dossier?: PersonaDossier; dossiers?: PersonaDossier[] };
+    if (Array.isArray(data.dossiers) && data.dossiers.length > 0) {
+      setDossiers(data.dossiers);
+      const active = data.dossiers.find((dossier) => dossier.id === activeDossierId);
+      if (active) setState(active.state);
+      return;
+    }
+    if (data.dossier) {
+      setDossiers((items) => items.map((item) => (item.id === data.dossier?.id ? data.dossier : item)));
+      if (data.dossier.id === activeDossierId) setState(data.dossier.state);
+    }
   }
 
   async function handleLogin(event: FormEvent) {
@@ -568,6 +639,9 @@ export function App() {
         name: `新档案 ${dossiers.length + 1}`,
         displaySummary: "等待 LLM 解读人物素材后生成摘要。",
         background: "等待用户输入人物素材。",
+        socialPersonaPattern: "等待 LLM 判断此人在社会性格分布中的位置。",
+        fullLifeStory: "等待 LLM 根据人物素材整理从小到大的经历和心理变化。",
+        lifeEvents: [],
         personalityTraits: ["待解读"],
       },
       concerns: [],
@@ -627,7 +701,7 @@ export function App() {
         id: makeId("msg"),
         speaker: "system",
         speakerName: "档案",
-        content: `已新建 ${nextDossier.title}，人物档案和场景将作为一组保存。`,
+      content: `已新建 ${nextDossier.title}，人物档案、成长故事和场景将作为一组保存。`,
         timestamp: nowIso(),
       },
     ]);
@@ -805,6 +879,10 @@ export function App() {
           trace: result.trace,
         },
       ]);
+      await syncConversationState(result.nextState, {
+        userInput: userMessage.content,
+        personaOutput: reply,
+      });
       await recordConversationAudit({
         dossierId: activeDossierId,
         dossierTitle: result.nextState.profile.name,
@@ -1083,7 +1161,7 @@ export function App() {
                       onClick={() => handleSelectDossier(dossier)}
                     >
                       <span>{dossier.title}</span>
-                      <small>{dossier.state.scene?.title ?? "未设场景"}</small>
+                      <small>{dossier.previewSummary ?? "预览生成中"}</small>
                       {dossier.state.location ? <small>{dossier.state.location.label}</small> : null}
                     </button>
                   ))}
@@ -1118,7 +1196,27 @@ export function App() {
               <strong>{state.profile.name}</strong>
               <span>{state.profile.age} / {state.profile.personalityTraits.slice(0, 3).join("、")}</span>
             </div>
-            <p>{state.profile.displaySummary}</p>
+            <p>{activeDossier?.previewSummary ?? "预览生成中"}</p>
+            <details className="detail-disclosure">
+              <summary>详细人物档案</summary>
+              <p>{state.profile.displaySummary}</p>
+              {state.profile.socialPersonaPattern ? <small>{state.profile.socialPersonaPattern}</small> : null}
+              {state.profile.fullLifeStory ? <p>{state.profile.fullLifeStory}</p> : null}
+              {(state.profile.lifeEvents ?? []).length > 0 ? (
+                <div className="detail-list life-event-list">
+                  {(state.profile.lifeEvents ?? []).map((event) => (
+                    <div key={event.id}>
+                      <strong>{event.ageRange} · {event.title}</strong>
+                      <span>{event.summary}</span>
+                      <small>心理变化：{event.psychologicalChange}</small>
+                      <small>关系变化：{event.relationshipChange}</small>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <small>成长经历等待 LLM 解读。</small>
+              )}
+            </details>
             <details className="detail-disclosure">
               <summary>性格由哪些特性综合而来</summary>
               <p>{state.profile.personalitySummary}</p>
@@ -1129,6 +1227,21 @@ export function App() {
                     <span>{facet.summary}</span>
                     <small>{facet.tension}</small>
                     <small>{facet.expression}</small>
+                  </div>
+                ))}
+              </div>
+            </details>
+            <details className="detail-disclosure">
+              <summary>人物关系</summary>
+              <div className="detail-list">
+                {Object.values(state.relationships).map((relationship) => (
+                  <div key={relationship.targetId}>
+                    <strong>{relationship.targetName}</strong>
+                    <span>熟悉 {relationship.familiarity.toFixed(2)} / 信任 {relationship.trust.toFixed(2)} / 张力 {relationship.tension.toFixed(2)}</span>
+                    <small>{relationship.recentTone}</small>
+                    {relationship.notes.slice(-2).map((note) => (
+                      <small key={note}>{note}</small>
+                    ))}
                   </div>
                 ))}
               </div>
@@ -1645,6 +1758,26 @@ function RuntimeMetric({ label, value, detail }: { label: string; value: string;
       <small>{detail.cognitiveNarrative}</small>
     </details>
   );
+}
+
+function formatDossierDetailForPreview(dossier: PersonaDossier) {
+  const profile = dossier.state.profile;
+  const lifeEvents = (profile.lifeEvents ?? [])
+    .map((event) => `${event.ageRange}${event.title}：${event.summary} 心理变化：${event.psychologicalChange} 关系变化：${event.relationshipChange}`)
+    .join("\n");
+  const relationships = Object.values(dossier.state.relationships ?? {})
+    .map((relationship) => `${relationship.targetName}：熟悉${relationship.familiarity}，信任${relationship.trust}，张力${relationship.tension}，${relationship.recentTone}`)
+    .join("\n");
+  return [
+    `姓名：${profile.name}`,
+    `年龄：${profile.age ?? "未知"}`,
+    `社会人格位置：${profile.socialPersonaPattern ?? "未记录"}`,
+    `稳定背景：${profile.background}`,
+    `完整故事：${profile.fullLifeStory ?? "未记录"}`,
+    `阶段经历：\n${lifeEvents || "未记录"}`,
+    `性格摘要：${profile.personalitySummary}`,
+    `人物关系：\n${relationships || "未记录"}`,
+  ].join("\n");
 }
 
 function DossierPreviewCard({ preview, onApply }: { preview: CharacterState; onApply: () => void }) {

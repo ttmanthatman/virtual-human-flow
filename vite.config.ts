@@ -20,6 +20,8 @@ import {
   requireSession,
   sendJson,
   streamAppUpdate,
+  updatePersonaDossierConversationState,
+  updatePersonaDossierPreview,
   upsertPersonaDossier,
 } from "./serverSupport.mjs";
 
@@ -88,6 +90,34 @@ function deepseekProxyPlugin(): Plugin {
             return;
           }
           sendJson(response, 200, { dossier: upsertPersonaDossier(body.dossier, session.user) });
+          return;
+        }
+
+        if (pathname?.startsWith("/api/persona-dossiers/") && pathname.endsWith("/preview") && request.method === "POST") {
+          const session = requireSession(request, response);
+          if (!session) return;
+          const dossierId = decodeURIComponent(pathname.replace("/api/persona-dossiers/", "").replace("/preview", ""));
+          const body = await readJsonBody(request);
+          const result = updatePersonaDossierPreview(dossierId, body.previewSummary, session.user);
+          if (result.error) {
+            sendJson(response, result.error === "找不到档案" ? 404 : 400, { error: result.error });
+            return;
+          }
+          sendJson(response, 200, result);
+          return;
+        }
+
+        if (pathname?.startsWith("/api/persona-dossiers/") && pathname.endsWith("/conversation-state") && request.method === "POST") {
+          const session = requireSession(request, response);
+          if (!session) return;
+          const dossierId = decodeURIComponent(pathname.replace("/api/persona-dossiers/", "").replace("/conversation-state", ""));
+          const body = await readJsonBody(request);
+          const result = updatePersonaDossierConversationState(dossierId, body.state, body.interaction, session.user);
+          if (result.error) {
+            sendJson(response, result.error === "找不到档案" ? 404 : 400, { error: result.error });
+            return;
+          }
+          sendJson(response, 200, result);
           return;
         }
 

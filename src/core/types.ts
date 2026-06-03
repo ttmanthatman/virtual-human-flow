@@ -38,6 +38,19 @@ export interface RuntimeSignalEvaluationResult {
   rationale: string;
 }
 
+export interface LifeEvent {
+  id: string;
+  lifeStage: "childhood" | "adolescence" | "early_adulthood" | "adulthood" | "recent";
+  ageRange: string;
+  title: string;
+  summary: string;
+  psychologicalChange: string;
+  relationshipChange: string;
+  relatedPeople: string[];
+  emotionalValence: number;
+  importance: number;
+}
+
 export interface ProfileSceneConsistencyResult {
   compatible: boolean;
   confidence: number;
@@ -53,6 +66,9 @@ export interface CharacterProfile {
   age?: number;
   displaySummary: string;
   background: string;
+  socialPersonaPattern?: string;
+  fullLifeStory?: string;
+  lifeEvents: LifeEvent[];
   personalityTraits: string[];
   personalitySummary: string;
   personalityFacets: PersonalityFacet[];
@@ -168,6 +184,9 @@ export interface PersonaDossier {
   state: CharacterState;
   dossierDescription: string;
   sceneDescription: string;
+  previewSummary?: string;
+  previewGeneratedAt?: string;
+  previewStatus?: "pending" | "generating" | "ready" | "failed";
   createdAt: string;
   updatedAt: string;
   isBuiltin?: boolean;

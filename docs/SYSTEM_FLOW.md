@@ -8,9 +8,11 @@
 
 当前系统已接入登录和权限边界。未登录用户可以看到完整工作台界面，但发送消息、切换档案、生成或应用档案、保存 DeepSeek 密钥、测试 DeepSeek、查看审计等操作会打开登录浮窗。登录账号来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室用户；本项目只调用 liao 聊天室 `/api/login` 校验用户名和密码，不保存密码，不修改聊天室数据。
 
-管理员权限沿用 liao 聊天室登录结果里的 `isAdmin`。只有管理员可以新增、保存、删除或应用共享多人档案，也可以修改档案分组；普通登录用户只能读取、选择和使用管理员保存的共享档案。用户对话时的聊天内容、短期记忆、runtime 状态和关系变化只在当前浏览器会话内写回，不自动覆盖后台共享档案。
+管理员权限沿用 liao 聊天室登录结果里的 `isAdmin`。只有管理员可以新增、保存、删除或应用共享多人档案，也可以修改档案分组；普通登录用户可以读取、选择和使用管理员保存的共享档案。用户对话时产生的短期记忆、长期记忆、runtime 状态和关系变化会通过 `/api/persona-dossiers/:id/conversation-state` 写回同一个全局角色档案，不再为不同用户建立角色副本。如果其他角色与当前角色有 `relationship`，后台会写入压缩后的关系余波记忆，让后续相关角色回应受到影响。
 
-系统启动时会合并 `builtinPersonaDossiers.mjs` 中的内置全局档案和 `.persona-dossiers.local.json` 中管理员保存的共享档案。当前内置 14 个档案：7 个“马可福音10”人物和 7 个“郑州市”人物；每个档案都包含人物、成长背景、场景、分组和位置属性。管理员删除内置档案时不会改源码，而是在运行时存储里记录 tombstone。
+系统启动时会合并 `builtinPersonaDossiers.mjs` 中的内置全局档案和 `.persona-dossiers.local.json` 中管理员保存的共享档案。当前内置 14 个档案：7 个“马可福音10”人物和 7 个“郑州市”人物；每个档案都包含人物、从小到大的关键经历、心理变化、关系变化、熟人关系、场景、分组和位置属性。管理员删除内置档案时不会改源码，而是在运行时存储里记录 tombstone。
+
+人物档案显示分成预览和详细。详细档案直接来自 `CharacterProfile` 的 `fullLifeStory`、`lifeEvents`、`personalityFacets` 和 `relationships`；预览短文由 DeepSeek 生成，不由源码手写。角色缺少 `personaDossier.previewSummary` 时，UI 显示“预览生成中”；登录用户打开该角色后，前端调用 DeepSeek 生成短预览，再通过 `/api/persona-dossiers/:id/preview` 全局保存。
 
 后台会记录每个登录用户的一次输入和虚拟人输出。审计记录写入 `.conversation-audits.local.json`，共享档案写入 `.persona-dossiers.local.json`；二者都是运行时文件，被 `.gitignore` 忽略，只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计。
 
@@ -22,11 +24,11 @@
 
 Memory Recall 不是敏感词召回。触发词可以作为线索，但记忆浮现必须同时参考自然语言相关度、当前关切、说话者关系、情绪显著、近期性和词面线索。当前同步路径先在本地构建混合召回候选，再交给 Memory Recall LLM 复判；未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
 
-左侧 UI 里的性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由专门的 Runtime Signal Evaluation LLM 模块、种子档案或管理员维护字段提供，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `personalitySummary`、`personalityFacets`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
+左侧 UI 里的 DeepSeek 预览、性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由 DeepSeek 预览缓存、专门的 Runtime Signal Evaluation LLM 模块、种子档案或管理员维护字段提供，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `fullLifeStory`、`lifeEvents`、`socialPersonaPattern`、`personalitySummary`、`personalityFacets`、`relationships`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
 
 人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。Reply Prompt 的作用是把这些自然语言材料过一遍，让回复从人物整体状态中长出来，而不是让某个单独指标指挥台词风格。
 
-人物档案和场景预览也属于认知模块，不是本地字符串拼接。人物档案预览通过 Dossier Interpretation LLM 将用户素材拆成展示摘要、长期记忆、人性/人格、标签、关切和状态信号；场景预览通过 Scene Interpretation LLM 将用户素材拆成场景摘要、状态影响和人物影响。预览应用时写入的是 LLM 解读后的结构化状态，而不是用户原文。
+人物档案和场景预览也属于认知模块，不是本地字符串拼接。这里的“预览”指管理员应用前的待应用预览：人物档案预览通过 Dossier Interpretation LLM 将用户素材拆成展示摘要、生平事件、长期记忆、人性/人格、标签、关切和状态信号；场景预览通过 Scene Interpretation LLM 将用户素材拆成场景摘要、状态影响和人物影响。预览应用时写入的是 LLM 解读后的结构化状态，而不是用户原文。左侧人物短预览是另一条 DeepSeek 缓存路径：它只生成 `personaDossier.previewSummary`，不改详细档案。
 
 人物档案和场景设置作为 `personaDossier` 成组保存。左侧可以按 `personaDossierGroup` 分组展示、新建、切换和删除档案；切换档案时人物状态、人物素材、场景素材和位置属性一起切换。应用人物或场景预览前，Profile Scene Consistency LLM 会判断人物与场景是否处于同一世界观、时代和社会语境；现代人物进入古代场景这类硬冲突需要输入本地“扭曲时空密码”才能继续。
 
@@ -175,7 +177,7 @@ flowchart TD
     A[用户输入人物或场景素材] --> B{预览类型}
     B -- 人物档案 --> D[人物档案解读 LLM]
     B -- 场景 --> E[场景解读 LLM]
-    D --> D1[分类: 长期记忆/人性人格/标签/关切/状态信号]
+    D --> D1[分类: 生平事件/长期记忆/人性人格/标签/关切/状态信号]
     E --> E1[分类: 场景摘要/状态影响/人物影响]
     D1 --> F[确定性归一化: 限长/补 ID/clamp/去原文整段]
     E1 --> F
@@ -188,6 +190,19 @@ flowchart TD
     L -- 是 --> M[要求输入扭曲时空密码]
     M -- 正确 --> I
     M -- 错误或取消 --> J
+```
+
+## 人物短预览缓存路径
+
+```mermaid
+flowchart TD
+    A[登录用户选中角色] --> B{是否已有 previewSummary}
+    B -- 有 --> C[左侧显示 DeepSeek 预览]
+    B -- 无 --> D[显示 预览生成中]
+    D --> E[调用 /api/deepseek-chat 生成短预览]
+    E --> F[POST /api/persona-dossiers/:id/preview]
+    F --> STORE[.persona-dossiers.local.json]
+    STORE --> C
 ```
 
 ## 多人档案路径
@@ -212,10 +227,15 @@ flowchart TD
     READ --> D
     D --> H[左栏人物/场景/位置输入同步切换]
     H --> I[聊天室后续使用当前档案状态]
-    I --> J[对话状态更新写回当前浏览器会话]
+    I --> J[对话 pipeline 产出 nextState]
+    J --> K[POST /api/persona-dossiers/:id/conversation-state]
+    K --> STORE
+    K --> R[查找与当前角色有关联的其他 personaDossier]
+    R --> N[写入压缩关系余波到相关角色 longTermMemory/relationship notes]
+    N --> STORE
 ```
 
-内置档案和管理员保存的多人档案都是全局可用初始档案。普通用户选择它之后可以对话使用；对话产生的聊天内容、短期记忆、runtime 状态和关系变化不自动写回 `.persona-dossiers.local.json`。
+内置档案和管理员保存的多人档案都是全局可用档案。普通用户选择它之后可以对话使用；对话产生的短期记忆、长期记忆、runtime 状态和关系变化会写回 `.persona-dossiers.local.json` 中同一个角色条目。系统不会按用户创建角色副本；同一角色的所有用户消息都会影响这个角色之后的状态。为了让熟人关系产生跨角色影响，后台只把压缩后的关系余波写给相关人物，不把用户原始长对话全文扩散给其他角色。
 
 ## 对话审计路径
 
@@ -240,7 +260,8 @@ flowchart TD
 ```mermaid
 flowchart TD
     A[Dossier Interpretation LLM] --> B[profile.displaySummary]
-    A --> C[profile.personalitySummary/personalityFacets]
+    A --> C[profile.fullLifeStory/lifeEvents/socialPersonaPattern]
+    A --> C2[profile.personalitySummary/personalityFacets]
     A --> D[concerns]
     A --> E[longTermMemory]
     A --> F[runtime.signalProfiles]
@@ -251,6 +272,7 @@ flowchart TD
     S --> X[personalityTraitTags/personalityFacetUpdates]
     B --> Z[CharacterState preview]
     C --> Z
+    C2 --> Z
     D --> Z
     E --> Z
     F --> Z

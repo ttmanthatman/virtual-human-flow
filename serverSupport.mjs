@@ -96,8 +96,8 @@ export async function loginWithLiaoChatroom(username, password) {
 }
 
 export function readPersonaDossiers() {
-  const store = readJsonFile(personaDossierStorePath, { dossiers: [] });
-  const storedDossiers = Array.isArray(store.dossiers) ? store.dossiers : [];
+  const store = readPersonaDossierStore();
+  const storedDossiers = store.dossiers;
   const deletedBuiltinIds = new Set(Array.isArray(store.deletedBuiltinDossierIds) ? store.deletedBuiltinDossierIds : []);
   const storedById = new Map(storedDossiers.map((dossier) => [dossier.id, dossier]));
   const builtinItems = builtinPersonaDossiers
@@ -109,13 +109,14 @@ export function readPersonaDossiers() {
 }
 
 export function upsertPersonaDossier(dossier, user) {
-  const store = readJsonFile(personaDossierStorePath, { dossiers: [], deletedBuiltinDossierIds: [] });
-  const dossiers = Array.isArray(store.dossiers) ? store.dossiers : [];
-  const deletedBuiltinDossierIds = Array.isArray(store.deletedBuiltinDossierIds) ? store.deletedBuiltinDossierIds : [];
+  const store = readPersonaDossierStore();
+  const dossiers = store.dossiers;
+  const deletedBuiltinDossierIds = store.deletedBuiltinDossierIds;
   const now = new Date().toISOString();
   const safeDossier = {
     ...dossier,
     groupName: typeof dossier.groupName === "string" && dossier.groupName.trim() ? dossier.groupName.trim() : "未分组",
+    previewStatus: dossier.previewSummary ? "ready" : dossier.previewStatus ?? "pending",
     updatedAt: now,
     createdAt: typeof dossier.createdAt === "string" ? dossier.createdAt : now,
     isBuiltin: Boolean(dossier.isBuiltin),
@@ -132,15 +133,65 @@ export function upsertPersonaDossier(dossier, user) {
 }
 
 export function deletePersonaDossier(dossierId) {
-  const store = readJsonFile(personaDossierStorePath, { dossiers: [], deletedBuiltinDossierIds: [] });
-  const dossiers = Array.isArray(store.dossiers) ? store.dossiers : [];
-  const deletedBuiltinDossierIds = Array.isArray(store.deletedBuiltinDossierIds) ? store.deletedBuiltinDossierIds : [];
+  const store = readPersonaDossierStore();
+  const dossiers = store.dossiers;
+  const deletedBuiltinDossierIds = store.deletedBuiltinDossierIds;
   const nextDossiers = dossiers.filter((item) => item.id !== dossierId);
   const isBuiltinDossier = builtinPersonaDossiers.some((dossier) => dossier.id === dossierId);
   const nextDeletedBuiltinDossierIds =
     isBuiltinDossier && !deletedBuiltinDossierIds.includes(dossierId) ? [...deletedBuiltinDossierIds, dossierId] : deletedBuiltinDossierIds;
   writeJsonFile(personaDossierStorePath, { dossiers: nextDossiers, deletedBuiltinDossierIds: nextDeletedBuiltinDossierIds });
   return { deleted: dossiers.length !== nextDossiers.length || isBuiltinDossier };
+}
+
+export function updatePersonaDossierPreview(dossierId, previewSummary, user) {
+  const preview = typeof previewSummary === "string" ? previewSummary.trim().replace(/\s+/g, " ").slice(0, 180) : "";
+  if (!preview) return { error: "缺少有效预览" };
+
+  const { store, dossiers, index } = prepareDossierMutation(dossierId);
+  if (index < 0) return { error: "找不到档案" };
+
+  const now = new Date().toISOString();
+  const nextDossier = {
+    ...dossiers[index],
+    previewSummary: preview,
+    previewGeneratedAt: now,
+    previewStatus: "ready",
+    updatedAt: now,
+    lastPreviewGeneratedByUserId: user.userId,
+    lastPreviewGeneratedByUsername: user.username,
+  };
+  writeMergedPersonaDossiers(store, dossiers.map((item, itemIndex) => (itemIndex === index ? nextDossier : item)), new Set([dossierId]));
+  return { dossier: nextDossier };
+}
+
+export function updatePersonaDossierConversationState(dossierId, nextState, interaction, user) {
+  if (!nextState || typeof nextState !== "object" || !nextState.profile || typeof nextState.profile.name !== "string") {
+    return { error: "缺少有效角色状态" };
+  }
+
+  const { store, dossiers, index } = prepareDossierMutation(dossierId);
+  if (index < 0) return { error: "找不到档案" };
+
+  const now = new Date().toISOString();
+  const sourceDossier = dossiers[index];
+  const updatedSource = {
+    ...sourceDossier,
+    title: nextState.profile.name,
+    state: nextState,
+    updatedAt: now,
+    lastInteractedAt: now,
+    lastInteractedByUserId: user.userId,
+    lastInteractedByUsername: user.username,
+  };
+  const withSource = dossiers.map((item, itemIndex) => (itemIndex === index ? updatedSource : item));
+  const propagated = propagateRelationshipInfluence(withSource, index, interaction, user, now);
+  const changedIds = new Set([dossierId]);
+  propagated.forEach((dossier, itemIndex) => {
+    if (dossier !== withSource[itemIndex]) changedIds.add(dossier.id);
+  });
+  writeMergedPersonaDossiers(store, propagated, changedIds);
+  return { dossier: propagated[index], dossiers: propagated };
 }
 
 export function appendConversationAudit(entry, user) {
@@ -356,6 +407,104 @@ function readJsonFile(path, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function readPersonaDossierStore() {
+  const store = readJsonFile(personaDossierStorePath, { dossiers: [], deletedBuiltinDossierIds: [] });
+  return {
+    dossiers: Array.isArray(store.dossiers) ? store.dossiers : [],
+    deletedBuiltinDossierIds: Array.isArray(store.deletedBuiltinDossierIds) ? store.deletedBuiltinDossierIds : [],
+  };
+}
+
+function prepareDossierMutation(dossierId) {
+  const store = readPersonaDossierStore();
+  const merged = readPersonaDossiers();
+  return {
+    store,
+    dossiers: merged,
+    index: merged.findIndex((item) => item.id === dossierId),
+  };
+}
+
+function writeMergedPersonaDossiers(store, mergedDossiers, changedIds) {
+  const builtinIds = new Set(builtinPersonaDossiers.map((dossier) => dossier.id));
+  const storedIds = new Set(store.dossiers.map((dossier) => dossier.id));
+  const nextStored = mergedDossiers.filter((dossier) => storedIds.has(dossier.id) || changedIds.has(dossier.id) || (!builtinIds.has(dossier.id) && !dossier.isBuiltin));
+  writeJsonFile(personaDossierStorePath, {
+    dossiers: nextStored,
+    deletedBuiltinDossierIds: store.deletedBuiltinDossierIds,
+  });
+}
+
+function propagateRelationshipInfluence(dossiers, sourceIndex, interaction, user, now) {
+  const sourceDossier = dossiers[sourceIndex];
+  const sourceState = sourceDossier.state ?? {};
+  const sourceProfile = sourceState.profile ?? {};
+  const sourceProfileId = sourceProfile.id || "";
+  const sourceName = sourceProfile.name || sourceDossier.title || "某个角色";
+  const userInput = compactStoredText(interaction?.userInput, 36);
+  const personaOutput = compactStoredText(interaction?.personaOutput, 54);
+  if (!userInput && !personaOutput) return dossiers;
+
+  return dossiers.map((dossier, index) => {
+    if (index === sourceIndex) return dossier;
+    const state = dossier.state;
+    if (!state || !state.profile || !hasPersonaRelationship(state, sourceProfileId, sourceName)) return dossier;
+
+    const memory = {
+      id: randomBytes(10).toString("base64url"),
+      summary: `${sourceName}最近和${user.nickname || user.username || "一位用户"}聊到「${userInput || "一件事"}」，回应里留下的状态是「${personaOutput || "没有明确回复"}」。这会影响下次谈到${sourceName}时的关系判断。`,
+      relatedPeople: [sourceProfileId, sourceName, user.username].filter(Boolean),
+      relatedConcerns: [],
+      emotionalValence: 0,
+      emotionalIntensity: 0.38,
+      createdAt: now,
+      importance: 0.46,
+    };
+    const nextRelationships = Object.fromEntries(
+      Object.entries(state.relationships ?? {}).map(([key, relationship]) => {
+        if (!relationshipMatchesPersona(relationship, sourceProfileId, sourceName)) return [key, relationship];
+        return [
+          key,
+          {
+            ...relationship,
+            lastInteractionAt: now,
+            recentTone: `最近听见${sourceName}和外部对话有了新余波`,
+            notes: [...(Array.isArray(relationship.notes) ? relationship.notes : []).slice(-5), memory.summary],
+          },
+        ];
+      }),
+    );
+
+    return {
+      ...dossier,
+      state: {
+        ...state,
+        relationships: nextRelationships,
+        longTermMemory: [...(Array.isArray(state.longTermMemory) ? state.longTermMemory : []), memory].slice(-30),
+      },
+      updatedAt: now,
+    };
+  });
+}
+
+function hasPersonaRelationship(state, profileId, profileName) {
+  return Object.values(state.relationships ?? {}).some((relationship) => relationshipMatchesPersona(relationship, profileId, profileName));
+}
+
+function relationshipMatchesPersona(relationship, profileId, profileName) {
+  return (
+    (profileId && relationship?.targetId === profileId) ||
+    (profileName && relationship?.targetName === profileName) ||
+    (profileName && Array.isArray(relationship?.notes) && relationship.notes.some((note) => String(note).includes(profileName)))
+  );
+}
+
+function compactStoredText(value, maxLength) {
+  if (typeof value !== "string") return "";
+  const compact = value.trim().replace(/\s+/g, " ");
+  return compact.length > maxLength ? `${compact.slice(0, maxLength)}...` : compact;
 }
 
 function writeJsonFile(path, data) {

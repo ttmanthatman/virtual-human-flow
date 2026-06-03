@@ -2,6 +2,7 @@ import {
   CharacterProfile,
   CharacterState,
   Concern,
+  LifeEvent,
   LlmConfig,
   LongTermMemory,
   PersonalityFacet,
@@ -38,6 +39,9 @@ interface DossierInterpretationResult {
   age?: number;
   displaySummary: string;
   stableBackground: string;
+  socialPersonaPattern?: string;
+  fullLifeStory?: string;
+  lifeEvents?: LifeEvent[];
   personalityTraits: string[];
   personalitySummary: string;
   personalityFacets: PersonalityFacet[];
@@ -84,13 +88,15 @@ export async function generateDossierFromDescription(description: string, curren
       prompt: [
         "你是人物档案解读模块。用户输入的是素材，不是最终档案。你必须重新解读、归类、摘要，不能把原文整段照抄到展示字段。",
         "把素材分成四类：需要写入长期记忆的事实或余波；稳定的人性和人格部分；给左侧 UI 的短标签；当下状态信号。",
-        "个人展示只能是短摘要。displaySummary 不超过 45 个中文字符，stableBackground 不超过 90 个中文字符，personalitySummary 不超过 120 个中文字符。",
+        "人物必须有从小到大的故事脉络。lifeEvents 要覆盖童年、青少年、成年或近期的关键经历，并写明心理变化和关系变化。",
+        "性格设定要符合社会中常见的差异分布，避免所有人都压抑、谨慎、慢热。socialPersonaPattern 用一句话说明她在人群中的人格类型和差异点。",
+        "个人展示只能是短摘要。displaySummary 不超过 45 个中文字符，stableBackground 不超过 90 个中文字符，personalitySummary 不超过 120 个中文字符，fullLifeStory 不超过 420 个中文字符。",
         "长期记忆只写已经足够稳定、之后会影响反应的内容；不要把所有输入都塞进记忆。",
         `当前人物：${current.profile.name}。当前摘要：${current.profile.displaySummary || current.profile.background}`,
         `用户素材：${source}`,
       ].join("\n\n"),
       outputContract:
-        "Return JSON: { name, age, displaySummary, stableBackground, personalityTraits: string[], personalitySummary, personalityFacets: [{ label, summary, evidence, tension, expression }], speakingStyle, values: string[], boundaries: string[], examples: [{ situation, expectedReply }], concerns: [{ title, object, type, description, intensity, valence, arousal, triggers, possibleResolutions }], longTermMemories: [{ summary, relatedPeople, relatedConcernTitles, emotionalValence, emotionalIntensity, importance }], attentionFocus, derivedMood: { valence, arousal, label }, signalProfiles: { energy, mood, valence, arousal } }",
+        "Return JSON: { name, age, displaySummary, stableBackground, socialPersonaPattern, fullLifeStory, lifeEvents: [{ lifeStage, ageRange, title, summary, psychologicalChange, relationshipChange, relatedPeople, emotionalValence, importance }], personalityTraits: string[], personalitySummary, personalityFacets: [{ label, summary, evidence, tension, expression }], speakingStyle, values: string[], boundaries: string[], examples: [{ situation, expectedReply }], concerns: [{ title, object, type, description, intensity, valence, arousal, triggers, possibleResolutions }], longTermMemories: [{ summary, relatedPeople, relatedConcernTitles, emotionalValence, emotionalIntensity, importance }], attentionFocus, derivedMood: { valence, arousal, label }, signalProfiles: { energy, mood, valence, arousal } }",
     },
     llmConfig,
     fallback,
@@ -134,6 +140,9 @@ function applyDossierInterpretation(source: string, current: CharacterState, res
     age: normalizeAge(result.age, current.profile.age),
     displaySummary: compactText(result.displaySummary, current.profile.displaySummary || current.profile.background, 60, source),
     background: compactText(result.stableBackground, current.profile.background, 120, source),
+    socialPersonaPattern: compactText(result.socialPersonaPattern, current.profile.socialPersonaPattern ?? "等待 LLM 解读人物在人群中的性格分布位置。", 120, source),
+    fullLifeStory: compactText(result.fullLifeStory, current.profile.fullLifeStory ?? current.profile.background, 520, source),
+    lifeEvents: normalizeLifeEvents(result.lifeEvents, current.profile.lifeEvents, source),
     personalityTraits: normalizeStringList(result.personalityTraits, current.profile.personalityTraits, 6, 12),
     personalitySummary: compactText(result.personalitySummary, current.profile.personalitySummary, 160, source),
     personalityFacets: normalizePersonalityFacets(result.personalityFacets, current.profile.personalityFacets, source),
@@ -205,6 +214,9 @@ function buildFallbackDossier(description: string, current: CharacterState): Dos
     age: current.profile.age,
     displaySummary: isLonely ? "克制念旧的人，关系余波会影响她的停顿和边界。" : "慢热谨慎的人，会先观察对方是否安全再表达。",
     stableBackground: isCareer ? "她在创作和关系之间维持体面，外界反馈会牵动自我评价。" : "她习惯把真实反应放在心里，先确认边界再慢慢靠近。",
+    socialPersonaPattern: current.profile.socialPersonaPattern ?? "中等外向、较高敏感度、较高责任感的人格配置。",
+    fullLifeStory: current.profile.fullLifeStory ?? current.profile.background,
+    lifeEvents: current.profile.lifeEvents,
     personalityTraits: Array.from(new Set([...current.profile.personalityTraits, isLonely ? "念旧" : "谨慎", isCareer ? "有创作压力" : "慢热"])).slice(0, 6),
     personalitySummary: isLonely ? "她的克制不是冷淡，而是关系余波和自我保护叠在一起。" : "她的谨慎来自对边界和误解的在意，会先观察再表达。",
     personalityFacets: current.profile.personalityFacets,
@@ -337,6 +349,29 @@ function normalizeGeneratedMemories(items: GeneratedMemory[] | undefined, concer
         importance: round(clamp(Number(item.importance) || 0.3, 0, 1)),
       };
     });
+}
+
+function normalizeLifeEvents(items: LifeEvent[] | undefined, fallback: LifeEvent[], source: string): LifeEvent[] {
+  const allowedStages = new Set(["childhood", "adolescence", "early_adulthood", "adulthood", "recent"]);
+  const normalized = Array.isArray(items)
+    ? items
+        .filter((item) => item?.title && item?.summary)
+        .slice(0, 8)
+        .map((item) => ({
+          id: item.id && typeof item.id === "string" ? item.id : makeId("life"),
+          lifeStage: allowedStages.has(item.lifeStage) ? item.lifeStage : ("recent" as const),
+          ageRange: compactText(item.ageRange, "年龄未明", 18, source),
+          title: compactText(item.title, "关键经历", 28, source),
+          summary: compactText(item.summary, "这段经历会影响她后续理解自己和他人。", 120, source),
+          psychologicalChange: compactText(item.psychologicalChange, "她对自己和外界的理解发生了变化。", 110, source),
+          relationshipChange: compactText(item.relationshipChange, "她和相关人物的距离或信任发生了变化。", 110, source),
+          relatedPeople: normalizeStringList(item.relatedPeople, [], 5, 18),
+          emotionalValence: round(clamp(Number(item.emotionalValence) || 0, -1, 1)),
+          importance: round(clamp(Number(item.importance) || 0.45, 0, 1)),
+        }))
+    : [];
+
+  return normalized.length > 0 ? normalized : fallback;
 }
 
 function normalizeSignalProfiles(

@@ -56,6 +56,15 @@ export function generateNaturalPromptRequest(
     state.profile.personalitySummary,
     ...state.profile.personalityFacets.map((facet) => `她的「${facet.label}」表现为：${facet.summary}${facet.tension ? ` ${facet.tension}` : ""} ${facet.expression}`),
   ].join(" ");
+  const lifeNarrative = [
+    state.profile.socialPersonaPattern ? `她在人群中的性格位置：${state.profile.socialPersonaPattern}` : "",
+    state.profile.fullLifeStory ? `她从小到大的故事脉络：${state.profile.fullLifeStory}` : "",
+    ...(state.profile.lifeEvents ?? []).map(
+      (item) => `${item.ageRange}的「${item.title}」：${item.summary} 这带来的心理变化是：${item.psychologicalChange} 关系变化是：${item.relationshipChange}`,
+    ),
+  ]
+    .filter(Boolean)
+    .join(" ");
   const valuesNarrative = state.profile.values.length > 0 ? state.profile.values.join("、") : "没有明确列出的价值取向";
   const boundariesNarrative = state.profile.boundaries.length > 0 ? state.profile.boundaries.join("；") : "没有明确列出的边界";
   const exampleNarrative =
@@ -81,6 +90,7 @@ export function generateNaturalPromptRequest(
   const prompt = [
     `现在进入 ${state.profile.name} 的表达时刻。下面是一段自然语言语境，不是规则清单。`,
     `${state.profile.name} 的稳定背景是：${state.profile.background}`,
+    lifeNarrative ? `她的成长经历和关系变化是：${lifeNarrative}` : "",
     `先把她的性格完整过一遍：${personalityNarrative}`,
     `她看重的东西包括：${valuesNarrative}。她在关系里的边界包括：${boundariesNarrative}。`,
     `她平常的说话质感是：${state.profile.speakingStyle}`,

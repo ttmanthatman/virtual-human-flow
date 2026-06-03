@@ -48,6 +48,11 @@
 | 场景解读 | `sceneInterpretation` | cognitive module | 将用户场景素材重新解读为场景摘要、状态影响、人物影响、长期记忆和关切变化 | `sceneRewrite`, `rawScenePreview` |
 | 人物档案组合 | `personaDossier` | UI/domain object | 一个可切换的多人档案条目，绑定人物状态、人物素材和配套场景素材 | `profileSlot`, `characterTab` |
 | 人物档案分组 | `personaDossierGroup` | UI/domain object | 多人档案列表中的分组名称，例如“马可福音10”“郑州市” | `folder`, `categoryName` |
+| 人物预览缓存 | `personaDossierPreviewCache` | persisted domain field | 由 DeepSeek 生成并全局保存的短预览；缺失时 UI 显示“预览生成中”，源码不手写预览文案 | `manualPreview`, `localPreview` |
+| 人物详细生平 | `lifeEvent` | domain object | 角色从小到大的关键经历、心理变化和关系变化 | `backstoryLine`, `historyItem` |
+| 社会人格位置 | `socialPersonaPattern` | domain field | 角色在人群性格分布中的位置，用来避免所有角色都同质化为压抑谨慎 | `personalityTypeLabel`, `archetypeOnly` |
+| 全局角色状态写回 | `globalPersonaStateWrite` | persistence workflow | 登录用户与角色对话后写回同一个共享角色状态，并向相关人物传播关系余波 | `userPersonaCopy`, `privateCharacterState` |
+| 关系余波传播 | `relationshipInfluencePropagation` | persistence workflow | 一个角色的对话会给与其有关系的其他角色写入压缩记忆和关系 note | `friendSync`, `socialRipple` |
 | 共享人物档案 | `sharedPersonaDossier` | persisted domain object | 管理员保存到后台、所有登录用户可读取和使用的多人档案 | `globalProfile`, `publicDossier` |
 | 内置人物档案 | `builtinPersonaDossier` | seed domain object | 随服务启动提供的全局人物/场景/位置初始档案，可被管理员删除或覆盖 | `sampleProfile`, `demoDossier` |
 | 对话审计记录 | `conversationAuditEntry` | persisted audit object | 记录每个登录用户的一次输入、虚拟人输出和失败信息，仅管理员可读 | `chatLog`, `debugRecord` |
@@ -71,7 +76,7 @@
 | App Shell | `src/App.tsx` | 三栏 MVP 工作台，DeepSeek 连接状态、聊天和 trace | 用户输入、按钮操作 | UI 状态 | 浏览器用户 | conversation pipeline |
 | Core Types | `src/core/types.ts` | 定义角色、关切、关系、记忆、事件、trace 类型 | 无 | TypeScript 类型 | 全模块 | 无 |
 | Seed State | `src/data/seedState.ts` | 提供林安初始状态和默认消息 | 无 | `CharacterState` | App Shell | Core Types |
-| Builtin Persona Dossiers | `builtinPersonaDossiers.mjs` | 提供“马可福音10”和“郑州市”全局初始人物/场景/位置档案 | 无 | `PersonaDossier[]` | Server Support | 无 |
+| Builtin Persona Dossiers | `builtinPersonaDossiers.mjs` | 提供“马可福音10”和“郑州市”全局初始人物/场景/位置档案，并登记生平事件、社会人格位置和熟人关系 | 无 | `PersonaDossier[]` | Server Support | 无 |
 | Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Appraisal/Memory/Decision/State Update | 外部 LLM endpoint |
 | Appraisal | `src/pipeline/appraisal.ts` | 通过 LLM 判断事件触发了哪些关切 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | Conversation Pipeline | Cognitive Module Client |
 | Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 用混合召回候选和 LLM 复判判断哪些记忆会浮现；召回不能退化为敏感词过滤 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` | Conversation Pipeline | Cognitive Module Client |
@@ -85,7 +90,7 @@
 | Profile Scene Consistency | `src/pipeline/profileSceneConsistency.ts` | 通过 LLM 判断人物档案和场景是否匹配，并返回是否需要扭曲时空密码 | `CharacterState`, `LlmConfig` | `ProfileSceneConsistencyResult` | App Shell | Cognitive Module Client |
 | DeepSeek Local Proxy | `vite.config.ts` | 在本地开发服务器中代理 DeepSeek Chat Completions，固定 flash 模型、关闭 thinking 并保存根目录密钥文件 | `/api/deepseek-config`, `/api/deepseek-chat` | DeepSeek 响应或配置状态 | App Shell | DeepSeek API |
 | Production Server | `server.mjs` | 生产环境服务 `dist/` 并提供 DeepSeek API 代理 | HTTP request, `.deepseek.local.json` | HTML/assets/API/SSE | nginx reverse proxy | DeepSeek API |
-| Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、内置/共享档案合并、共享档案存储、对话审计和站内手动更新 | HTTP request, liao login response, local runtime JSON, builtin persona dossiers, git working tree | auth session, persona dossiers, audit entries, update status/SSE | Vite Dev Server/Production Server | liao Chatroom, local runtime files, Builtin Persona Dossiers, Git |
+| Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、内置/共享档案合并、共享档案存储、DeepSeek 预览缓存写回、全局角色状态写回、关系余波传播、对话审计和站内手动更新 | HTTP request, liao login response, local runtime JSON, builtin persona dossiers, git working tree | auth session, persona dossiers, audit entries, update status/SSE | Vite Dev Server/Production Server | liao Chatroom, local runtime files, Builtin Persona Dossiers, Git |
 | Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录站内手动更新、VPS git 工作树配置、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | manualVpsUpdate |
 
 ## 函数登记表
@@ -123,6 +128,9 @@
 | `evaluateProfileSceneConsistency` | `src/pipeline/profileSceneConsistency.ts` | 调用一致性检测 LLM，判断人物和场景是否存在时代/世界观硬冲突 | state, llmConfig | ProfileSceneConsistencyResult | 可调用外部 endpoint | implemented |
 | `normalizeProfileSceneConsistency` | `src/pipeline/profileSceneConsistency.ts` | 稳定一致性检测结果并确保 hard mismatch 必须需要门禁 | result, fallback | ProfileSceneConsistencyResult | 无 | implemented |
 | `createPersonaDossier` | `src/App.tsx` | 创建绑定人物状态和场景素材的可切换档案条目 | state, dossierDescription, sceneDescription, title | PersonaDossier | 无 | implemented |
+| `ensureDossierPreview` | `src/App.tsx` | 当前角色缺少预览时调用 DeepSeek 生成短预览，并提交后台全局保存 | dossier | Promise<void> | 调用 `/api/deepseek-chat` 和 `/api/persona-dossiers/:id/preview` | implemented |
+| `syncConversationState` | `src/App.tsx` | 一轮对话完成后把角色最新状态写回全局共享档案 | nextState, interaction | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-state` 并更新本地档案列表 | implemented |
+| `formatDossierDetailForPreview` | `src/App.tsx` | 将详细人物档案整理成 DeepSeek 预览生成输入 | dossier | string | 无 | implemented |
 | `LocationCard` | `src/App.tsx` | 在左侧显示角色当前位置、速度、方向和周边地图上下文摘要 | location | JSX | 无 | implemented |
 | `handleCreateDossier` | `src/App.tsx` | 在左栏新建一个空的人物-场景配套档案 | 无 | void | 更新 App state | implemented |
 | `handleDeleteDossier` | `src/App.tsx` | 管理员删除当前或指定人物档案，删空后工作台回到无当前共享档案状态 | dossier id | void | 更新 App state | implemented |
@@ -148,6 +156,9 @@
 | `readPersonaDossiers` | `serverSupport.mjs` | 读取后台共享多人档案 | 无 | PersonaDossier[] | 读取 `.persona-dossiers.local.json` | implemented |
 | `upsertPersonaDossier` | `serverSupport.mjs` | 管理员新增或覆盖共享多人档案 | dossier, user | PersonaDossier | 写入 `.persona-dossiers.local.json` | implemented |
 | `deletePersonaDossier` | `serverSupport.mjs` | 管理员删除共享多人档案 | dossierId | deleted flag | 写入 `.persona-dossiers.local.json` | implemented |
+| `updatePersonaDossierPreview` | `serverSupport.mjs` | 登录用户提交 DeepSeek 生成的人物短预览并全局保存 | dossierId, previewSummary, user | dossier or error | 写入 `.persona-dossiers.local.json` | implemented |
+| `updatePersonaDossierConversationState` | `serverSupport.mjs` | 登录用户对话后写回同一个全局角色状态，并触发相关角色关系余波传播 | dossierId, nextState, interaction, user | dossier/dossiers or error | 写入 `.persona-dossiers.local.json` | implemented |
+| `propagateRelationshipInfluence` | `serverSupport.mjs` | 将一个角色的压缩互动余波写入与其有关系的其他角色 | dossiers, sourceIndex, interaction, user, now | PersonaDossier[] | 更新相关角色长期记忆和 relationship notes | implemented |
 | `appendConversationAudit` | `serverSupport.mjs` | 记录登录用户的一次输入输出 | entry, user | ConversationAuditEntry | 写入 `.conversation-audits.local.json` | implemented |
 | `readConversationAudits` | `serverSupport.mjs` | 管理员读取最近用户输入输出 | limit | ConversationAuditEntry[] | 读取 `.conversation-audits.local.json` | implemented |
 | `deleteConversationAudit` | `serverSupport.mjs` | 管理员删除单条用户输入输出审计记录 | auditId | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
@@ -155,6 +166,8 @@
 | `readAppUpdateStatus` | `serverSupport.mjs` | 检查本机 git 工作树当前提交和远端分支提交是否一致 | 无 | appUpdateStatus | 调用 git 命令读取本机和远端状态 | implemented |
 | `streamAppUpdate` | `serverSupport.mjs` | 管理员触发 git pull、npm ci、npm run build 和重启命令，并通过 SSE 返回进度 | HTTP response | text/event-stream | 在 `APP_UPDATE_WORKDIR` 执行更新命令 | implemented |
 | `createDossier` | `builtinPersonaDossiers.mjs` | 将内置规格转换为全局 `PersonaDossier` | spec | PersonaDossier | 无 | implemented |
+| `createLifeEvents` | `builtinPersonaDossiers.mjs` | 将内置生平规格转换为 `LifeEvent[]` | specId, items | LifeEvent[] | 无 | implemented |
+| `createPersonaRelationships` | `builtinPersonaDossiers.mjs` | 将内置熟人关系规格转换为 `Relationship` map | items | relationships | 无 | implemented |
 | `createLocation` | `builtinPersonaDossiers.mjs` | 将内置位置规格转换为 `CharacterLocation` | location tuple | CharacterLocation-like object | 无 | implemented |
 
 ## 数据字段登记表
@@ -163,6 +176,11 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `profile` | `CharacterState` | `CharacterProfile` | 角色基础人设 | seed/generator | promptBuilder/UI | implemented |
 | `profile.displaySummary` | `CharacterProfile` | `string` | 左侧个人展示使用的短摘要，由人物档案解读 LLM 总结，不展示用户输入长段原文 | seed/generator | UI | implemented |
+| `profile.socialPersonaPattern` | `CharacterProfile` | `string?` | 角色在人群性格分布里的位置，用于保持角色差异化 | seed/generator | promptBuilder/UI | implemented |
+| `profile.fullLifeStory` | `CharacterProfile` | `string?` | 角色从小到大的完整故事脉络 | seed/generator | promptBuilder/UI | implemented |
+| `profile.lifeEvents` | `CharacterProfile` | `LifeEvent[]` | 关键成长经历、心理变化和关系变化 | seed/generator | promptBuilder/UI/memory | implemented |
+| `lifeEvent.psychologicalChange` | `LifeEvent` | `string` | 某段经历带来的心理结构变化 | seed/generator | promptBuilder/UI | implemented |
+| `lifeEvent.relationshipChange` | `LifeEvent` | `string` | 某段经历带来的关系距离、信任或依附变化 | seed/generator | promptBuilder/UI | implemented |
 | `profile.personalitySummary` | `CharacterProfile` | `string` | 性格标签背后的综合描述 | seed/generator | promptBuilder/UI | implemented |
 | `profile.personalityFacets` | `CharacterProfile` | `PersonalityFacet[]` | 性格由哪些特性、经历和表达习惯组成 | seed/generator | promptBuilder/UI | implemented |
 | `concerns` | `CharacterState` | `Concern[]` | 角色当前关切清单 | seed/generator/stateUpdater | appraisal/promptBuilder/UI | implemented |
@@ -188,6 +206,9 @@
 | `scenePreview` | App state | `CharacterState?` | 场景解读后的待应用状态预览，包含 scene、状态、关切、长期记忆和人物影响 | App Shell | UI/apply action | implemented |
 | `personaDossiers` / `dossiers` | App state | `PersonaDossier[]` | 左侧多人档案列表，每个条目绑定人物状态和场景输入 | App Shell | UI/switch/apply/delete | implemented |
 | `personaDossier.groupName` | `PersonaDossier` | `string` | 多人档案所属分组，例如“马可福音10”“郑州市” | builtin/admin UI | UI/shared dossier API | implemented |
+| `personaDossier.previewSummary` | `PersonaDossier` | `string?` | DeepSeek 生成并全局保存的人物短预览；源码不手写 | `/api/deepseek-chat` + preview API | UI | implemented |
+| `personaDossier.previewGeneratedAt` | `PersonaDossier` | `string?` | 人物短预览生成时间 | preview API | UI/shared dossier API | implemented |
+| `personaDossier.previewStatus` | `PersonaDossier` | enum? | `pending/generating/ready/failed`，用于 UI 判断预览缓存状态；缺失时视为 pending | App Shell/shared dossier API | UI | implemented |
 | `personaDossier.isBuiltin` | `PersonaDossier` | `boolean?` | 是否为服务内置全局初始档案 | Builtin Persona Dossiers | Server Support/Admin UI | implemented |
 | `activeDossierId` | App state | `string` | 当前选中的人物档案组合 ID | App Shell | UI/switch/apply/delete | implemented |
 | `consistencyGate` | App state | `ConsistencyGate?` | 一致性检测发现硬冲突后等待用户输入扭曲时空密码的门禁状态 | App Shell | UI/apply action | implemented |
@@ -233,6 +254,8 @@
 | `/api/auth/logout` | POST | 销毁本项目内存会话 | 不修改 liao 聊天室数据 | implemented |
 | `/api/persona-dossiers` | GET | 登录用户读取后台共享多人档案 | 需要本项目登录会话 | implemented |
 | `/api/persona-dossiers` | POST | 管理员新增或更新后台共享多人档案 | 需要管理员会话；写 `.persona-dossiers.local.json` | implemented |
+| `/api/persona-dossiers/:id/preview` | POST | 登录用户提交 DeepSeek 已生成的人物短预览，全局保存到对应档案 | 需要登录会话；只允许写预览缓存，不允许改完整档案 | implemented |
+| `/api/persona-dossiers/:id/conversation-state` | POST | 登录用户对话完成后写回同一个全局角色状态，并向相关人物传播关系余波 | 需要登录会话；只允许写对话产生的角色状态和关系余波 | implemented |
 | `/api/persona-dossiers/:id` | DELETE | 管理员删除后台共享多人档案 | 需要管理员会话；写 `.persona-dossiers.local.json` | implemented |
 | `/api/conversation-audits` | POST | 登录用户记录一次输入输出 | 需要登录会话；写 `.conversation-audits.local.json` | implemented |
 | `/api/conversation-audits` | GET | 管理员读取所有用户输入输出 | 需要管理员会话 | implemented |
