@@ -13,6 +13,8 @@ import {
   loginWithLiaoChatroom,
   readConversationAudits,
   readConversationHistoryMessages,
+  readConversationHistoryMessagesByKey,
+  readConversationHistorySummaries,
   readAppUpdateStatus,
   readJsonBody,
   readPersonaDossiers,
@@ -163,6 +165,23 @@ createServer(async (request, response) => {
         return;
       }
       sendJson(response, 200, result);
+      return;
+    }
+
+    if (pathname === "/api/admin/conversation-histories" && request.method === "GET") {
+      if (!requireAdminSession(request, response)) return;
+      const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+      const dossierId = url.searchParams.get("dossierId") || "";
+      const key = url.searchParams.get("key") || "";
+      if (!dossierId) {
+        sendJson(response, 400, { error: "缺少 dossierId" });
+        return;
+      }
+      if (key) {
+        sendJson(response, 200, { messages: readConversationHistoryMessagesByKey(dossierId, key) });
+        return;
+      }
+      sendJson(response, 200, { summaries: readConversationHistorySummaries(dossierId) });
       return;
     }
 

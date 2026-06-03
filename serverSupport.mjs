@@ -13,6 +13,8 @@ const conversationAuditStorePath = resolve(rootDir, ".conversation-audits.local.
 const authSessionTtlMs = 7 * 24 * 60 * 60 * 1000;
 const maxAuditEntries = 1000;
 const maxConversationHistoryMessages = 240;
+const maxModuleCallsPerAudit = 12;
+const maxModuleCallTextLength = 20000;
 const appUpdateDefaultBranch = "main";
 const appUpdateCommandTimeoutMs = 180000;
 const authSessions = new Map();
@@ -212,6 +214,28 @@ export function readConversationHistoryMessages(dossierId, user) {
   return Array.isArray(entry?.messages) ? entry.messages : [];
 }
 
+export function readConversationHistorySummaries(dossierId) {
+  const store = readConversationHistoryStore();
+  return store.entries
+    .filter((entry) => entry && entry.dossierId === dossierId)
+    .map((entry) => ({
+      key: entry.key,
+      userId: Number(entry.userId || 0),
+      username: typeof entry.username === "string" ? entry.username : "",
+      nickname: typeof entry.nickname === "string" ? entry.nickname : "",
+      dossierId: entry.dossierId,
+      messageCount: Array.isArray(entry.messages) ? entry.messages.length : 0,
+      updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : "",
+    }))
+    .sort((a, b) => Date.parse(b.updatedAt || "0") - Date.parse(a.updatedAt || "0"));
+}
+
+export function readConversationHistoryMessagesByKey(dossierId, key) {
+  const store = readConversationHistoryStore();
+  const entry = store.entries.find((item) => item?.key === key && item.dossierId === dossierId);
+  return Array.isArray(entry?.messages) ? entry.messages : [];
+}
+
 export function appendConversationHistoryMessages(dossierId, messages, user) {
   const key = createConversationHistoryEntryKey(dossierId, user);
   if (!key) return { error: "缺少有效历史键" };
@@ -225,6 +249,7 @@ export function appendConversationHistoryMessages(dossierId, messages, user) {
     key,
     userId: user.userId,
     username: user.username,
+    nickname: user.nickname,
     dossierId,
     messages: [...(Array.isArray(existing?.messages) ? existing.messages : []), ...safeMessages].slice(-maxConversationHistoryMessages),
     updatedAt: now,
@@ -249,6 +274,7 @@ export function appendConversationAudit(entry, user) {
     personaOutput: typeof entry.personaOutput === "string" ? entry.personaOutput.slice(0, 8000) : "",
     status: entry.status === "failed" ? "failed" : "completed",
     error: typeof entry.error === "string" ? entry.error.slice(0, 1200) : "",
+    moduleCalls: sanitizeConversationModuleCalls(entry.moduleCalls),
   };
   const nextEntries = [...entries, auditEntry].slice(-maxAuditEntries);
   writeJsonFile(conversationAuditStorePath, { entries: nextEntries });
@@ -503,6 +529,24 @@ function sanitizeConversationHistoryMessages(messages) {
       };
     })
     .filter((message) => message.content.trim());
+}
+
+function sanitizeConversationModuleCalls(moduleCalls) {
+  if (!Array.isArray(moduleCalls)) return [];
+  return moduleCalls
+    .filter((call) => call && typeof call === "object")
+    .map((call) => ({
+      id: typeof call.id === "string" && call.id ? call.id.slice(0, 120) : randomBytes(8).toString("base64url"),
+      step: typeof call.step === "string" ? call.step.slice(0, 80) : "",
+      label: typeof call.label === "string" ? call.label.slice(0, 120) : "",
+      status: typeof call.status === "string" ? call.status.slice(0, 40) : "",
+      transport: typeof call.transport === "string" ? call.transport.slice(0, 80) : "",
+      input: typeof call.input === "string" ? call.input.slice(0, maxModuleCallTextLength) : "",
+      output: typeof call.output === "string" ? call.output.slice(0, maxModuleCallTextLength) : "",
+      error: typeof call.error === "string" ? call.error.slice(0, 1200) : "",
+    }))
+    .filter((call) => call.step || call.label)
+    .slice(0, maxModuleCallsPerAudit);
 }
 
 function applyUserConversationStates(dossiers, user) {

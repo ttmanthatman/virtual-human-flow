@@ -59,7 +59,8 @@
 | 对话历史键 | `conversationHistoryKey` | UI state key | 前端中间栏消息历史的分桶键，由当前用户和当前档案组成 | `chatKey`, `globalMessagesKey` |
 | 共享人物档案 | `sharedPersonaDossier` | persisted domain object | 管理员保存到后台、所有登录用户可读取和使用的多人档案 | `globalProfile`, `publicDossier` |
 | 内置人物档案 | `builtinPersonaDossier` | seed domain object | 随服务启动提供的全局人物/场景/位置初始档案，可被管理员删除或覆盖 | `sampleProfile`, `demoDossier` |
-| 对话审计记录 | `conversationAuditEntry` | persisted audit object | 记录每个登录用户的一次输入、虚拟人输出和失败信息，仅管理员可读 | `chatLog`, `debugRecord` |
+| 对话审计记录 | `conversationAuditEntry` | persisted audit object | 记录每个登录用户的一次输入、虚拟人输出、失败信息和模块调用记录，仅管理员可读 | `chatLog`, `debugRecord` |
+| 管理员用户历史查看 | `adminConversationHistoryAccess` | admin workflow | 管理员在当前人物下选择用户并查看该用户与该人物的中间栏历史 | `globalAdminChat`, `impersonation` |
 | 对话审计删除 | `conversationAuditDeletion` | admin action | 管理员删除单条或清空用户输入输出审计记录 | `logCleanup`, `chatPurge` |
 | 人物场景一致性 | `profileSceneConsistency` | cognitive module | 判断人物档案和场景是否处于同一世界观、时代和社会语境 | `settingMatch`, `sceneFit` |
 | 扭曲时空密码 | `distortionPassword` | permission gate | 人物和场景硬冲突时允许继续应用的本地门禁短语 | `overrideCode`, `adminPassword` |
@@ -101,6 +102,7 @@
 | Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、内置/共享档案合并、共享档案存储、DeepSeek 预览缓存写回、用户私有消息历史、用户私有对话运行态、用户私有关系余波、对话审计和站内手动更新 | HTTP request, liao login response, local runtime JSON, builtin persona dossiers, git working tree | auth session, persona dossiers, audit entries, update status/SSE | Vite Dev Server/Production Server | liao Chatroom, local runtime files, Builtin Persona Dossiers, Git |
 | Conversation History Isolation Verification | `scripts/verify-conversation-history-isolation.mjs` | 在临时运行目录验证用户 A 的对话状态不会进入用户 B 或共享档案 | 无 | pass/fail | npm script | Server Support |
 | Conversation Message History Verification | `scripts/verify-conversation-message-history.mjs` | 在临时运行目录验证中间栏消息历史按用户和档案保存、读取和隔离 | 无 | pass/fail | npm script | Server Support |
+| Admin History And Module Audit Verification | `scripts/verify-admin-history-and-module-audit.mjs` | 验证管理员能按人物列出/读取用户历史，且审计会保存模块调用记录 | 无 | pass/fail | npm script | Server Support |
 | User Relationship Memory Verification | `scripts/verify-user-relationship-memory.mjs` | 验证 State Update 会按当前说话用户写入自然语言关系印象记忆，并回写关系备注 | 无 | pass/fail | npm script | State Updater |
 | Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录站内手动更新、VPS git 工作树配置、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | manualVpsUpdate |
 
@@ -146,12 +148,16 @@
 | `createPersonaDossier` | `src/App.tsx` | 创建绑定人物状态和场景素材的可切换档案条目 | state, dossierDescription, sceneDescription, title | PersonaDossier | 无 | implemented |
 | `ensureDossierPreview` | `src/App.tsx` | 当前角色缺少预览时调用 DeepSeek 流式生成短预览，并提交后台全局保存 | dossier | Promise<void> | 调用 `/api/deepseek-chat` 和 `/api/persona-dossiers/:id/preview`，上报生成监视 | implemented |
 | `createConversationHistoryKey` | `src/App.tsx` | 为中间栏消息历史生成 `user + dossier` 隔离键 | user, dossierId | string | 无 | implemented |
+| `createAdminConversationHistoryKey` | `src/App.tsx` | 为管理员查看其他用户历史生成前端只读历史桶键 | historyKey | string | 无 | implemented |
 | `createConversationSpeaker` | `src/App.tsx` | 将登录用户归一化为 pipeline 事件说话者身份 | user | `{ id, name }` | 无 | implemented |
 | `readStoredConversationHistory` | `src/App.tsx` | 从 localStorage 读取指定历史桶 | historyKey | ChatMessage[]? | 读取 localStorage | implemented |
 | `writeStoredConversationHistory` | `src/App.tsx` | 将指定历史桶截断后写入 localStorage | historyKey, messages | void | 写入 localStorage | implemented |
 | `setMessagesForHistory` | `src/App.tsx` | 将消息更新写入指定 `conversationHistoryKey`，避免切任务或切用户串历史 | historyKey, updater | void | 更新 App state 和 localStorage | implemented |
 | `loadConversationHistory` | `src/App.tsx` | 切换人物或登录后读取当前用户当前人物的后台中间栏历史，并在后台为空时回填本地缓存 | dossierId, historyKey, cachedMessages? | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-history` 并更新历史桶 | implemented |
+| `loadAdminConversationHistorySummaries` | `src/App.tsx` | 管理员读取当前人物下所有用户历史摘要 | dossierId | Promise<void> | 调用 `/api/admin/conversation-histories` | implemented |
+| `handleSelectAdminHistoryKey` | `src/App.tsx` | 管理员选择某个用户历史后加载其当前人物消息 | historyKey | Promise<void> | 更新中间栏只读历史桶 | implemented |
 | `persistConversationHistoryMessages` | `src/App.tsx` | 将本轮新增的用户消息和角色回复追加保存到后台历史 | dossierId, messagesToSave | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-history` | implemented |
+| `buildConversationModuleCalls` | `src/App.tsx` | 将 `PipelineTrace` 转成可持久化的模块调用记录列表 | trace | ConversationModuleCall[] | 无 | implemented |
 | `syncConversationState` | `src/App.tsx` | 一轮对话完成后把角色最新状态写回当前用户的私有对话运行态 | nextState, interaction | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-state` 并更新当前用户叠加后的档案列表 | implemented |
 | `formatDossierDetailForPreview` | `src/App.tsx` | 将详细人物档案整理成 DeepSeek 预览生成输入 | dossier | string | 无 | implemented |
 | `updateMonitorProgress` | `src/App.tsx` | 将对话流程或生成监视的一步进度写入右侧 live trace，并切换当前查看步骤 | progress | void | 更新 `activeStep` 和 `liveTrace` | implemented |
@@ -192,6 +198,8 @@
 | `propagateRelationshipInfluence` | `serverSupport.mjs` | 将一个角色的压缩互动余波写入同一用户运行态中与其有关系的其他角色 | dossiers, sourceIndex, interaction, user, now | PersonaDossier[] | 更新当前用户相关角色长期记忆和 relationship notes | implemented |
 | `appendConversationAudit` | `serverSupport.mjs` | 记录登录用户的一次输入输出 | entry, user | ConversationAuditEntry | 写入 `.conversation-audits.local.json` | implemented |
 | `readConversationAudits` | `serverSupport.mjs` | 管理员读取最近用户输入输出 | limit | ConversationAuditEntry[] | 读取 `.conversation-audits.local.json` | implemented |
+| `readConversationHistorySummaries` | `serverSupport.mjs` | 管理员按人物读取所有用户历史摘要 | dossierId | ConversationHistorySummary[] | 读取 `.conversation-histories.local.json` | implemented |
+| `readConversationHistoryMessagesByKey` | `serverSupport.mjs` | 管理员按内部历史 key 读取某用户某人物消息 | dossierId, key | ChatMessage[] | 读取 `.conversation-histories.local.json` | implemented |
 | `deleteConversationAudit` | `serverSupport.mjs` | 管理员删除单条用户输入输出审计记录 | auditId | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
 | `clearConversationAudits` | `serverSupport.mjs` | 管理员清空用户输入输出审计记录 | 无 | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
 | `readAppUpdateStatus` | `serverSupport.mjs` | 检查本机 git 工作树当前提交和远端分支提交是否一致 | 无 | appUpdateStatus | 调用 git 命令读取本机和远端状态 | implemented |
@@ -276,10 +284,13 @@
 | `conversationHistories` | App state | `ConversationHistoryMap` | 中间栏消息历史集合，按 `conversationHistoryKey` 分桶 | App Shell/localStorage | Chat panel | implemented |
 | `conversationHistoryKey` | App derived state | `string` | 当前中间栏历史桶键，由 `authUser` 和 `activeDossierId` 组成 | App Shell | `setMessagesForHistory` | implemented |
 | `userConversationHistoryEntry` | `.conversation-histories.local.json` | object | 某个用户在某个档案上的中间栏消息历史 | `/api/persona-dossiers/:id/conversation-history` | App Shell chat panel | implemented |
+| `conversationHistorySummary` | `/api/admin/conversation-histories` | object | 管理员可见的某人物下用户历史摘要，包含用户、消息数和更新时间 | Server Support | App Shell admin history selector | implemented |
 | `userConversationStateEntry` | `.conversation-states.local.json` | object | 某个用户在某个档案上的私有角色运行态覆盖层 | `/api/persona-dossiers/:id/conversation-state` | `readPersonaDossiers(user)` | implemented |
 | `conversationAuditEntry.id` | ConversationAuditEntry | `string` | 单条审计记录 ID，用于管理员删除 | serverSupport | Admin audit UI/API | implemented |
 | `conversationAuditEntry.userInput` | ConversationAuditEntry | `string` | 登录用户发送给虚拟人的输入 | App Shell | Admin audit UI | implemented |
 | `conversationAuditEntry.personaOutput` | ConversationAuditEntry | `string` | 虚拟人回复或失败时为空 | App Shell | Admin audit UI | implemented |
+| `conversationAuditEntry.moduleCalls` | ConversationAuditEntry | `ConversationModuleCall[]` | 一轮对话中每个 pipeline 模块的输入、输出、状态和 transport | App Shell | Admin audit UI/API | implemented |
+| `conversationModuleCall.step` | ConversationModuleCall | `string` | 模块步骤键，例如 `memoryRecall`、`stateUpdate` | App Shell | Admin audit UI | implemented |
 | `appUpdateStatus.available` | AppUpdateStatus | `boolean` | 服务器当前提交是否落后于远端分支 | `/api/app-update/status` | 左上角更新提示 | implemented |
 | `appUpdateStatus.currentCommit` | AppUpdateStatus | `string` | VPS 当前 git 提交 SHA | serverSupport git command | 更新窗口 | implemented |
 | `appUpdateStatus.remoteCommit` | AppUpdateStatus | `string` | GitHub 远端分支 SHA | serverSupport git command | 更新窗口 | implemented |
@@ -301,10 +312,11 @@
 | `/api/persona-dossiers/:id/preview` | POST | 登录用户提交 DeepSeek 已生成的人物短预览，全局保存到对应档案 | 需要登录会话；只允许写预览缓存，不允许改完整档案 | implemented |
 | `/api/persona-dossiers/:id/conversation-history` | GET | 登录用户读取自己在某个人物上的中间栏消息历史 | 需要登录会话；只返回当前用户当前档案历史 | implemented |
 | `/api/persona-dossiers/:id/conversation-history` | POST | 登录用户追加保存自己在某个人物上的中间栏消息历史 | 需要登录会话；写 `.conversation-histories.local.json` | implemented |
+| `/api/admin/conversation-histories` | GET | 管理员按 `dossierId` 列出用户历史摘要，或按 `dossierId + key` 读取某用户消息 | 需要管理员会话；只读 `.conversation-histories.local.json` | implemented |
 | `/api/persona-dossiers/:id/conversation-state` | POST | 登录用户对话完成后写回当前用户在该角色上的私有运行态，并向当前用户相关人物传播关系余波 | 需要登录会话；只允许写当前用户对话产生的角色状态和关系余波 | implemented |
 | `/api/persona-dossiers/:id` | DELETE | 管理员删除后台共享多人档案 | 需要管理员会话；写 `.persona-dossiers.local.json` | implemented |
-| `/api/conversation-audits` | POST | 登录用户记录一次输入输出 | 需要登录会话；写 `.conversation-audits.local.json` | implemented |
-| `/api/conversation-audits` | GET | 管理员读取所有用户输入输出 | 需要管理员会话 | implemented |
+| `/api/conversation-audits` | POST | 登录用户记录一次输入输出和模块调用记录 | 需要登录会话；写 `.conversation-audits.local.json` | implemented |
+| `/api/conversation-audits` | GET | 管理员读取所有用户输入输出和模块调用记录 | 需要管理员会话 | implemented |
 | `/api/conversation-audits` | DELETE | 管理员清空所有用户输入输出审计记录 | 需要管理员会话；写 `.conversation-audits.local.json` | implemented |
 | `/api/conversation-audits/:id` | DELETE | 管理员删除单条用户输入输出审计记录 | 需要管理员会话；写 `.conversation-audits.local.json` | implemented |
 | `/api/app-update/status` | GET | 检查服务器 git 工作树和 GitHub 远端分支是否一致 | 不执行更新；需要 VPS git remote 凭据可用 | implemented |

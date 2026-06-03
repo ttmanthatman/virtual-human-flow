@@ -1,6 +1,6 @@
 {
   "name": "virtual-human-flow",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,8 @@
     "verify:cognitive-fallback": "node scripts/verify-cognitive-module-fallback.mjs",
     "verify:conversation-history-isolation": "node scripts/verify-conversation-history-isolation.mjs",
     "verify:conversation-message-history": "node scripts/verify-conversation-message-history.mjs",
-    "verify:user-relationship-memory": "node scripts/verify-user-relationship-memory.mjs"
+    "verify:user-relationship-memory": "node scripts/verify-user-relationship-memory.mjs",
+    "verify:admin-history-and-module-audit": "node scripts/verify-admin-history-and-module-audit.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.2",

@@ -52,7 +52,7 @@ npm run start
 
 人物档案显示分成“预览”和“详细”。详细档案由档案结构保存，包含成长经历、心理变化、关系变化、性格面和熟人关系；预览摘要不由源码预置，缺失时 UI 显示“预览生成中”。登录用户打开缺少预览的角色时，前端会调用 DeepSeek 生成短预览，左侧档案图标区域显示生成动画，点击该生成项可在右侧生成监视里看到实时内容；生成过程不占用聊天发送状态，用户仍可继续对话。生成完成后通过后台写入 `.persona-dossiers.local.json`，之后所有用户读取同一个全局预览。
 
-后台会记录每个登录用户的一次输入和虚拟人输出，写入运行时文件 `.conversation-audits.local.json`；只有管理员可以在右侧“输入输出审计”里查看、删除单条或清空这些记录。`.conversation-histories.local.json`、`.conversation-states.local.json`、`.conversation-audits.local.json`、`.persona-dossiers.local.json` 和 `.deepseek.local.json` 都被 `.gitignore` 忽略，不能提交。
+后台会记录每个登录用户的一次输入、虚拟人输出和本轮对话每个模块的调用记录，写入运行时文件 `.conversation-audits.local.json`；只有管理员可以在右侧“输入输出审计”里查看、删除单条或清空这些记录。管理员还可以在当前人物的中间栏上方选择某个用户，查看该用户与该人物的历史消息；普通用户仍只能读取自己的历史。`.conversation-histories.local.json`、`.conversation-states.local.json`、`.conversation-audits.local.json`、`.persona-dossiers.local.json` 和 `.deepseek.local.json` 都被 `.gitignore` 忽略，不能提交。
 
 当前 LLM 入口固定为真实 DeepSeek 本地代理，不再在 UI 中提供模拟语言模型选项。每个认知步骤都必须调用 LLM：Appraisal、Memory Recall、Decision、State Update、Runtime Signal Evaluation 都是独立的 LLM 模块。
 

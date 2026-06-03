@@ -14,7 +14,7 @@
 
 人物档案显示分成预览和详细。详细档案直接来自 `CharacterProfile` 的 `fullLifeStory`、`lifeEvents`、`personalityFacets` 和 `relationships`；预览短文由 DeepSeek 生成，不由源码手写。角色缺少 `personaDossier.previewSummary` 时，UI 显示“预览生成中”并在左侧档案卡显示扫光动画；登录用户打开该角色后，前端调用 DeepSeek 生成短预览，再通过 `/api/persona-dossiers/:id/preview` 全局保存。短预览生成和管理员人物/场景生成使用独立生成状态，不设置聊天 `isRunning`，因此生成过程中仍可发送对话。
 
-后台会记录每个登录用户的一次输入和虚拟人输出。审计记录写入 `.conversation-audits.local.json`，中间栏历史写入 `.conversation-histories.local.json`，用户私有对话运行态写入 `.conversation-states.local.json`，共享档案写入 `.persona-dossiers.local.json`；这些都是运行时文件，被 `.gitignore` 忽略。只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计。
+后台会记录每个登录用户的一次输入、虚拟人输出和本轮对话的模块调用记录。审计记录写入 `.conversation-audits.local.json`，中间栏历史写入 `.conversation-histories.local.json`，用户私有对话运行态写入 `.conversation-states.local.json`，共享档案写入 `.persona-dossiers.local.json`；这些都是运行时文件，被 `.gitignore` 忽略。只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计；管理员也可以通过 `/api/admin/conversation-histories` 按人物查看各用户中间栏历史。
 
 重要约束：Reply LLM 只接收自然语言上下文，只生成角色说出口的话。不能把 JSON、字段名、输出契约、工程术语或类似编程语言的内容混进这一步。
 
@@ -232,12 +232,15 @@ flowchart TD
     TOMBSTONE --> STORE
     USERSTORE[.conversation-states.local.json] --> OVERLAY[叠加当前用户私有运行态]
     HISTSTORE[.conversation-histories.local.json] --> CHATLOAD[加载当前用户当前人物历史]
+    HISTSTORE --> ADMINHIST[管理员按人物列出/读取用户历史]
     MERGE --> READ[登录用户读取全局可用档案]
     READ --> OVERLAY
     OVERLAY --> D
     D --> H[左栏人物/场景/位置输入同步切换]
     D --> CHATLOAD
+    D --> ADMINHIST
     CHATLOAD --> CHATUI[中间栏对话历史]
+    ADMINHIST --> CHATUI
     H --> I[聊天室后续使用当前档案状态]
     I --> J[对话 pipeline 产出 nextState]
     I --> SAVEHIST[POST /api/persona-dossiers/:id/conversation-history]
@@ -258,10 +261,12 @@ flowchart TD
     U[登录用户发送消息] --> PIPE[同步对话 pipeline]
     PIPE --> OUT[虚拟人输出或失败信息]
     OUT --> AUDIT[POST /api/conversation-audits]
+    PIPE --> MODULES[模块调用记录: event/appraisal/memory/decision/prompt/reply/state/signals/delta]
+    MODULES --> AUDIT
     AUDIT --> STORE[.conversation-audits.local.json]
     ADMIN[管理员点击输入输出审计] --> READ[GET /api/conversation-audits]
     READ --> STORE
-    READ --> UI[右侧审计浮层展示每个用户输入输出]
+    READ --> UI[右侧审计浮层展示每个用户输入输出和模块调用]
     UI --> DELONE[DELETE /api/conversation-audits/:id]
     UI --> CLEAR[DELETE /api/conversation-audits]
     DELONE --> STORE
@@ -629,6 +634,7 @@ flowchart TD
     BUILTIN --> MERGE["readPersonaDossiers 合并内置和共享档案"]
     USTATE --> OVERLAY["叠加当前用户私有运行态"]
     UHIST --> CHATHIST["读取/追加当前用户中间栏历史"]
+    UHIST --> ADMINHIST["管理员读取指定人物下用户历史"]
     PERM --> DOS
     PERM --> USTATE
     PERM --> UHIST
@@ -637,6 +643,7 @@ flowchart TD
     MERGE --> OVERLAY
     OVERLAY --> APP["App Shell 当前用户档案"]
     CHATHIST --> APP
+    ADMINHIST --> APP
     AUD --> ADMINUI["管理员审计 UI"]
 ```
 
@@ -709,7 +716,8 @@ flowchart LR
     TRACE --> JSON[事件/评估/记忆/决策/回应提示词/回应输出/状态更新/信号评估/状态变化]
     LEFT --> MONITOR[右侧生成监视]
     MONITOR --> GENJSON[人物短预览/人物档案/场景生成输入输出状态]
-    TRACE --> AUDIT[管理员输入输出审计]
+    TRACE --> AUDIT[管理员输入输出和模块调用审计]
+    CHAT --> ADMINHIST[管理员用户历史选择器]
     TOP --> LOGIN[登录浮窗]
     TOP --> UPDATE[服务器更新浮窗]
     LEFT --> DOS[多人档案: 分组/新建/切换/删除]
@@ -759,9 +767,10 @@ flowchart LR
 | 权限控制 | initialized | `isAdmin` 用户可维护共享档案和查看审计；普通登录用户只可选择共享档案并对话 |
 | 共享多人档案 | initialized | 管理员保存到 `.persona-dossiers.local.json`，所有登录用户可读取和使用 |
 | 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`，切换人物时加载对应中间栏历史 |
+| 管理员用户历史查看 | initialized | 管理员可在当前人物下列出所有用户历史摘要，并选择某个用户以只读方式查看该用户与该人物的中间栏历史 |
 | 用户私有对话运行态 | initialized | 登录用户对话后按 `userId + dossierId` 写入 `.conversation-states.local.json`，读取档案时只叠加当前用户条目 |
 | 用户关系印象记忆 | initialized | `CharacterState.relationshipMemory` 作为长期记忆中的关系记忆区，按当前说话用户保存自然语言印象、关系总结、证据和最近互动，并进入召回、回复提示词和右侧展示 |
-| 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，仅管理员可查看、删除单条或清空 |
+| 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，包含用户输入、虚拟人输出和每个 pipeline 模块的输入输出；仅管理员可查看、删除单条或清空 |
 | 人物档案生成 | initialized | 通过 Dossier Interpretation LLM 重新解读用户素材，生成 profile、concerns、longTermMemory 和 runtime 预览 |
 | 人物档案预览 | initialized | 左侧只展示 `profile.displaySummary` 等摘要信息，用户确认后应用 |
 | 生成监视 | initialized | 右侧展示人物短预览、人物档案和场景生成的输入、流式输出和状态；生成不阻塞聊天发送 |

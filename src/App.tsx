@@ -95,6 +95,26 @@ type ConversationAuditEntry = {
   personaOutput: string;
   status: "completed" | "failed";
   error?: string;
+  moduleCalls?: ConversationModuleCall[];
+};
+type ConversationModuleCall = {
+  id: string;
+  step: string;
+  label: string;
+  status: string;
+  transport: string;
+  input: string;
+  output: string;
+  error?: string;
+};
+type ConversationHistorySummary = {
+  key: string;
+  userId: number;
+  username: string;
+  nickname?: string;
+  dossierId: string;
+  messageCount: number;
+  updatedAt: string;
 };
 type AppUpdateStatus = {
   configured: boolean;
@@ -130,6 +150,10 @@ function createConversationSpeaker(user: AuthUser | undefined) {
   const stableId = user ? `user:${user.userId || user.username}` : "user:guest";
   const displayName = user?.nickname || user?.username || "当前对话者";
   return { id: stableId, name: displayName };
+}
+
+function createAdminConversationHistoryKey(historyKey: string) {
+  return `admin-history::${historyKey}`;
 }
 
 function readStoredConversationHistory(historyKey: string) {
@@ -205,6 +229,9 @@ export function App() {
   const [auditEntries, setAuditEntries] = useState<ConversationAuditEntry[]>([]);
   const [auditPanelOpen, setAuditPanelOpen] = useState(false);
   const [auditStatus, setAuditStatus] = useState("管理员可查看用户输入输出");
+  const [adminHistorySummaries, setAdminHistorySummaries] = useState<ConversationHistorySummary[]>([]);
+  const [selectedAdminHistoryKey, setSelectedAdminHistoryKey] = useState("");
+  const [adminHistoryStatus, setAdminHistoryStatus] = useState("管理员可查看当前人物下各用户历史");
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | undefined>();
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [updatePanelOpen, setUpdatePanelOpen] = useState(false);
@@ -228,7 +255,10 @@ export function App() {
     () => (state.relationshipMemory ?? []).find((memory) => memory.targetUserId === activeConversationSpeaker.id),
     [activeConversationSpeaker.id, state.relationshipMemory],
   );
-  const messages = conversationHistories[activeConversationHistoryKey] ?? seedMessages;
+  const displayedConversationHistoryKey = selectedAdminHistoryKey ? createAdminConversationHistoryKey(selectedAdminHistoryKey) : activeConversationHistoryKey;
+  const isViewingAdminUserHistory = Boolean(selectedAdminHistoryKey);
+  const messages = conversationHistories[displayedConversationHistoryKey] ?? (isViewingAdminUserHistory ? [] : seedMessages);
+  const selectedAdminHistorySummary = adminHistorySummaries.find((summary) => summary.key === selectedAdminHistoryKey);
   const groupedDossiers = useMemo(() => {
     const groups = new Map<string, PersonaDossier[]>();
     for (const dossier of dossiers) {
@@ -260,6 +290,14 @@ export function App() {
       void loadConversationHistory(activeDossierId, activeConversationHistoryKey, cachedMessages);
     }
   }, [activeConversationHistoryKey, activeDossierId, isAuthenticated]);
+
+  useEffect(() => {
+    setSelectedAdminHistoryKey("");
+    setAdminHistorySummaries([]);
+    if (isAdmin && activeDossierId) {
+      void loadAdminConversationHistorySummaries(activeDossierId);
+    }
+  }, [activeDossierId, isAdmin]);
 
   useEffect(() => {
     if (!activeDossier || !isAuthenticated || !deepseekConnected) return;
@@ -507,6 +545,41 @@ export function App() {
     }
   }
 
+  async function loadAdminConversationHistorySummaries(dossierId: string) {
+    setAdminHistoryStatus("正在读取当前人物的用户历史...");
+    const response = await fetch(`/api/admin/conversation-histories?dossierId=${encodeURIComponent(dossierId)}`, { headers: authHeaders() }).catch(() => undefined);
+    if (!response?.ok) {
+      setAdminHistoryStatus("用户历史读取失败");
+      return;
+    }
+    const data = (await response.json()) as { summaries?: ConversationHistorySummary[] };
+    const summaries = Array.isArray(data.summaries) ? data.summaries : [];
+    setAdminHistorySummaries(summaries);
+    setAdminHistoryStatus(summaries.length ? `可查看 ${summaries.length} 个用户的历史` : "当前人物还没有用户历史");
+  }
+
+  async function handleSelectAdminHistoryKey(historyKey: string) {
+    setSelectedAdminHistoryKey(historyKey);
+    if (!historyKey) return;
+    const localKey = createAdminConversationHistoryKey(historyKey);
+    if (conversationHistories[localKey]) return;
+
+    setAdminHistoryStatus("正在加载用户历史...");
+    const response = await fetch(`/api/admin/conversation-histories?dossierId=${encodeURIComponent(activeDossierId)}&key=${encodeURIComponent(historyKey)}`, {
+      headers: authHeaders(),
+    }).catch(() => undefined);
+    if (!response?.ok) {
+      setAdminHistoryStatus("用户历史加载失败");
+      return;
+    }
+    const data = (await response.json()) as { messages?: ChatMessage[] };
+    setConversationHistories((current) => ({
+      ...current,
+      [localKey]: Array.isArray(data.messages) ? data.messages : [],
+    }));
+    setAdminHistoryStatus("已加载用户历史");
+  }
+
   async function persistConversationHistoryMessages(dossierId: string, messagesToSave: ChatMessage[]) {
     if (!authToken || messagesToSave.length === 0) return;
     await fetch(`/api/persona-dossiers/${encodeURIComponent(dossierId)}/conversation-history`, {
@@ -583,7 +656,9 @@ export function App() {
     ]);
   }
 
-  async function recordConversationAudit(entry: Pick<ConversationAuditEntry, "dossierTitle" | "userInput" | "personaOutput" | "status" | "error"> & { dossierId: string }) {
+  async function recordConversationAudit(
+    entry: Pick<ConversationAuditEntry, "dossierTitle" | "userInput" | "personaOutput" | "status" | "error" | "moduleCalls"> & { dossierId: string },
+  ) {
     if (!authToken) return;
     await fetch("/api/conversation-audits", {
       method: "POST",
@@ -976,6 +1051,10 @@ export function App() {
   async function handleSend(event: FormEvent) {
     event.preventDefault();
     if (!requireLogin("发送消息")) return;
+    if (isViewingAdminUserHistory) {
+      setError("正在查看其他用户历史；切回“我的历史”后再发送。");
+      return;
+    }
     if (!input.trim() || isRunning) return;
     const sendingDossierId = activeDossierId;
     const sendingHistoryKey = activeConversationHistoryKey;
@@ -1028,6 +1107,7 @@ export function App() {
         userInput: userMessage.content,
         personaOutput: reply,
         status: "completed",
+        moduleCalls: buildConversationModuleCalls(result.trace),
       });
       setInput("");
     } catch (caught) {
@@ -1499,6 +1579,27 @@ export function App() {
             ))}
           </div>
 
+          {isAdmin ? (
+            <div className="admin-history-toolbar">
+              <label>
+                <span>查看用户历史</span>
+                <select value={selectedAdminHistoryKey} onChange={(event) => void handleSelectAdminHistoryKey(event.target.value)}>
+                  <option value="">我的历史</option>
+                  {adminHistorySummaries.map((summary) => (
+                    <option key={summary.key} value={summary.key}>
+                      {(summary.nickname || summary.username || `用户 ${summary.userId}`) + ` · ${summary.messageCount} 条`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <small>
+                {selectedAdminHistorySummary
+                  ? `正在查看 ${selectedAdminHistorySummary.nickname || selectedAdminHistorySummary.username} 与 ${activeDossier?.title ?? state.profile.name} 的历史`
+                  : adminHistoryStatus}
+              </small>
+            </div>
+          ) : null}
+
           <div className="message-list">
             {messages.map((message) => (
               <article className={`message ${message.speaker}`} key={message.id}>
@@ -1518,9 +1619,10 @@ export function App() {
               onFocus={() => {
                 if (!isAuthenticated) setLoginModalOpen(true);
               }}
-              placeholder="输入一句话，观察多模块语言模型数据流"
+              placeholder={isViewingAdminUserHistory ? "正在查看其他用户历史" : "输入一句话，观察多模块语言模型数据流"}
+              disabled={isViewingAdminUserHistory}
             />
-            <button type="submit" disabled={isRunning}>
+            <button type="submit" disabled={isRunning || isViewingAdminUserHistory}>
               <Send size={17} /> {isRunning ? "运行中" : "发送"}
             </button>
           </form>
@@ -1783,6 +1885,19 @@ export function App() {
                       <h3>输出</h3>
                       <p>{entry.status === "failed" ? entry.error || "流程失败" : entry.personaOutput}</p>
                     </section>
+                    {entry.moduleCalls?.length ? (
+                      <details className="audit-module-calls">
+                        <summary>模块调用记录（{entry.moduleCalls.length}）</summary>
+                        {entry.moduleCalls.map((call) => (
+                          <section key={call.id}>
+                            <h3>
+                              {call.label} · {call.status} · {call.transport}
+                            </h3>
+                            <pre>{JSON.stringify({ input: call.input, output: call.output, error: call.error }, null, 2)}</pre>
+                          </section>
+                        ))}
+                      </details>
+                    ) : null}
                   </article>
                 ))
               ) : (
@@ -1928,6 +2043,25 @@ function buildCompletedTraceProgress(step: keyof PipelineTrace, trace: PipelineT
     output: JSON.stringify(cognitiveTrace.fallbackReason ? { fallbackReason: cognitiveTrace.fallbackReason, output: cognitiveTrace.output } : cognitiveTrace.output, null, 2),
     transport: cognitiveTrace.transport,
   };
+}
+
+function buildConversationModuleCalls(trace: PipelineTrace): ConversationModuleCall[] {
+  return traceSteps
+    .map((step): ConversationModuleCall | undefined => {
+      const progress = buildCompletedTraceProgress(step.key, trace);
+      if (!progress) return undefined;
+      return {
+        id: makeId("module_call"),
+        step: String(step.key),
+        label: step.label,
+        status: String(progress.status),
+        transport: progress.transport ?? "pending",
+        input: progress.input ?? "",
+        output: progress.output ?? "",
+        error: progress.error,
+      };
+    })
+    .filter((call): call is ConversationModuleCall => Boolean(call));
 }
 
 function traceStatusLabel(status: PipelineStepProgress["status"]) {
