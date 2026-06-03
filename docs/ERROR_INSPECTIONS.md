@@ -2,6 +2,36 @@
 
 本文档记录用户指出错误后的勘验、根因和流程修正。目的不是追责，而是防止同类错误反复出现。
 
+## 2026-06-03 切换人物没有加载已保存的中间栏历史
+
+### 用户指出的问题
+
+用户指出“切换人物时没有加载历史对话”，并要求如果历史对话没有保存，就修改代码保存历史记录。
+
+### 错误类型
+
+- 实现边界错误：上一版只把中间栏消息写入浏览器 `localStorage`，没有服务端历史接口；换设备、重新登录或从后台档案重新加载时，没有可靠来源可读。
+- 验证标准错误：新增的 `verify:conversation-history-isolation` 只验证了角色运行态不会跨用户泄露，没有验证中间栏 `ChatMessage` 是否保存、读取和按人物切换。
+- 命名边界错误：上一版把“conversation history isolation”主要落在角色状态上，没有把“中间栏消息历史”和“角色内部运行态”拆成两条持久化路径。
+
+### 根因
+
+前端 `conversationHistories` 是按 `conversationHistoryKey` 分桶的内存/localStorage 缓存，但切换人物时只从本地桶读取；服务端只有 `.conversation-states.local.json` 保存角色状态，没有 `.conversation-histories.local.json` 保存消息列表。因此后台虽然能记住角色短期记忆和 runtime，但 UI 中间栏没有可加载的持久消息历史。
+
+### 修正
+
+1. 新增 `.conversation-histories.local.json`，按 `userId + dossierId` 保存中间栏消息历史，并加入 `.gitignore`。
+2. 新增 `GET/POST /api/persona-dossiers/:id/conversation-history`，分别用于读取和追加当前用户当前人物的历史消息。
+3. 前端切换人物或登录后，会先显示本地缓存，再从后台加载该人物历史；如果后台为空但本地有缓存，会回填保存到后台。
+4. 发送消息成功后，会把用户消息和角色回复追加保存到后台；流程失败时至少保存用户已发送的消息。
+5. 文档和命名表明确区分 `userConversationHistory`（中间栏消息）与 `userConversationState`（角色运行态）。
+
+### 新增验证标准
+
+- 新增 `npm run verify:conversation-message-history`：验证同用户同人物能读取保存消息，不同人物和不同用户都读不到。
+- 以后涉及中间栏消息、切换人物、登录后恢复历史时，必须验证消息历史保存和读取，而不只验证角色状态。
+- `.conversation-histories.local.json` 必须保持 ignored，不能提交用户消息。
+
 ## 2026-06-03 对话历史按任务和用户隔离失败
 
 ### 用户指出的问题

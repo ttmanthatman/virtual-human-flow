@@ -7,6 +7,7 @@ tmp/
 .deepseek.local.json
 .persona-dossiers.local.json
 .conversation-states.local.json
+.conversation-histories.local.json
 .conversation-audits.local.json
 .vps.local.json
 *.tsbuildinfo

@@ -48,11 +48,11 @@ npm run start
 
 当前版本增加了登录和权限边界：未登录用户可以看到工作台界面，但发送消息、切换或修改档案、测试 DeepSeek、查看审计等操作都会弹出登录浮窗。登录账号来自 `<chatroom-origin>/` 的聊天室用户，密码保持原密码；本项目只调用 liao 聊天室 `/api/login` 做校验，不保存密码，也不修改聊天室数据。
 
-多人档案现在支持后台共享和分组。系统内置 14 个全局档案：7 个“马可福音10”人物和 7 个“郑州市”人物，每个档案都绑定人物、从小到大的关键经历、心理变化、关系变化、熟人关系、场景和位置属性。只有 liao 聊天室里的管理员用户可以新增、保存、删除或应用人物/场景档案；管理员保存的共享档案会写入运行时文件 `.persona-dossiers.local.json`，所有登录用户都可以读取、选择和使用。普通登录用户和某个角色对话后，该角色的短期记忆、长期记忆、runtime 状态和关系变化会写入 `.conversation-states.local.json` 中按 `userId + dossierId` 隔离的私有运行态；切换不同任务会切换中间栏历史，切换不同用户不会看到彼此的聊天历史或角色记忆。
+多人档案现在支持后台共享和分组。系统内置 14 个全局档案：7 个“马可福音10”人物和 7 个“郑州市”人物，每个档案都绑定人物、从小到大的关键经历、心理变化、关系变化、熟人关系、场景和位置属性。只有 liao 聊天室里的管理员用户可以新增、保存、删除或应用人物/场景档案；管理员保存的共享档案会写入运行时文件 `.persona-dossiers.local.json`，所有登录用户都可以读取、选择和使用。普通登录用户和某个角色对话后，中间栏消息会写入 `.conversation-histories.local.json`，该角色的短期记忆、长期记忆、runtime 状态和关系变化会写入 `.conversation-states.local.json`；二者都按 `userId + dossierId` 隔离。切换不同人物会加载对应历史，切换不同用户不会看到彼此的聊天历史或角色记忆。
 
 人物档案显示分成“预览”和“详细”。详细档案由档案结构保存，包含成长经历、心理变化、关系变化、性格面和熟人关系；预览摘要不由源码预置，缺失时 UI 显示“预览生成中”。登录用户打开缺少预览的角色时，前端会调用 DeepSeek 生成短预览，左侧档案图标区域显示生成动画，点击该生成项可在右侧生成监视里看到实时内容；生成过程不占用聊天发送状态，用户仍可继续对话。生成完成后通过后台写入 `.persona-dossiers.local.json`，之后所有用户读取同一个全局预览。
 
-后台会记录每个登录用户的一次输入和虚拟人输出，写入运行时文件 `.conversation-audits.local.json`；只有管理员可以在右侧“输入输出审计”里查看、删除单条或清空这些记录。`.conversation-states.local.json`、`.conversation-audits.local.json`、`.persona-dossiers.local.json` 和 `.deepseek.local.json` 都被 `.gitignore` 忽略，不能提交。
+后台会记录每个登录用户的一次输入和虚拟人输出，写入运行时文件 `.conversation-audits.local.json`；只有管理员可以在右侧“输入输出审计”里查看、删除单条或清空这些记录。`.conversation-histories.local.json`、`.conversation-states.local.json`、`.conversation-audits.local.json`、`.persona-dossiers.local.json` 和 `.deepseek.local.json` 都被 `.gitignore` 忽略，不能提交。
 
 当前 LLM 入口固定为真实 DeepSeek 本地代理，不再在 UI 中提供模拟语言模型选项。每个认知步骤都必须调用 LLM：Appraisal、Memory Recall、Decision、State Update、Runtime Signal Evaluation 都是独立的 LLM 模块。
 

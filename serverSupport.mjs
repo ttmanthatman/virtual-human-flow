@@ -8,9 +8,11 @@ const rootDir = process.cwd();
 const liaoChatroomOrigin = process.env.LIAO_CHATROOM_ORIGIN || "";
 const personaDossierStorePath = resolve(rootDir, ".persona-dossiers.local.json");
 const conversationStateStorePath = resolve(rootDir, ".conversation-states.local.json");
+const conversationHistoryStorePath = resolve(rootDir, ".conversation-histories.local.json");
 const conversationAuditStorePath = resolve(rootDir, ".conversation-audits.local.json");
 const authSessionTtlMs = 7 * 24 * 60 * 60 * 1000;
 const maxAuditEntries = 1000;
+const maxConversationHistoryMessages = 240;
 const appUpdateDefaultBranch = "main";
 const appUpdateCommandTimeoutMs = 180000;
 const authSessions = new Map();
@@ -200,6 +202,36 @@ export function updatePersonaDossierConversationState(dossierId, nextState, inte
   });
   writeUserConversationStates(user, propagated.filter((dossier) => changedIds.has(dossier.id)));
   return { dossier: propagated[index], dossiers: propagated };
+}
+
+export function readConversationHistoryMessages(dossierId, user) {
+  const key = createConversationHistoryEntryKey(dossierId, user);
+  if (!key) return [];
+  const store = readConversationHistoryStore();
+  const entry = store.entries.find((item) => item.key === key);
+  return Array.isArray(entry?.messages) ? entry.messages : [];
+}
+
+export function appendConversationHistoryMessages(dossierId, messages, user) {
+  const key = createConversationHistoryEntryKey(dossierId, user);
+  if (!key) return { error: "缺少有效历史键" };
+  const safeMessages = sanitizeConversationHistoryMessages(messages);
+  if (safeMessages.length === 0) return { error: "缺少有效消息" };
+
+  const store = readConversationHistoryStore();
+  const now = new Date().toISOString();
+  const existing = store.entries.find((entry) => entry.key === key);
+  const nextEntry = {
+    key,
+    userId: user.userId,
+    username: user.username,
+    dossierId,
+    messages: [...(Array.isArray(existing?.messages) ? existing.messages : []), ...safeMessages].slice(-maxConversationHistoryMessages),
+    updatedAt: now,
+  };
+  const nextEntries = [...store.entries.filter((entry) => entry.key !== key), nextEntry];
+  writeJsonFile(conversationHistoryStorePath, { entries: nextEntries });
+  return { messages: nextEntry.messages };
 }
 
 export function appendConversationAudit(entry, user) {
@@ -440,6 +472,37 @@ function readConversationStateStore() {
   return {
     entries: Array.isArray(store.entries) ? store.entries : [],
   };
+}
+
+function readConversationHistoryStore() {
+  const store = readJsonFile(conversationHistoryStorePath, { entries: [] });
+  return {
+    entries: Array.isArray(store.entries) ? store.entries : [],
+  };
+}
+
+function createConversationHistoryEntryKey(dossierId, user) {
+  if (typeof dossierId !== "string" || !dossierId.trim()) return "";
+  const userId = normalizeUserId(user);
+  return userId ? `${userId}::dossier:${dossierId}` : "";
+}
+
+function sanitizeConversationHistoryMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages
+    .filter((message) => message && typeof message === "object")
+    .map((message) => {
+      const speaker = ["user", "persona", "system"].includes(message.speaker) ? message.speaker : "system";
+      const timestamp = typeof message.timestamp === "string" && message.timestamp ? message.timestamp : new Date().toISOString();
+      return {
+        id: typeof message.id === "string" && message.id ? message.id.slice(0, 120) : randomBytes(8).toString("base64url"),
+        speaker,
+        speakerName: typeof message.speakerName === "string" ? message.speakerName.slice(0, 120) : "",
+        content: typeof message.content === "string" ? message.content.slice(0, 8000) : "",
+        timestamp,
+      };
+    })
+    .filter((message) => message.content.trim());
 }
 
 function applyUserConversationStates(dossiers, user) {

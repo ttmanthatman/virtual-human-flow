@@ -54,6 +54,7 @@
 | 人物详细生平 | `lifeEvent` | domain object | 角色从小到大的关键经历、心理变化和关系变化 | `backstoryLine`, `historyItem` |
 | 社会人格位置 | `socialPersonaPattern` | domain field | 角色在人群性格分布中的位置，用来避免所有角色都同质化为压抑谨慎 | `personalityTypeLabel`, `archetypeOnly` |
 | 用户私有对话运行态 | `userConversationState` | persistence workflow | 登录用户与角色对话后，按 `userId + dossierId` 保存短期记忆、长期记忆、runtime 和关系变化 | `globalPersonaStateWrite`, `sharedChatState` |
+| 用户私有消息历史 | `userConversationHistory` | persistence workflow | 登录用户与角色的中间栏消息历史，按 `userId + dossierId` 保存和加载 | `globalChatHistory`, `localOnlyMessages` |
 | 用户私有关系余波 | `userRelationshipInfluencePropagation` | persistence workflow | 一个角色的对话只会给同一用户运行态中与其有关系的其他角色写入压缩记忆和关系 note | `globalFriendSync`, `publicSocialRipple` |
 | 对话历史键 | `conversationHistoryKey` | UI state key | 前端中间栏消息历史的分桶键，由当前用户和当前档案组成 | `chatKey`, `globalMessagesKey` |
 | 共享人物档案 | `sharedPersonaDossier` | persisted domain object | 管理员保存到后台、所有登录用户可读取和使用的多人档案 | `globalProfile`, `publicDossier` |
@@ -97,8 +98,9 @@
 | Profile Scene Consistency | `src/pipeline/profileSceneConsistency.ts` | 通过 LLM 判断人物档案和场景是否匹配，并返回是否需要扭曲时空密码 | `CharacterState`, `LlmConfig` | `ProfileSceneConsistencyResult` | App Shell | Cognitive Module Client |
 | DeepSeek Local Proxy | `vite.config.ts` | 在本地开发服务器中代理 DeepSeek Chat Completions，固定 flash 模型、关闭 thinking 并保存根目录密钥文件 | `/api/deepseek-config`, `/api/deepseek-chat` | DeepSeek 响应或配置状态 | App Shell | DeepSeek API |
 | Production Server | `server.mjs` | 生产环境服务 `dist/` 并提供 DeepSeek API 代理 | HTTP request, `.deepseek.local.json` | HTML/assets/API/SSE | nginx reverse proxy | DeepSeek API |
-| Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、内置/共享档案合并、共享档案存储、DeepSeek 预览缓存写回、用户私有对话运行态、用户私有关系余波、对话审计和站内手动更新 | HTTP request, liao login response, local runtime JSON, builtin persona dossiers, git working tree | auth session, persona dossiers, audit entries, update status/SSE | Vite Dev Server/Production Server | liao Chatroom, local runtime files, Builtin Persona Dossiers, Git |
+| Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、内置/共享档案合并、共享档案存储、DeepSeek 预览缓存写回、用户私有消息历史、用户私有对话运行态、用户私有关系余波、对话审计和站内手动更新 | HTTP request, liao login response, local runtime JSON, builtin persona dossiers, git working tree | auth session, persona dossiers, audit entries, update status/SSE | Vite Dev Server/Production Server | liao Chatroom, local runtime files, Builtin Persona Dossiers, Git |
 | Conversation History Isolation Verification | `scripts/verify-conversation-history-isolation.mjs` | 在临时运行目录验证用户 A 的对话状态不会进入用户 B 或共享档案 | 无 | pass/fail | npm script | Server Support |
+| Conversation Message History Verification | `scripts/verify-conversation-message-history.mjs` | 在临时运行目录验证中间栏消息历史按用户和档案保存、读取和隔离 | 无 | pass/fail | npm script | Server Support |
 | Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录站内手动更新、VPS git 工作树配置、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | manualVpsUpdate |
 
 ## 函数登记表
@@ -144,6 +146,8 @@
 | `readStoredConversationHistory` | `src/App.tsx` | 从 localStorage 读取指定历史桶 | historyKey | ChatMessage[]? | 读取 localStorage | implemented |
 | `writeStoredConversationHistory` | `src/App.tsx` | 将指定历史桶截断后写入 localStorage | historyKey, messages | void | 写入 localStorage | implemented |
 | `setMessagesForHistory` | `src/App.tsx` | 将消息更新写入指定 `conversationHistoryKey`，避免切任务或切用户串历史 | historyKey, updater | void | 更新 App state 和 localStorage | implemented |
+| `loadConversationHistory` | `src/App.tsx` | 切换人物或登录后读取当前用户当前人物的后台中间栏历史，并在后台为空时回填本地缓存 | dossierId, historyKey, cachedMessages? | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-history` 并更新历史桶 | implemented |
+| `persistConversationHistoryMessages` | `src/App.tsx` | 将本轮新增的用户消息和角色回复追加保存到后台历史 | dossierId, messagesToSave | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-history` | implemented |
 | `syncConversationState` | `src/App.tsx` | 一轮对话完成后把角色最新状态写回当前用户的私有对话运行态 | nextState, interaction | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-state` 并更新当前用户叠加后的档案列表 | implemented |
 | `formatDossierDetailForPreview` | `src/App.tsx` | 将详细人物档案整理成 DeepSeek 预览生成输入 | dossier | string | 无 | implemented |
 | `updateMonitorProgress` | `src/App.tsx` | 将对话流程或生成监视的一步进度写入右侧 live trace，并切换当前查看步骤 | progress | void | 更新 `activeStep` 和 `liveTrace` | implemented |
@@ -176,6 +180,9 @@
 | `deletePersonaDossier` | `serverSupport.mjs` | 管理员删除共享多人档案 | dossierId | deleted flag | 写入 `.persona-dossiers.local.json` | implemented |
 | `updatePersonaDossierPreview` | `serverSupport.mjs` | 登录用户提交 DeepSeek 生成的人物短预览并全局保存 | dossierId, previewSummary, user | dossier or error | 写入 `.persona-dossiers.local.json` | implemented |
 | `updatePersonaDossierConversationState` | `serverSupport.mjs` | 登录用户对话后写回该用户对当前角色的私有运行态，并触发该用户范围内的关系余波 | dossierId, nextState, interaction, user | dossier/dossiers or error | 写入 `.conversation-states.local.json` | implemented |
+| `readConversationHistoryMessages` | `serverSupport.mjs` | 读取当前用户在指定人物上的中间栏消息历史 | dossierId, user | ChatMessage-like[] | 读取 `.conversation-histories.local.json` | implemented |
+| `appendConversationHistoryMessages` | `serverSupport.mjs` | 追加保存当前用户在指定人物上的中间栏消息历史 | dossierId, messages, user | messages or error | 写入 `.conversation-histories.local.json` | implemented |
+| `sanitizeConversationHistoryMessages` | `serverSupport.mjs` | 限制服务端保存的历史消息字段、长度和 speaker 枚举 | messages | message[] | 无 | implemented |
 | `applyUserConversationStates` | `serverSupport.mjs` | 将某个用户保存的私有角色状态叠加到共享档案列表上 | dossiers, user | PersonaDossier[] | 读取 `.conversation-states.local.json` | implemented |
 | `writeUserConversationStates` | `serverSupport.mjs` | 保存某个用户被修改的私有角色运行态条目 | user, changedDossiers | void | 写入 `.conversation-states.local.json` | implemented |
 | `propagateRelationshipInfluence` | `serverSupport.mjs` | 将一个角色的压缩互动余波写入同一用户运行态中与其有关系的其他角色 | dossiers, sourceIndex, interaction, user, now | PersonaDossier[] | 更新当前用户相关角色长期记忆和 relationship notes | implemented |
@@ -260,6 +267,7 @@
 | `groupedDossiers` | App derived state | `[groupName, PersonaDossier[]][]` | 左侧多人档案按分组聚合后的渲染结构 | `dossiers` | App Shell UI | implemented |
 | `conversationHistories` | App state | `ConversationHistoryMap` | 中间栏消息历史集合，按 `conversationHistoryKey` 分桶 | App Shell/localStorage | Chat panel | implemented |
 | `conversationHistoryKey` | App derived state | `string` | 当前中间栏历史桶键，由 `authUser` 和 `activeDossierId` 组成 | App Shell | `setMessagesForHistory` | implemented |
+| `userConversationHistoryEntry` | `.conversation-histories.local.json` | object | 某个用户在某个档案上的中间栏消息历史 | `/api/persona-dossiers/:id/conversation-history` | App Shell chat panel | implemented |
 | `userConversationStateEntry` | `.conversation-states.local.json` | object | 某个用户在某个档案上的私有角色运行态覆盖层 | `/api/persona-dossiers/:id/conversation-state` | `readPersonaDossiers(user)` | implemented |
 | `conversationAuditEntry.id` | ConversationAuditEntry | `string` | 单条审计记录 ID，用于管理员删除 | serverSupport | Admin audit UI/API | implemented |
 | `conversationAuditEntry.userInput` | ConversationAuditEntry | `string` | 登录用户发送给虚拟人的输入 | App Shell | Admin audit UI | implemented |
@@ -283,6 +291,8 @@
 | `/api/persona-dossiers` | GET | 登录用户读取后台共享多人档案，并叠加当前用户私有对话运行态 | 需要本项目登录会话 | implemented |
 | `/api/persona-dossiers` | POST | 管理员新增或更新后台共享多人档案 | 需要管理员会话；写 `.persona-dossiers.local.json` | implemented |
 | `/api/persona-dossiers/:id/preview` | POST | 登录用户提交 DeepSeek 已生成的人物短预览，全局保存到对应档案 | 需要登录会话；只允许写预览缓存，不允许改完整档案 | implemented |
+| `/api/persona-dossiers/:id/conversation-history` | GET | 登录用户读取自己在某个人物上的中间栏消息历史 | 需要登录会话；只返回当前用户当前档案历史 | implemented |
+| `/api/persona-dossiers/:id/conversation-history` | POST | 登录用户追加保存自己在某个人物上的中间栏消息历史 | 需要登录会话；写 `.conversation-histories.local.json` | implemented |
 | `/api/persona-dossiers/:id/conversation-state` | POST | 登录用户对话完成后写回当前用户在该角色上的私有运行态，并向当前用户相关人物传播关系余波 | 需要登录会话；只允许写当前用户对话产生的角色状态和关系余波 | implemented |
 | `/api/persona-dossiers/:id` | DELETE | 管理员删除后台共享多人档案 | 需要管理员会话；写 `.persona-dossiers.local.json` | implemented |
 | `/api/conversation-audits` | POST | 登录用户记录一次输入输出 | 需要登录会话；写 `.conversation-audits.local.json` | implemented |

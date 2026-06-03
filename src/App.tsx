@@ -237,14 +237,18 @@ export function App() {
           : "检查更新";
 
   useEffect(() => {
+    const cachedMessages = readStoredConversationHistory(activeConversationHistoryKey);
     setConversationHistories((current) => {
       if (current[activeConversationHistoryKey]) return current;
       return {
         ...current,
-        [activeConversationHistoryKey]: readStoredConversationHistory(activeConversationHistoryKey) ?? seedMessages,
+        [activeConversationHistoryKey]: cachedMessages ?? seedMessages,
       };
     });
-  }, [activeConversationHistoryKey]);
+    if (isAuthenticated && activeDossierId) {
+      void loadConversationHistory(activeDossierId, activeConversationHistoryKey, cachedMessages);
+    }
+  }, [activeConversationHistoryKey, activeDossierId, isAuthenticated]);
 
   useEffect(() => {
     if (!activeDossier || !isAuthenticated || !deepseekConnected) return;
@@ -476,6 +480,29 @@ export function App() {
       setDossiers((items) => items.map((item) => (item.id === data.dossier?.id ? data.dossier : item)));
       if (data.dossier.id === activeDossierId) setState(data.dossier.state);
     }
+  }
+
+  async function loadConversationHistory(dossierId: string, historyKey: string, cachedMessages?: ChatMessage[]) {
+    const response = await fetch(`/api/persona-dossiers/${encodeURIComponent(dossierId)}/conversation-history`, { headers: authHeaders() }).catch(() => undefined);
+    if (!response?.ok) return;
+    const data = (await response.json()) as { messages?: ChatMessage[] };
+    const remoteMessages = Array.isArray(data.messages) ? data.messages : [];
+    if (remoteMessages.length > 0) {
+      setMessagesForHistory(historyKey, remoteMessages);
+      return;
+    }
+    if (cachedMessages && cachedMessages.length > 0 && cachedMessages !== seedMessages) {
+      void persistConversationHistoryMessages(dossierId, cachedMessages);
+    }
+  }
+
+  async function persistConversationHistoryMessages(dossierId: string, messagesToSave: ChatMessage[]) {
+    if (!authToken || messagesToSave.length === 0) return;
+    await fetch(`/api/persona-dossiers/${encodeURIComponent(dossierId)}/conversation-history`, {
+      method: "POST",
+      headers: authHeaders(authToken, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ messages: messagesToSave }),
+    }).catch(() => undefined);
   }
 
   async function handleLogin(event: FormEvent) {
@@ -938,6 +965,8 @@ export function App() {
     event.preventDefault();
     if (!requireLogin("发送消息")) return;
     if (!input.trim() || isRunning) return;
+    const sendingDossierId = activeDossierId;
+    const sendingHistoryKey = activeConversationHistoryKey;
     setIsRunning(true);
     setError("");
     setActiveTrace(undefined);
@@ -950,7 +979,7 @@ export function App() {
       content: input.trim(),
       timestamp: nowIso(),
     };
-    setMessages((items) => [...items, userMessage]);
+    setMessagesForHistory(sendingHistoryKey, (items) => [...items, userMessage]);
 
     try {
       const result = await runConversationPipeline({
@@ -966,17 +995,16 @@ export function App() {
       setActiveTrace(result.trace);
 
       const reply = result.trace.llmOutput.reply || "（林安看见了，但没有回复。）";
-      setMessages((items) => [
-        ...items,
-        {
-          id: makeId("msg"),
-          speaker: result.trace.llmOutput.reply ? "persona" : "system",
-          speakerName: result.trace.llmOutput.reply ? result.nextState.profile.name : "沉默",
-          content: reply,
-          timestamp: nowIso(),
-          trace: result.trace,
-        },
-      ]);
+      const replyMessage: ChatMessage = {
+        id: makeId("msg"),
+        speaker: result.trace.llmOutput.reply ? "persona" : "system",
+        speakerName: result.trace.llmOutput.reply ? result.nextState.profile.name : "沉默",
+        content: reply,
+        timestamp: nowIso(),
+        trace: result.trace,
+      };
+      setMessagesForHistory(sendingHistoryKey, (items) => [...items, replyMessage]);
+      await persistConversationHistoryMessages(sendingDossierId, [userMessage, replyMessage]);
       await syncConversationState(result.nextState, {
         userInput: userMessage.content,
         personaOutput: reply,
@@ -992,6 +1020,7 @@ export function App() {
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "流程运行失败";
       setError(message);
+      await persistConversationHistoryMessages(sendingDossierId, [userMessage]);
       await recordConversationAudit({
         dossierId: activeDossierId,
         dossierTitle: activeDossier?.title ?? state.profile.name,

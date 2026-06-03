@@ -11,8 +11,10 @@ import {
   deletePersonaDossier,
   destroyLocalSession,
   getRequestSession,
+  appendConversationHistoryMessages,
   loginWithLiaoChatroom,
   readConversationAudits,
+  readConversationHistoryMessages,
   readAppUpdateStatus,
   readJsonBody,
   readPersonaDossiers,
@@ -116,6 +118,28 @@ function deepseekProxyPlugin(): Plugin {
           const result = updatePersonaDossierConversationState(dossierId, body.state, body.interaction, session.user);
           if (result.error) {
             sendJson(response, result.error === "找不到档案" ? 404 : 400, { error: result.error });
+            return;
+          }
+          sendJson(response, 200, result);
+          return;
+        }
+
+        if (pathname?.startsWith("/api/persona-dossiers/") && pathname.endsWith("/conversation-history") && request.method === "GET") {
+          const session = requireSession(request, response);
+          if (!session) return;
+          const dossierId = decodeURIComponent(pathname.replace("/api/persona-dossiers/", "").replace("/conversation-history", ""));
+          sendJson(response, 200, { messages: readConversationHistoryMessages(dossierId, session.user) });
+          return;
+        }
+
+        if (pathname?.startsWith("/api/persona-dossiers/") && pathname.endsWith("/conversation-history") && request.method === "POST") {
+          const session = requireSession(request, response);
+          if (!session) return;
+          const dossierId = decodeURIComponent(pathname.replace("/api/persona-dossiers/", "").replace("/conversation-history", ""));
+          const body = await readJsonBody(request);
+          const result = appendConversationHistoryMessages(dossierId, body.messages, session.user);
+          if (result.error) {
+            sendJson(response, 400, { error: result.error });
             return;
           }
           sendJson(response, 200, result);

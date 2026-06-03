@@ -1,6 +1,6 @@
 {
   "name": "virtual-human-flow",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "verify:cognitive-fallback": "node scripts/verify-cognitive-module-fallback.mjs",
-    "verify:conversation-history-isolation": "node scripts/verify-conversation-history-isolation.mjs"
+    "verify:conversation-history-isolation": "node scripts/verify-conversation-history-isolation.mjs",
+    "verify:conversation-message-history": "node scripts/verify-conversation-message-history.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.2",
