@@ -23,6 +23,7 @@ Then run `git status --short` and report whether there are uncommitted changes.
 - Run relevant verification before final response.
 - Increment `package.json` and `package-lock.json` version for each completed reviewable step that affects product, code, runtime behavior, deployment, or important project docs.
 - Create a git commit for each completed, reviewable step unless the user explicitly tells you not to commit.
+- Push the current branch to GitHub after each completed commit unless the user explicitly tells you not to push.
 
 ## Secrets
 

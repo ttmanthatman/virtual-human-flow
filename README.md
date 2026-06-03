@@ -7,7 +7,7 @@
 1. 开发前先读前置文档；如果文档缺失，先补文档。
 2. 任何变量名、函数名、模块名、数据字段名，都登记到 `docs/AI_NAMING_REGISTRY.md`。
 3. 每一步调用关系、数据流、模块协作方式，都更新到 `docs/SYSTEM_FLOW.md`。
-4. 每个完成的 reviewable step 递增版本号、运行验证并建立 Git 提交，确保可回溯。
+4. 每个完成的 reviewable step 递增版本号、运行验证、建立 Git 提交并推送到 GitHub，确保左上角版本号和远端代码都可回溯。
 5. 不把密码、Token、私钥、VPS 登录信息写入仓库。
 6. 涉及部署时，只允许操作 `<production-domain>` 对应内容，不动同一 VPS 上其他站点或服务。
 7. 遇到架构意图不清楚、权限缺失、资源缺失时，先问用户，不猜。
@@ -72,4 +72,4 @@ DeepSeek 本地测试通过 Vite 代理 `/api/deepseek-chat` 访问官方 Chat C
 
 ## 站内手动更新
 
-GitHub push 不再自动更新网站。页面左上角会自动检查服务器工作树和 GitHub 远端是否有版本差异；只有管理员可以打开更新窗并触发 VPS 在本机 git 工作树中执行拉取、安装依赖、构建和重启。生产环境需要配置 `APP_UPDATE_WORKDIR`、`APP_UPDATE_BRANCH` 和 `APP_UPDATE_RESTART_COMMAND` 或 `APP_UPDATE_PM2_NAME`；详细边界和引导部署说明见 `docs/DEPLOYMENT_AUTOMATION.md`。
+每次完成并提交一个 reviewable step 后，AI 默认推送当前分支到 GitHub；除非用户明确说不要推送，不再等待额外的“push”指令。GitHub push 不自动更新网站。页面左上角会自动检查服务器工作树和 GitHub 远端是否有版本差异；只有管理员可以打开更新窗并触发 VPS 在本机 git 工作树中执行拉取、安装依赖、构建和重启。生产环境需要配置 `APP_UPDATE_WORKDIR`、`APP_UPDATE_BRANCH` 和 `APP_UPDATE_RESTART_COMMAND` 或 `APP_UPDATE_PM2_NAME`；详细边界和引导部署说明见 `docs/DEPLOYMENT_AUTOMATION.md`。
