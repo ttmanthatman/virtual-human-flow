@@ -13,11 +13,13 @@ import {
   getRequestSession,
   loginWithLiaoChatroom,
   readConversationAudits,
+  readAppUpdateStatus,
   readJsonBody,
   readPersonaDossiers,
   requireAdminSession,
   requireSession,
   sendJson,
+  streamAppUpdate,
   upsertPersonaDossier,
 } from "./serverSupport.mjs";
 
@@ -157,6 +159,17 @@ function deepseekProxyPlugin(): Plugin {
             "utf-8",
           );
           sendJson(response, 200, { apiKeySaved: true, endpoint: "/api/deepseek-chat" });
+          return;
+        }
+
+        if (pathname === "/api/app-update/status" && request.method === "GET") {
+          sendJson(response, 200, await readAppUpdateStatus());
+          return;
+        }
+
+        if (pathname === "/api/app-update/run" && request.method === "POST") {
+          if (!requireAdminSession(request, response)) return;
+          await streamAppUpdate(response);
           return;
         }
 

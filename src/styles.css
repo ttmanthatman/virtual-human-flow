@@ -103,6 +103,28 @@ textarea {
   text-decoration: underline;
 }
 
+.update-status-button {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #d6e0e4;
+  border-radius: 999px;
+  color: #596971;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 760;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.update-status-button.available {
+  background: #fff7e6;
+  border-color: #e9be64;
+  color: #8a5d00;
+}
+
 .topbar-actions {
   gap: 10px;
 }
@@ -1043,7 +1065,8 @@ pre {
 }
 
 .login-modal,
-.audit-modal {
+.audit-modal,
+.update-modal {
   background: #fff;
   border: 1px solid #dce3e6;
   border-radius: 8px;
@@ -1062,6 +1085,13 @@ pre {
   overflow: hidden;
   padding: 18px;
   width: min(760px, 100%);
+}
+
+.update-modal {
+  max-height: min(720px, calc(100vh - 36px));
+  overflow: hidden;
+  padding: 18px;
+  width: min(680px, 100%);
 }
 
 .modal-head {
@@ -1122,6 +1152,71 @@ pre {
   display: grid;
   gap: 8px;
   padding: 12px;
+}
+
+.update-summary-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.update-summary-grid div {
+  background: #f8fbfb;
+  border: 1px solid #dbe4e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.update-summary-grid span,
+.update-note {
+  color: #66757d;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.update-summary-grid strong {
+  color: #172026;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-progress {
+  background: #edf2f4;
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.update-progress span {
+  background: #0f766e;
+  display: block;
+  height: 100%;
+  transition: width 160ms ease;
+}
+
+.update-log-window {
+  background: #0f1b22;
+  border-radius: 8px;
+  color: #d5e8ef;
+  flex: initial;
+  height: 260px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.update-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.update-note {
+  margin: 0;
 }
 
 .audit-entry-head {

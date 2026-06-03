@@ -351,7 +351,7 @@ AI 把“本地能用这把 SSH key 登录 VPS”误当成了“GitHub Actions r
 
 ### 仍需注意
 
-当前自动部署已经可用，但它仍依赖 GitHub Actions secrets 和 VPS 上的 deploy key。如果以后轮换 VPS、换 SSH 用户、改端口或迁移仓库，需要同步更新 GitHub secrets、VPS `authorized_keys` 和 `docs/DEPLOYMENT_AUTOMATION.md`。
+这条记录是旧 GitHub Actions 自动部署阶段的复盘。当前生产更新已改为站内管理员手动触发，后续不再以 GitHub Actions secrets 作为默认生产更新入口。
 
 ## 2026-06-02 发送消息后记忆召回阶段读取 undefined.length
 
@@ -549,7 +549,7 @@ dist server.mjs package.json package-lock.json
 
 - `package.json` 和 `package-lock.json` 根版本一致。
 - 页面左上角 `appVersionLabel` 显示新版本。
-- GitHub Actions `APP_VERSION` 与 package 文件版本一致。
+- 若没有 GitHub Actions 部署 workflow，则确认部署文档没有残留 `APP_VERSION` workflow 约束。
 - 本地 build 日志显示新版本对应的 package script，例如 `virtual-human-flow@0.2.0 build`。
 
 ## 2026-06-03 Public 仓库暴露生产信息
@@ -586,3 +586,41 @@ AI 把 README 和 docs 当作团队内部运维 runbook 使用，没有根据仓
 ### 剩余风险
 
 普通提交只能清理默认分支当前内容，不能自动抹掉 Git 历史、GitHub cached view、fork 或外部索引里曾经出现过的信息。如果这些信息已经公开过，下一步应考虑把 GitHub repo 设为 private；若要从 public 历史中彻底移除，需要做历史重写并 force push。若曾暴露过密码、token、私钥或可直接登录的凭据，必须立即轮换；本次勘验针对的是服务器地址和部署细节，不等同于凭据泄漏。
+
+## 2026-06-03 GitHub 自动部署没有更新网站
+
+### 用户指出的问题
+
+用户指出 GitHub push 后网站没有自动更新，并进一步要求去掉 GitHub 自动更新网站的动作，改成站内检查新版本、管理员点击后由 VPS 拉取仓库更新。
+
+### 错误类型
+
+- 流程边界错误：隐私脱敏提交使用了 `[skip ci]`，这会阻止 GitHub Actions 自动部署；后续又把生产参数改成 secrets，自动部署链路已经不再适合继续作为默认更新路径。
+- 产品边界错误：把“push 到 GitHub”直接等同于“生产网站更新”，让部署时机脱离管理员确认。
+- 验证标准错误：push 后只确认了 git 远端同步，没有把“网站资源 hash 是否变成当前构建产物”作为验收项。
+
+### 根因
+
+早期为了快速部署，GitHub Actions 被设计成 push main 自动更新生产环境。但仓库改为 private、README 需要脱敏、生产配置需要从仓库挪到服务器环境后，自动部署的便利性开始和隐私/控制权冲突。尤其是 `[skip ci]` 用来避免隐私修复触发部署，却也让“推了代码就上线”的心智模型失效。
+
+### 修正
+
+1. 删除 `.github/workflows/deploy-production.yml`，GitHub push 不再自动更新网站。
+2. 新增 `/api/app-update/status`，左上角自动检查 VPS 当前提交和 GitHub 远端提交是否一致。
+3. 新增 `/api/app-update/run`，只有管理员可以触发 VPS 在 `APP_UPDATE_WORKDIR` 中执行 `git fetch`、`git pull --ff-only`、`npm ci`、`npm run build` 和重启命令。
+4. 前端更新窗显示进度条和服务端命令日志。
+5. 部署文档改为站内手动更新，并明确当前 tar 包部署需要一次人工引导成 git 工作树。
+
+### 新增验证标准
+
+以后涉及部署更新必须验证：
+
+- GitHub push 是否只是同步代码，不能误触发生产部署。
+- 左上角显示的版本号来自最新 `package.json`。
+- `/api/app-update/status` 能返回当前提交、远端提交和是否有新版本。
+- `/api/app-update/run` 必须要求管理员会话，普通用户不能执行。
+- 如果生产目录不是 git 工作树，界面必须显示未配置，而不是假装可以更新。
+
+### 仍需注意
+
+站内更新功能本身需要先被部署到 VPS。若当前线上目录仍是旧 tar 包而不是 git clone，需要先手动完成一次引导部署，设置 `APP_UPDATE_WORKDIR` 和 PM2 重启命令后，后续才能由管理员在站内更新。

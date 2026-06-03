@@ -66,8 +66,8 @@ DeepSeek 本地测试通过 Vite 代理 `/api/deepseek-chat` 访问官方 Chat C
 
 ## 部署说明（脱敏）
 
-生产部署由 GitHub Actions 通过仓库 secrets 读取域名、SSH、目录、PM2 进程名、端口和登录源等环境信息；这些值不写入 public repo。需要部署时，在 GitHub Actions secrets 中维护 `PRODUCTION_*` 和 `LIAO_CHATROOM_ORIGIN` 等配置。
+生产更新由站内管理员手动触发，服务器通过环境变量读取 git 工作目录、分支、PM2 进程名、端口和登录源等环境信息；这些值不写入仓库。
 
-## 自动部署
+## 站内手动更新
 
-GitHub `main` 分支有新版本后，`.github/workflows/deploy-production.yml` 会自动构建并部署到已授权生产环境。部署凭据和生产环境参数通过 GitHub Actions secrets 提供，不写入仓库；详细边界、Secrets 和回滚方法见 `docs/DEPLOYMENT_AUTOMATION.md`。
+GitHub push 不再自动更新网站。页面左上角会自动检查服务器工作树和 GitHub 远端是否有版本差异；只有管理员可以打开更新窗并触发 VPS 在本机 git 工作树中执行拉取、安装依赖、构建和重启。生产环境需要配置 `APP_UPDATE_WORKDIR`、`APP_UPDATE_BRANCH` 和 `APP_UPDATE_RESTART_COMMAND` 或 `APP_UPDATE_PM2_NAME`；详细边界和引导部署说明见 `docs/DEPLOYMENT_AUTOMATION.md`。

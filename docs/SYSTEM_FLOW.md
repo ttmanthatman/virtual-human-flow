@@ -70,22 +70,26 @@ flowchart LR
     CODE --> SF
     CODE --> GIT[Git 提交]
     GIT --> GH[GitHub 远程仓库]
-    GH --> VPS[<production-domain> 部署]
+    GH --> WAIT[等待站内管理员更新]
+    WAIT --> VPS[<production-domain> 部署]
 ```
 
 ## 生产部署路径
 
 ```mermaid
 flowchart TD
-    G[推送 GitHub main] --> GA[GitHub Actions productionAutoDeploy]
-    GA --> VERSION[校验 APP_VERSION/package.json/package-lock.json]
-    VERSION --> BUILD[npm ci + npm run build]
-    BUILD --> PKG[打包 dist/server.mjs/serverSupport.mjs/builtinPersonaDossiers.mjs/package files]
-    PKG --> UPLOAD[SSH 上传 release archive 到 VPS /tmp]
-    UPLOAD --> BACKUP[备份 <production-app-dir>]
-    BACKUP --> EXTRACT[解压新版本到 <production-app-dir>]
-    EXTRACT --> INSTALL[npm ci --omit=dev]
-    INSTALL --> SRV[server.mjs: 服务前端和 DeepSeek API]
+    G[推送 GitHub main] --> CHECK[左上角 /api/app-update/status 自动检查]
+    CHECK --> NEW{远端提交不同?}
+    NEW -- 否 --> IDLE[显示已是最新]
+    NEW -- 是 --> ADMIN[管理员点击更新服务器]
+    ADMIN --> API[POST /api/app-update/run]
+    API --> VERIFY[校验管理员会话和 APP_UPDATE_WORKDIR]
+    VERIFY --> CLEAN[检查 git 工作树干净]
+    CLEAN --> PULL[git fetch + git pull --ff-only]
+    PULL --> INSTALL[npm ci]
+    INSTALL --> BUILD[npm run build]
+    BUILD --> RESTART[PM2 或自定义命令重启]
+    RESTART --> SRV[server.mjs: 服务前端和 DeepSeek API]
     SRV --> PM2[PM2 <production-pm2-name>: 127.0.0.1:<production-port>]
     PM2 --> NGINX[Nginx <production-domain>.conf]
     NGINX --> SITE[<production-url>]
@@ -94,7 +98,7 @@ flowchart TD
     PM2 --> HEALTH[health check: 127.0.0.1:<production-port>/health]
 ```
 
-生产自动部署由 `.github/workflows/deploy-production.yml` 执行，触发条件是 `main` 分支 push 或 GitHub Actions 手动触发。工作流使用 `APP_VERSION` 校验 `package.json` 和 `package-lock.json` 版本一致后再构建。工作流使用 GitHub Actions secrets 里的 SSH 凭据和生产环境参数进入 VPS，只允许操作 secrets 配置的生产应用目录、备份目录和 PM2 进程。`LIAO_CHATROOM_ORIGIN` 也由 secrets 注入 PM2 环境；线上 `.deepseek.local.json` 不由 GitHub Actions 上传或覆盖。
+生产不再由 GitHub Actions push 自动部署。服务器通过 `APP_UPDATE_WORKDIR` 指向 VPS 上的 git clone 工作树，左上角自动检查远端分支是否有新提交；只有管理员可以触发 `/api/app-update/run`。更新过程会在站内窗口显示步骤、stdout/stderr 和进度。`LIAO_CHATROOM_ORIGIN`、`APP_UPDATE_WORKDIR`、`APP_UPDATE_PM2_NAME` 或 `APP_UPDATE_RESTART_COMMAND` 等生产环境变量留在 VPS，不写入仓库。
 
 ## 当前 MVP 同步响应路径
 
@@ -612,25 +616,23 @@ flowchart TD
     HEALTH --> RESP
 ```
 
-### Production Auto Deploy
+### Manual VPS Update
 
 ```mermaid
 flowchart TD
-    PUSH["GitHub main push"] --> FILTER{"paths-ignore 是否跳过?"}
-    FILTER -- "跳过" --> END["不部署"]
-    FILTER -- "触发" --> CHECKOUT["checkout"]
-    CHECKOUT --> NODE["setup-node"]
-    NODE --> INSTALL["npm ci"]
-    INSTALL --> VERSION["Verify app version: APP_VERSION/package files"]
-    VERSION --> BUILD["npm run build"]
-    BUILD --> PACKAGE["打包 dist/server.mjs/serverSupport.mjs/builtinPersonaDossiers.mjs/package files"]
-    PACKAGE --> SECRETS["校验 Actions secrets"]
-    SECRETS --> SSH["准备 SSH key"]
-    SSH --> UPLOAD["上传 release 到 VPS /tmp"]
-    UPLOAD --> ACTIVATE["备份旧版本并解压新版本"]
-    ACTIVATE --> PM2["npm ci --omit=dev + PM2 restart"]
-    PM2 --> HEALTH["curl 127.0.0.1:<production-port>/health"]
-    HEALTH --> RESULT["Actions success/failure"]
+    UI["左上角版本区域"] --> STATUS["GET /api/app-update/status"]
+    STATUS --> DIFF{"currentCommit != remoteCommit?"}
+    DIFF -- "否" --> OK["显示已是最新"]
+    DIFF -- "是" --> BADGE["显示有新版本"]
+    BADGE --> ADMIN{"当前用户是管理员?"}
+    ADMIN -- "否" --> READONLY["只显示状态"]
+    ADMIN -- "是" --> RUN["POST /api/app-update/run"]
+    RUN --> AUTH["requireAdminSession"]
+    AUTH --> GIT["git fetch + git pull --ff-only"]
+    GIT --> INSTALL["npm ci"]
+    INSTALL --> BUILD["npm run build"]
+    BUILD --> RESTART["PM2/自定义命令重启"]
+    RUN -. "SSE 日志/进度" .-> UI
 ```
 
 ### Deployment Automation Runbook
@@ -638,12 +640,12 @@ flowchart TD
 ```mermaid
 flowchart TD
     DOC["docs/DEPLOYMENT_AUTOMATION.md"] --> USER["用户/AI 查看部署说明"]
-    USER --> TRIGGER["确认触发方式: push main / workflow_dispatch"]
-    USER --> SECRETS["确认 GitHub Actions secrets"]
-    USER --> BOUNDARY["确认 VPS 操作边界"]
+    USER --> TRIGGER["确认站内管理员触发"]
+    USER --> ENVS["确认 APP_UPDATE_* 环境变量"]
+    USER --> BOUNDARY["确认 VPS git 工作树和 PM2 边界"]
     USER --> ROLLBACK["查看回滚方法"]
-    TRIGGER --> DEPLOY["Production Auto Deploy"]
-    SECRETS --> DEPLOY
+    TRIGGER --> DEPLOY["Manual VPS Update"]
+    ENVS --> DEPLOY
     BOUNDARY --> DEPLOY
     ROLLBACK --> INCIDENT["部署失败或需要回滚时使用"]
 ```
@@ -652,13 +654,14 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    TOP[左上角版本/GitHub 链接 + 登录状态] --> LEFT
+    TOP[左上角版本/GitHub 链接 + 更新状态 + 登录状态] --> LEFT
     LEFT[左侧分组档案/状态/位置/人物档案/场景] --> PIPE[对话流程]
     CHAT[中间对话] --> PIPE
     PIPE --> TRACE[右侧流程追踪]
     TRACE --> JSON[事件/评估/记忆/决策/回应提示词/回应输出/状态更新/信号评估/状态变化]
     TRACE --> AUDIT[管理员输入输出审计]
     TOP --> LOGIN[登录浮窗]
+    TOP --> UPDATE[服务器更新浮窗]
     LEFT --> DOS[多人档案: 分组/新建/切换/删除]
     LEFT --> GEN1[生成人物档案]
     LEFT --> GEN2[生成场景]
@@ -666,7 +669,7 @@ flowchart LR
     GEN2 --> FIT
 ```
 
-左上角版本信息由 App Shell 读取 `package.json` 的 `version` 生成 `appVersionLabel`，并链接到 GitHub 仓库 `<owner>/<repo>`。它只是页面元信息，不参与对话状态或认知模块数据流。
+左上角版本信息由 App Shell 读取 `package.json` 的 `version` 生成 `appVersionLabel`，并链接到 GitHub 仓库 `<owner>/<repo>`。同一区域会定期调用 `/api/app-update/status` 检查 VPS 当前提交与远端提交是否一致；如果发现新版本，普通用户只看到提示，管理员可以打开更新浮窗触发 `/api/app-update/run`。更新浮窗显示进度条和服务端命令日志。
 
 ## 待确认 MVP 架构问题
 
@@ -686,7 +689,7 @@ flowchart LR
 | --- | --- | --- |
 | liao 聊天室用户源 | known | 可读取公开前端脚本确认 `/api/login` 返回 token/user/isAdmin；本项目只用它校验登录，不修改聊天室数据 |
 | GitHub 账号 | known | 用户主页为 `<github-owner>` |
-| GitHub 仓库 | known | `<owner>/<repo>`，`main` 分支 push 触发自动部署 |
+| GitHub 仓库 | known | `<owner>/<repo>`，`main` 分支 push 只同步代码，不自动部署 |
 | VPS | known | 仅允许后续部署 `<production-domain>` 对应内容 |
 | 域名 | known | `<production-domain>` |
 | 国内地图服务 | pending | 尚未选型和接入；当前位置字段来自种子或人工维护 |
@@ -715,7 +718,7 @@ flowchart LR
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |
 | 生产部署 | initialized | `<production-domain>` 通过 nginx 反代 PM2 进程 `<production-pm2-name>`，线上目录 `<production-app-dir>` |
-| 生产自动部署 | initialized | GitHub Actions 在 `main` 分支新版本后自动构建、上传、备份、重启 PM2，并检查 `/health` |
+| 站内手动更新 | initialized | 左上角自动检查远端版本；管理员可触发 VPS git pull、npm ci、npm run build 和重启 |
 | 国内地图服务 | pending | 尚未接入真实地图商；当前位置和地图上下文不能声称来自地图 API |
 | 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现；记忆召回上下文已预留 `async_life` 来源 |
 

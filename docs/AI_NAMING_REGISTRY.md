@@ -58,9 +58,10 @@
 | 召回自然语言查询 | `naturalLanguageQuery` | runtime field | 将事件、评估、激活关切和关系摘要合成的召回语义查询 | `keywordQuery`, `searchText` |
 | 召回因子 | `memoryRecallFactor` | runtime object | 解释某条记忆为什么浮现的分项评分 | `matchReasonOnly`, `keywordScore` |
 | 召回来源 | `memoryRecallSource` | runtime field | 标识召回来自同步响应路径还是未来异步生命路径 | `triggerType` |
-| 生产自动部署 | `productionAutoDeploy` | deployment workflow | GitHub `main` 新版本自动构建并同步到已授权 VPS | `manualDeploy`, `vpsSyncBot` |
+| 生产手动更新 | `manualVpsUpdate` | deployment workflow | 管理员在站内触发 VPS 从 git 工作树拉取、安装、构建并重启 | `productionAutoDeploy`, `vpsSyncBot` |
+| 应用更新状态 | `appUpdateStatus` | UI/API state | 左上角检查服务器当前提交与远端提交是否一致 | `deployStatus`, `versionPoll` |
+| 应用更新日志 | `appUpdateLogEntry` | UI state | 站内更新窗口中显示的服务端步骤、stdout/stderr 和结果 | `deployLogLine`, `terminalDump` |
 | 应用版本标识 | `appVersionLabel` | UI constant | 页面左上角展示的应用版本号，来源于 `package.json` version | `buildLabel`, `releaseText` |
-| 部署应用版本 | `APP_VERSION` | workflow env | GitHub Actions 部署时校验 `package.json` 和 `package-lock.json` 的目标版本 | `releaseVersion`, `deployVersion` |
 | GitHub 仓库链接 | `githubRepositoryUrl` | UI constant | 页面左上角版本链接指向的项目仓库 | `repoLink`, `sourceUrl` |
 
 ## 模块登记表
@@ -84,9 +85,8 @@
 | Profile Scene Consistency | `src/pipeline/profileSceneConsistency.ts` | 通过 LLM 判断人物档案和场景是否匹配，并返回是否需要扭曲时空密码 | `CharacterState`, `LlmConfig` | `ProfileSceneConsistencyResult` | App Shell | Cognitive Module Client |
 | DeepSeek Local Proxy | `vite.config.ts` | 在本地开发服务器中代理 DeepSeek Chat Completions，固定 flash 模型、关闭 thinking 并保存根目录密钥文件 | `/api/deepseek-config`, `/api/deepseek-chat` | DeepSeek 响应或配置状态 | App Shell | DeepSeek API |
 | Production Server | `server.mjs` | 生产环境服务 `dist/` 并提供 DeepSeek API 代理 | HTTP request, `.deepseek.local.json` | HTML/assets/API/SSE | nginx reverse proxy | DeepSeek API |
-| Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、内置/共享档案合并、共享档案存储和对话审计存储 | HTTP request, liao login response, local runtime JSON, builtin persona dossiers | auth session, persona dossiers, audit entries | Vite Dev Server/Production Server | liao Chatroom, local runtime files, Builtin Persona Dossiers |
-| Production Auto Deploy | `.github/workflows/deploy-production.yml` | GitHub `main` 新提交后自动构建、上传 release、备份线上目录、重启 PM2 并健康检查 | GitHub push/workflow_dispatch, Actions secrets | 线上新版本、备份文件、Actions 结果 | GitHub Actions | production VPS, PM2 |
-| Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录自动部署触发方式、Secrets、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | GitHub Actions |
+| Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、内置/共享档案合并、共享档案存储、对话审计和站内手动更新 | HTTP request, liao login response, local runtime JSON, builtin persona dossiers, git working tree | auth session, persona dossiers, audit entries, update status/SSE | Vite Dev Server/Production Server | liao Chatroom, local runtime files, Builtin Persona Dossiers, Git |
+| Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录站内手动更新、VPS git 工作树配置、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | manualVpsUpdate |
 
 ## 函数登记表
 
@@ -129,6 +129,10 @@
 | `handleDossierGroupChange` | `src/App.tsx` | 管理员修改当前人物档案分组 | groupName | void | 更新 App state | implemented |
 | `deleteConversationAuditEntry` | `src/App.tsx` | 管理员在审计浮层删除单条用户输入输出记录 | auditId | Promise<void> | 调用审计删除 API 并更新 App state | implemented |
 | `clearConversationAuditEntries` | `src/App.tsx` | 管理员在审计浮层清空用户输入输出记录 | 无 | Promise<void> | 调用审计清空 API 并更新 App state | implemented |
+| `checkAppUpdate` | `src/App.tsx` | 左上角自动检查服务器是否落后于 GitHub 远端 | 无 | Promise<void> | 调用 `/api/app-update/status` 并更新 UI 状态 | implemented |
+| `handleRunAppUpdate` | `src/App.tsx` | 管理员触发 VPS 手动更新并读取 SSE 日志 | 无 | Promise<void> | 调用 `/api/app-update/run`，显示进度和日志 | implemented |
+| `consumeUpdateEvent` | `src/App.tsx` | 解析更新 SSE data 事件 | event text | void | 更新进度条和日志窗口 | implemented |
+| `appendUpdateLog` | `src/App.tsx` | 将一条更新日志追加到窗口并限制长度 | log entry | void | 更新 App state | implemented |
 | `applyCandidateState` | `src/App.tsx` | 应用人物或场景预览前先运行人物场景一致性检测 | candidate, target | Promise<void> | 可能打开扭曲时空门禁或写入状态 | implemented |
 | `handleConfirmDistortionPassword` | `src/App.tsx` | 校验扭曲时空密码后继续应用硬冲突的人物/场景组合 | 无 | void | 写入状态 | implemented |
 | `streamDeepseek` | `vite.config.ts` | 代理 DeepSeek SSE 输出并转成前端可读事件 | body, config, apiKey, response | text/event-stream | 读取 DeepSeek API | implemented |
@@ -148,6 +152,8 @@
 | `readConversationAudits` | `serverSupport.mjs` | 管理员读取最近用户输入输出 | limit | ConversationAuditEntry[] | 读取 `.conversation-audits.local.json` | implemented |
 | `deleteConversationAudit` | `serverSupport.mjs` | 管理员删除单条用户输入输出审计记录 | auditId | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
 | `clearConversationAudits` | `serverSupport.mjs` | 管理员清空用户输入输出审计记录 | 无 | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
+| `readAppUpdateStatus` | `serverSupport.mjs` | 检查本机 git 工作树当前提交和远端分支提交是否一致 | 无 | appUpdateStatus | 调用 git 命令读取本机和远端状态 | implemented |
+| `streamAppUpdate` | `serverSupport.mjs` | 管理员触发 git pull、npm ci、npm run build 和重启命令，并通过 SSE 返回进度 | HTTP response | text/event-stream | 在 `APP_UPDATE_WORKDIR` 执行更新命令 | implemented |
 | `createDossier` | `builtinPersonaDossiers.mjs` | 将内置规格转换为全局 `PersonaDossier` | spec | PersonaDossier | 无 | implemented |
 | `createLocation` | `builtinPersonaDossiers.mjs` | 将内置位置规格转换为 `CharacterLocation` | location tuple | CharacterLocation-like object | 无 | implemented |
 
@@ -209,6 +215,10 @@
 | `conversationAuditEntry.id` | ConversationAuditEntry | `string` | 单条审计记录 ID，用于管理员删除 | serverSupport | Admin audit UI/API | implemented |
 | `conversationAuditEntry.userInput` | ConversationAuditEntry | `string` | 登录用户发送给虚拟人的输入 | App Shell | Admin audit UI | implemented |
 | `conversationAuditEntry.personaOutput` | ConversationAuditEntry | `string` | 虚拟人回复或失败时为空 | App Shell | Admin audit UI | implemented |
+| `appUpdateStatus.available` | AppUpdateStatus | `boolean` | 服务器当前提交是否落后于远端分支 | `/api/app-update/status` | 左上角更新提示 | implemented |
+| `appUpdateStatus.currentCommit` | AppUpdateStatus | `string` | VPS 当前 git 提交 SHA | serverSupport git command | 更新窗口 | implemented |
+| `appUpdateStatus.remoteCommit` | AppUpdateStatus | `string` | GitHub 远端分支 SHA | serverSupport git command | 更新窗口 | implemented |
+| `appUpdateLogEntry.text` | AppUpdateLogEntry | `string` | 更新过程中一行步骤或命令输出 | `/api/app-update/run` SSE | 更新窗口代码区 | implemented |
 
 ## API 路由登记表
 
@@ -228,14 +238,16 @@
 | `/api/conversation-audits` | GET | 管理员读取所有用户输入输出 | 需要管理员会话 | implemented |
 | `/api/conversation-audits` | DELETE | 管理员清空所有用户输入输出审计记录 | 需要管理员会话；写 `.conversation-audits.local.json` | implemented |
 | `/api/conversation-audits/:id` | DELETE | 管理员删除单条用户输入输出审计记录 | 需要管理员会话；写 `.conversation-audits.local.json` | implemented |
+| `/api/app-update/status` | GET | 检查服务器 git 工作树和 GitHub 远端分支是否一致 | 不执行更新；需要 VPS git remote 凭据可用 | implemented |
+| `/api/app-update/run` | POST | 管理员触发 VPS 拉取远端代码、安装、构建和重启 | 需要管理员会话；会在 `APP_UPDATE_WORKDIR` 执行命令 | implemented |
 
 ## 外部服务登记表
 
 | 服务 | 标准名称 | 用途 | 权限/密钥位置 | 风险 |
 | --- | --- | --- | --- | --- |
 | GitHub | `github` | 代码远程同步和版本回溯 | 本机 GitHub CLI 或 GitHub 连接器 | 需要确认仓库名和可见性 |
-| GitHub Actions | `githubActions` | `main` 分支自动构建和部署生产版本 | GitHub Actions secrets 中的部署 SSH 凭据 | secrets 配置错误会导致自动部署失败 |
-| GitHub Actions Secrets | `githubActionsSecrets` | 保存自动部署 SSH host/user/key/port | GitHub 仓库 Settings，不进入 git | 私钥泄漏风险，必须使用专用部署密钥 |
+| GitHub Actions | `githubActions` | 当前不再承担生产自动部署 | 无当前生产部署 workflow | 旧部署记录仅作历史参考 |
+| Git 工作树更新目录 | `appUpdateWorkdir` | VPS 站内手动更新的 git clone 工作目录 | `APP_UPDATE_WORKDIR` 环境变量，不写入仓库 | 目录不是 git 工作树时无法站内更新 |
 | VPS | `productionVps` | MVP 部署 | 不写入仓库 | 只允许操作 `<production-domain>` |
 | PM2 进程 | `productionPm2Process` | 运行线上 Node 生产服务 | root 用户 PM2，仅新增 `<production-pm2-name>` | 不触碰其他 PM2 应用 |
 | Nginx 站点 | `productionNginxSite` | 将生产域名反代到 `127.0.0.1:<production-port>` | `<production-nginx-site>` | 只修改该域名配置 |

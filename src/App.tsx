@@ -89,6 +89,22 @@ type ConversationAuditEntry = {
   status: "completed" | "failed";
   error?: string;
 };
+type AppUpdateStatus = {
+  configured: boolean;
+  available: boolean;
+  branch: string;
+  currentVersion: string;
+  currentCommit: string;
+  remoteCommit: string;
+  checkedAt: string;
+  message: string;
+};
+type AppUpdateLogEntry = {
+  id: string;
+  type: string;
+  text: string;
+  stream?: string;
+};
 
 const distortionPassword = "扭曲时空密码";
 const authTokenStorageKey = "virtualHumanFlowAuthToken";
@@ -143,6 +159,12 @@ export function App() {
   const [auditEntries, setAuditEntries] = useState<ConversationAuditEntry[]>([]);
   const [auditPanelOpen, setAuditPanelOpen] = useState(false);
   const [auditStatus, setAuditStatus] = useState("管理员可查看用户输入输出");
+  const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | undefined>();
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [updatePanelOpen, setUpdatePanelOpen] = useState(false);
+  const [isUpdatingApp, setIsUpdatingApp] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateLogs, setUpdateLogs] = useState<AppUpdateLogEntry[]>([]);
 
   const selectedTraceData = liveTrace[activeStep] ?? buildCompletedTraceProgress(activeStep, activeTrace);
   const traceDisplay = formatTraceDisplay(selectedTraceData);
@@ -161,6 +183,15 @@ export function App() {
     }
     return Array.from(groups.entries());
   }, [dossiers]);
+  const updateStatusLabel = isCheckingUpdate
+    ? "检查中"
+    : appUpdateStatus?.available
+      ? "有新版本"
+      : appUpdateStatus && !appUpdateStatus.configured
+        ? "更新未配置"
+        : appUpdateStatus
+          ? "已是最新"
+          : "检查更新";
 
   useEffect(() => {
     fetch("/api/deepseek-config")
@@ -179,6 +210,12 @@ export function App() {
         setDeepseekConnected(false);
         setDeepseekStatus("DeepSeek 配置接口不可用");
       });
+  }, []);
+
+  useEffect(() => {
+    void checkAppUpdate();
+    const timer = window.setInterval(() => void checkAppUpdate(), 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -396,6 +433,103 @@ export function App() {
     }
     setAuditEntries([]);
     setAuditStatus("已清空用户输入输出记录");
+  }
+
+  async function checkAppUpdate() {
+    setIsCheckingUpdate(true);
+    try {
+      const response = await fetch("/api/app-update/status");
+      if (!response.ok) throw new Error("版本检查失败");
+      const data = (await response.json()) as AppUpdateStatus;
+      setAppUpdateStatus(data);
+    } catch {
+      setAppUpdateStatus({
+        configured: false,
+        available: false,
+        branch: "main",
+        currentVersion: packageInfo.version,
+        currentCommit: "",
+        remoteCommit: "",
+        checkedAt: nowIso(),
+        message: "无法检查服务器版本",
+      });
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  }
+
+  async function handleRunAppUpdate() {
+    if (!requireAdmin("更新服务器")) return;
+    setUpdatePanelOpen(true);
+    setIsUpdatingApp(true);
+    setUpdateProgress(2);
+    setUpdateLogs([{ id: makeId("update"), type: "step", text: "开始连接服务器更新通道" }]);
+
+    try {
+      const response = await fetch("/api/app-update/run", {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      if (!response.ok || !response.body) {
+        const detail = await response.text();
+        throw new Error(detail.slice(0, 160) || "服务器拒绝更新请求");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop() ?? "";
+        for (const event of events) consumeUpdateEvent(event);
+      }
+      if (buffer.trim()) consumeUpdateEvent(buffer);
+      void checkAppUpdate();
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "更新失败";
+      appendUpdateLog({ type: "error", text: message });
+      setError(message);
+      setUpdateProgress(100);
+    } finally {
+      setIsUpdatingApp(false);
+    }
+  }
+
+  function consumeUpdateEvent(event: string) {
+    const data = event
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .join("\n");
+    if (!data) return;
+
+    try {
+      const payload = JSON.parse(data) as { type?: string; label?: string; message?: string; text?: string; stream?: string; progress?: number; status?: string };
+      if (typeof payload.progress === "number") setUpdateProgress(payload.progress);
+      if (payload.type === "done") {
+        appendUpdateLog({ type: "done", text: payload.message || payload.label || "更新完成" });
+        return;
+      }
+      if (payload.type === "error") {
+        appendUpdateLog({ type: "error", text: payload.message || payload.label || "更新失败" });
+        return;
+      }
+      if (payload.type === "log") {
+        appendUpdateLog({ type: "log", text: payload.text || "", stream: payload.stream });
+        return;
+      }
+      appendUpdateLog({ type: payload.type || "step", text: `${payload.label || "更新步骤"}${payload.status ? `：${traceStatusLabel(payload.status as PipelineStepProgress["status"])}` : ""}` });
+    } catch {
+      appendUpdateLog({ type: "log", text: data });
+    }
+  }
+
+  function appendUpdateLog(entry: Omit<AppUpdateLogEntry, "id">) {
+    if (!entry.text.trim()) return;
+    setUpdateLogs((items) => [...items, { ...entry, id: makeId("update") }].slice(-120));
   }
 
   function updateActiveDossier(patch: Partial<Pick<PersonaDossier, "state" | "dossierDescription" | "sceneDescription" | "title" | "groupName">>) {
@@ -877,6 +1011,18 @@ export function App() {
               <a className="version-link" href={githubRepositoryUrl} target="_blank" rel="noreferrer" title="打开 GitHub 仓库">
                 {appVersionLabel} · GitHub
               </a>
+              <button
+                className={appUpdateStatus?.available ? "update-status-button available" : "update-status-button"}
+                type="button"
+                onClick={() => {
+                  setUpdatePanelOpen(true);
+                  void checkAppUpdate();
+                }}
+                title="检查服务器更新"
+              >
+                <RefreshCcw size={12} />
+                {updateStatusLabel}
+              </button>
             </p>
           </div>
         </div>
@@ -1217,6 +1363,61 @@ export function App() {
         </div>
       ) : null}
 
+      {updatePanelOpen ? (
+        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && !isUpdatingApp && setUpdatePanelOpen(false)}>
+          <section className="update-modal">
+            <div className="modal-head">
+              <div>
+                <strong>服务器更新</strong>
+                <span>{appUpdateStatus?.message || "正在读取服务器版本"}</span>
+              </div>
+              <button className="icon-button compact" type="button" onClick={() => setUpdatePanelOpen(false)} title="关闭" disabled={isUpdatingApp}>
+                <X size={15} />
+              </button>
+            </div>
+
+            <div className="update-summary-grid">
+              <div>
+                <span>当前版本</span>
+                <strong>{appUpdateStatus?.currentVersion ? `v${appUpdateStatus.currentVersion}` : appVersionLabel}</strong>
+              </div>
+              <div>
+                <span>当前提交</span>
+                <strong>{shortCommit(appUpdateStatus?.currentCommit)}</strong>
+              </div>
+              <div>
+                <span>远端提交</span>
+                <strong>{shortCommit(appUpdateStatus?.remoteCommit)}</strong>
+              </div>
+              <div>
+                <span>分支</span>
+                <strong>{appUpdateStatus?.branch || "main"}</strong>
+              </div>
+            </div>
+
+            <div className="update-progress">
+              <span style={{ width: `${Math.max(0, Math.min(100, updateProgress))}%` }} />
+            </div>
+
+            <pre className="update-log-window">
+              {updateLogs.length
+                ? updateLogs.map((entry) => `${entry.type === "error" ? "!" : entry.type === "done" ? "✓" : entry.stream === "stderr" ? ">" : "$"} ${entry.text}`).join("\n")
+                : "等待检查结果"}
+            </pre>
+
+            <div className="update-actions">
+              <button className="secondary-button" type="button" onClick={checkAppUpdate} disabled={isCheckingUpdate || isUpdatingApp}>
+                <RefreshCcw size={15} /> {isCheckingUpdate ? "检查中" : "重新检查"}
+              </button>
+              <button className="primary-button" type="button" onClick={handleRunAppUpdate} disabled={!isAdmin || !appUpdateStatus?.available || isUpdatingApp}>
+                <RefreshCcw size={15} /> {isUpdatingApp ? "更新中" : "更新服务器"}
+              </button>
+            </div>
+            {!isAdmin ? <p className="update-note">只有管理员可以执行服务器更新。</p> : null}
+          </section>
+        </div>
+      ) : null}
+
       {auditPanelOpen ? (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setAuditPanelOpen(false)}>
           <section className="audit-modal">
@@ -1359,6 +1560,10 @@ function traceStatusLabel(status: PipelineStepProgress["status"]) {
     case "failed":
       return "失败";
   }
+}
+
+function shortCommit(commit: string | undefined) {
+  return commit ? commit.slice(0, 7) : "未知";
 }
 
 function normalizeDeepseekModel(model: string) {
