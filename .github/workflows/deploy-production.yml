@@ -14,6 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  APP_VERSION: "0.2.0"
   NODE_VERSION: "22"
   PRODUCTION_APP_DIR: /var/www/ok.xiaogushi.us/app
   PRODUCTION_BACKUP_DIR: /root/ok.xiaogushi.us-backups
@@ -39,6 +40,20 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify app version
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const expected = process.env.APP_VERSION;
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf-8"));
+          const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf-8"));
+          if (pkg.version !== expected || lock.version !== expected || lock.packages[""].version !== expected) {
+            throw new Error(`Version mismatch: expected ${expected}, package=${pkg.version}, lock=${lock.version}, root=${lock.packages[""].version}`);
+          }
+          console.log(`Deploying virtual-human-flow ${expected}`);
+          NODE
 
       - name: Build production bundle
         run: npm run build

@@ -60,6 +60,7 @@
 | 召回来源 | `memoryRecallSource` | runtime field | 标识召回来自同步响应路径还是未来异步生命路径 | `triggerType` |
 | 生产自动部署 | `productionAutoDeploy` | deployment workflow | GitHub `main` 新版本自动构建并同步到 `ok.xiaogushi.us` VPS | `manualDeploy`, `vpsSyncBot` |
 | 应用版本标识 | `appVersionLabel` | UI constant | 页面左上角展示的应用版本号，来源于 `package.json` version | `buildLabel`, `releaseText` |
+| 部署应用版本 | `APP_VERSION` | workflow env | GitHub Actions 部署时校验 `package.json` 和 `package-lock.json` 的目标版本 | `releaseVersion`, `deployVersion` |
 | GitHub 仓库链接 | `githubRepositoryUrl` | UI constant | 页面左上角版本链接指向的项目仓库 | `repoLink`, `sourceUrl` |
 
 ## 模块登记表

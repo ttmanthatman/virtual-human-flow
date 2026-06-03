@@ -28,15 +28,17 @@
 
 自动部署执行以下步骤：
 
-1. GitHub runner 安装依赖并运行 `npm run build`。
-2. 打包 `dist/`、`server.mjs`、`serverSupport.mjs`、`builtinPersonaDossiers.mjs`、`package.json`、`package-lock.json`。
-3. 通过 SSH 上传 release archive 到 VPS `/tmp`。
-4. VPS 端确认目标目录必须是 `/var/www/ok.xiaogushi.us/app`。
-5. 备份当前线上目录到 `/root/ok.xiaogushi.us-backups/<timestamp>.tgz`。
-6. 解压新版本到 `/var/www/ok.xiaogushi.us/app`。
-7. 运行 `npm ci --omit=dev`。
-8. 重启或创建 PM2 进程 `ok-xiaogushi-us`，监听 `127.0.0.1:4174`。
-9. 请求 `http://127.0.0.1:4174/health` 验证本机服务健康。
+1. GitHub runner 安装依赖。
+2. 校验 `APP_VERSION`、`package.json` 和 `package-lock.json` 版本一致。
+3. 运行 `npm run build`。
+4. 打包 `dist/`、`server.mjs`、`serverSupport.mjs`、`builtinPersonaDossiers.mjs`、`package.json`、`package-lock.json`。
+5. 通过 SSH 上传 release archive 到 VPS `/tmp`。
+6. VPS 端确认目标目录必须是 `/var/www/ok.xiaogushi.us/app`。
+7. 备份当前线上目录到 `/root/ok.xiaogushi.us-backups/<timestamp>.tgz`。
+8. 解压新版本到 `/var/www/ok.xiaogushi.us/app`。
+9. 运行 `npm ci --omit=dev`。
+10. 重启或创建 PM2 进程 `ok-xiaogushi-us`，监听 `127.0.0.1:4174`。
+11. 请求 `http://127.0.0.1:4174/health` 验证本机服务健康。
 
 ## 部署边界
 

@@ -508,3 +508,46 @@ dist server.mjs package.json package-lock.json
 ### 仍需注意
 
 当前生产部署包仍使用手写 tar 清单。后续如果服务端文件继续增多，应考虑改成明确的 `server/` 目录或生成部署 manifest，避免每次新增运行时文件都需要人工同步 tar 清单。
+
+## 2026-06-03 功能更新后忘记升级左上角版本号
+
+### 用户指出的问题
+
+用户指出：每次更新后都应该变更左上角版本号，这次内置人物分组、位置属性和审计删除功能更新后，版本仍停在 `0.1.1`，本次应升级为 `0.2.0`，并且版本号也要写入工作流。
+
+### 错误类型
+
+- 流程错误：完成可回溯功能提交时，没有把版本号更新纳入收尾清单。
+- 验证标准错误：浏览器验证确认了 UI 功能和页面可用，但没有检查左上角 `appVersionLabel` 是否反映新版本。
+- 部署流程遗漏：GitHub Actions 没有显式记录和校验本次部署目标版本，只依赖 `package.json` 被前端读取。
+
+### 根因
+
+左上角版本号由 `src/App.tsx` 读取 `package.json` 的 `version` 生成，但实现功能时只关注了数据、权限、UI 和部署包边界，没有把版本提升视为功能完成的一部分。工作流也没有 `APP_VERSION` 这类显式目标版本，所以即使忘记更新版本号，构建仍会通过。
+
+### 为什么之前验证没有发现
+
+之前的验证覆盖了：
+
+- `npm run build`
+- 内置档案数量和分组
+- release archive 启动健康检查
+- 浏览器桌面和移动端冒烟
+
+这些验证都没有断言页面左上角显示的版本号，也没有在工作流层比较 `package.json` 与 `package-lock.json` 的版本一致性。
+
+### 修正
+
+1. 将 `package.json` 和 `package-lock.json` 版本从 `0.1.1` 升级到 `0.2.0`。
+2. 在 `.github/workflows/deploy-production.yml` 增加 `APP_VERSION: "0.2.0"`。
+3. 在 GitHub Actions 中新增 `Verify app version` 步骤，校验 `APP_VERSION`、`package.json` 和 `package-lock.json` 根版本一致。
+4. 更新命名登记、系统流程和部署自动化文档，明确 `APP_VERSION` 是部署版本校验边界。
+
+### 新增验证标准
+
+以后每次完成用户可见功能更新时必须验证：
+
+- `package.json` 和 `package-lock.json` 根版本一致。
+- 页面左上角 `appVersionLabel` 显示新版本。
+- GitHub Actions `APP_VERSION` 与 package 文件版本一致。
+- 本地 build 日志显示新版本对应的 package script，例如 `virtual-human-flow@0.2.0 build`。

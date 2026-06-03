@@ -78,7 +78,8 @@ flowchart LR
 ```mermaid
 flowchart TD
     G[推送 GitHub main] --> GA[GitHub Actions productionAutoDeploy]
-    GA --> BUILD[npm ci + npm run build]
+    GA --> VERSION[校验 APP_VERSION/package.json/package-lock.json]
+    VERSION --> BUILD[npm ci + npm run build]
     BUILD --> PKG[打包 dist/server.mjs/serverSupport.mjs/builtinPersonaDossiers.mjs/package files]
     PKG --> UPLOAD[SSH 上传 release archive 到 VPS /tmp]
     UPLOAD --> BACKUP[备份 /var/www/ok.xiaogushi.us/app]
@@ -93,7 +94,7 @@ flowchart TD
     PM2 --> HEALTH[health check: 127.0.0.1:4174/health]
 ```
 
-生产自动部署由 `.github/workflows/deploy-production.yml` 执行，触发条件是 `main` 分支 push 或 GitHub Actions 手动触发。工作流使用 GitHub Actions secrets 里的 SSH 凭据进入 VPS，但只允许操作 `/var/www/ok.xiaogushi.us/app`、`/root/ok.xiaogushi.us-backups` 和 PM2 进程 `ok-xiaogushi-us`。线上 `.deepseek.local.json` 不由 GitHub Actions 上传或覆盖。
+生产自动部署由 `.github/workflows/deploy-production.yml` 执行，触发条件是 `main` 分支 push 或 GitHub Actions 手动触发。工作流使用 `APP_VERSION` 校验 `package.json` 和 `package-lock.json` 版本一致后再构建。工作流使用 GitHub Actions secrets 里的 SSH 凭据进入 VPS，但只允许操作 `/var/www/ok.xiaogushi.us/app`、`/root/ok.xiaogushi.us-backups` 和 PM2 进程 `ok-xiaogushi-us`。线上 `.deepseek.local.json` 不由 GitHub Actions 上传或覆盖。
 
 ## 当前 MVP 同步响应路径
 
@@ -620,7 +621,8 @@ flowchart TD
     FILTER -- "触发" --> CHECKOUT["checkout"]
     CHECKOUT --> NODE["setup-node"]
     NODE --> INSTALL["npm ci"]
-    INSTALL --> BUILD["npm run build"]
+    INSTALL --> VERSION["Verify app version: APP_VERSION/package files"]
+    VERSION --> BUILD["npm run build"]
     BUILD --> PACKAGE["打包 dist/server.mjs/serverSupport.mjs/builtinPersonaDossiers.mjs/package files"]
     PACKAGE --> SECRETS["校验 Actions secrets"]
     SECRETS --> SSH["准备 SSH key"]
