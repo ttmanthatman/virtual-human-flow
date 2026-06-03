@@ -9,7 +9,7 @@
 3. 每一步调用关系、数据流、模块协作方式，都更新到 `docs/SYSTEM_FLOW.md`。
 4. 每次可运行或可解释的改动后，建立 Git 提交，确保可回溯。
 5. 不把密码、Token、私钥、VPS 登录信息写入仓库。
-6. 涉及部署时，只允许操作 `ok.xiaogushi.us` 对应内容，不动同一 VPS 上其他站点或服务。
+6. 涉及部署时，只允许操作 `<production-domain>` 对应内容，不动同一 VPS 上其他站点或服务。
 7. 遇到架构意图不清楚、权限缺失、资源缺失时，先问用户，不猜。
 
 ## 文档入口
@@ -46,7 +46,7 @@ npm run start
 - 中间：聊天室。
 - 右侧：流程追踪，展示 `事件 -> 评估 -> 记忆召回 -> 回应决策 -> 回应提示词 -> 回应输出 -> 状态更新 -> 信号评估 -> 状态变化`。
 
-当前版本增加了登录和权限边界：未登录用户可以看到工作台界面，但发送消息、切换或修改档案、测试 DeepSeek、查看审计等操作都会弹出登录浮窗。登录账号来自 `https://liao.xiaogushi.us/` 的聊天室用户，密码保持原密码；本项目只调用 liao 聊天室 `/api/login` 做校验，不保存密码，也不修改聊天室数据。
+当前版本增加了登录和权限边界：未登录用户可以看到工作台界面，但发送消息、切换或修改档案、测试 DeepSeek、查看审计等操作都会弹出登录浮窗。登录账号来自 `<chatroom-origin>/` 的聊天室用户，密码保持原密码；本项目只调用 liao 聊天室 `/api/login` 做校验，不保存密码，也不修改聊天室数据。
 
 多人档案现在支持后台共享和分组。系统内置 14 个全局档案：7 个“马可福音10”人物和 7 个“郑州市”人物，每个档案都绑定人物、场景、成长背景和位置属性。只有 liao 聊天室里的管理员用户可以新增、保存、删除或应用人物/场景档案；管理员保存的共享档案会写入运行时文件 `.persona-dossiers.local.json`，所有登录用户都可以读取、选择和使用。普通用户对话时产生的聊天内容、短期记忆、runtime 状态和关系变化只在当前浏览器会话中使用，不会写回共享档案。
 
@@ -64,15 +64,10 @@ DeepSeek 本地测试通过 Vite 代理 `/api/deepseek-chat` 访问官方 Chat C
 
 流程追踪面板会在每个模块开始时自动切换到当前模块，并分区显示输入、输出和状态。外部 DeepSeek 调用使用流式返回，输出到达时会逐步更新。
 
-## 当前部署
+## 部署说明（脱敏）
 
-- 域名：`https://ok.xiaogushi.us`
-- VPS：只操作 `ok.xiaogushi.us` 对应目录、nginx 配置和 PM2 进程。
-- 线上目录：`/var/www/ok.xiaogushi.us/app`
-- 线上进程：PM2 `ok-xiaogushi-us`，监听 `127.0.0.1:4174`
-- 反代配置：`/etc/nginx/sites-available/ok.xiaogushi.us.conf`
-- 本轮部署前备份：`/root/ok.xiaogushi.us-backups/20260601160930`
+生产部署由 GitHub Actions 通过仓库 secrets 读取域名、SSH、目录、PM2 进程名、端口和登录源等环境信息；这些值不写入 public repo。需要部署时，在 GitHub Actions secrets 中维护 `PRODUCTION_*` 和 `LIAO_CHATROOM_ORIGIN` 等配置。
 
 ## 自动部署
 
-GitHub `main` 分支有新版本后，`.github/workflows/deploy-production.yml` 会自动构建并部署到 `ok.xiaogushi.us`。部署凭据通过 GitHub Actions secrets 提供，不写入仓库；详细边界、Secrets 和回滚方法见 `docs/DEPLOYMENT_AUTOMATION.md`。
+GitHub `main` 分支有新版本后，`.github/workflows/deploy-production.yml` 会自动构建并部署到已授权生产环境。部署凭据和生产环境参数通过 GitHub Actions secrets 提供，不写入仓库；详细边界、Secrets 和回滚方法见 `docs/DEPLOYMENT_AUTOMATION.md`。

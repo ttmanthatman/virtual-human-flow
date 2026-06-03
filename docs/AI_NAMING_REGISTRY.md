@@ -58,7 +58,7 @@
 | 召回自然语言查询 | `naturalLanguageQuery` | runtime field | 将事件、评估、激活关切和关系摘要合成的召回语义查询 | `keywordQuery`, `searchText` |
 | 召回因子 | `memoryRecallFactor` | runtime object | 解释某条记忆为什么浮现的分项评分 | `matchReasonOnly`, `keywordScore` |
 | 召回来源 | `memoryRecallSource` | runtime field | 标识召回来自同步响应路径还是未来异步生命路径 | `triggerType` |
-| 生产自动部署 | `productionAutoDeploy` | deployment workflow | GitHub `main` 新版本自动构建并同步到 `ok.xiaogushi.us` VPS | `manualDeploy`, `vpsSyncBot` |
+| 生产自动部署 | `productionAutoDeploy` | deployment workflow | GitHub `main` 新版本自动构建并同步到已授权 VPS | `manualDeploy`, `vpsSyncBot` |
 | 应用版本标识 | `appVersionLabel` | UI constant | 页面左上角展示的应用版本号，来源于 `package.json` version | `buildLabel`, `releaseText` |
 | 部署应用版本 | `APP_VERSION` | workflow env | GitHub Actions 部署时校验 `package.json` 和 `package-lock.json` 的目标版本 | `releaseVersion`, `deployVersion` |
 | GitHub 仓库链接 | `githubRepositoryUrl` | UI constant | 页面左上角版本链接指向的项目仓库 | `repoLink`, `sourceUrl` |
@@ -236,10 +236,10 @@
 | GitHub | `github` | 代码远程同步和版本回溯 | 本机 GitHub CLI 或 GitHub 连接器 | 需要确认仓库名和可见性 |
 | GitHub Actions | `githubActions` | `main` 分支自动构建和部署生产版本 | GitHub Actions secrets 中的部署 SSH 凭据 | secrets 配置错误会导致自动部署失败 |
 | GitHub Actions Secrets | `githubActionsSecrets` | 保存自动部署 SSH host/user/key/port | GitHub 仓库 Settings，不进入 git | 私钥泄漏风险，必须使用专用部署密钥 |
-| VPS | `productionVps` | MVP 部署 | 不写入仓库 | 只允许操作 `ok.xiaogushi.us` |
-| PM2 进程 | `okXiaogushiUsPm2Process` | 运行线上 Node 生产服务 | root 用户 PM2，仅新增 `ok-xiaogushi-us` | 不触碰其他 PM2 应用 |
-| Nginx 站点 | `okXiaogushiUsNginxSite` | 将 `ok.xiaogushi.us` 反代到 `127.0.0.1:4174` | `/etc/nginx/sites-available/ok.xiaogushi.us.conf` | 只修改该域名配置 |
+| VPS | `productionVps` | MVP 部署 | 不写入仓库 | 只允许操作 `<production-domain>` |
+| PM2 进程 | `productionPm2Process` | 运行线上 Node 生产服务 | root 用户 PM2，仅新增 `<production-pm2-name>` | 不触碰其他 PM2 应用 |
+| Nginx 站点 | `productionNginxSite` | 将生产域名反代到 `127.0.0.1:<production-port>` | `<production-nginx-site>` | 只修改该域名配置 |
 | DeepSeek API | `deepseekApi` | 本地真实 LLM 测试，驱动认知模块和 Reply LLM | `.deepseek.local.json` 或 `DEEPSEEK_API_KEY`，不进 git | 通过 Vite 本地代理调用；固定 `deepseek-v4-flash` 并强制 `thinking.disabled` |
 | 外部 LLM Endpoint | `externalLlmEndpoint` | DeepSeek 本地代理入口 | 不在前端保存密钥；由 Vite 代理读取本地密钥 | 当前由 `/api/deepseek-chat` 承担本地代理，不作为 UI 可选模拟模式 |
-| liao 聊天室 | `liaoChatroom` | 本项目用户来源和密码校验来源 | `https://liao.xiaogushi.us/api/login`；本项目只调用登录校验，不写聊天室数据 | 上游接口不可用时无法登录 |
+| liao 聊天室 | `liaoChatroom` | 本项目用户来源和密码校验来源 | `LIAO_CHATROOM_ORIGIN` 配置的 `/api/login`；本项目只调用登录校验，不写聊天室数据 | 上游接口不可用或未配置时无法登录 |
 | 国内地图服务 | `domesticMapService` | 未来解析真实道路、建筑、POI 和角色位置；当前尚未接入 | 待选型；不得使用 Google Maps 作为国内用户默认服务 | 当前 `mapContext.source=seed/manual`，不能假装来自真实地图 API |

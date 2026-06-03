@@ -6,7 +6,7 @@
 
 当前已建立第一版本地 MVP：三栏工作台展示分组多人档案、人物状态、当前位置、聊天室和流程追踪。系统能根据用户素材预览人物档案和配套场景，并在发送消息后展示多模块 LLM 数据流。
 
-当前系统已接入登录和权限边界。未登录用户可以看到完整工作台界面，但发送消息、切换档案、生成或应用档案、保存 DeepSeek 密钥、测试 DeepSeek、查看审计等操作会打开登录浮窗。登录账号来自 `https://liao.xiaogushi.us/` 聊天室用户；本项目只调用 liao 聊天室 `/api/login` 校验用户名和密码，不保存密码，不修改聊天室数据。
+当前系统已接入登录和权限边界。未登录用户可以看到完整工作台界面，但发送消息、切换档案、生成或应用档案、保存 DeepSeek 密钥、测试 DeepSeek、查看审计等操作会打开登录浮窗。登录账号来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室用户；本项目只调用 liao 聊天室 `/api/login` 校验用户名和密码，不保存密码，不修改聊天室数据。
 
 管理员权限沿用 liao 聊天室登录结果里的 `isAdmin`。只有管理员可以新增、保存、删除或应用共享多人档案，也可以修改档案分组；普通登录用户只能读取、选择和使用管理员保存的共享档案。用户对话时的聊天内容、短期记忆、runtime 状态和关系变化只在当前浏览器会话内写回，不自动覆盖后台共享档案。
 
@@ -52,7 +52,7 @@ flowchart TD
     K --> L[同步到 GitHub]
     L --> M{是否需要部署}
     M -- 是 --> N[备份线上配置]
-    N --> O[只部署 ok.xiaogushi.us]
+    N --> O[只部署 <production-domain>]
     O --> P[记录回滚方式]
     M -- 否 --> Q[等待下一步]
     P --> Q
@@ -70,7 +70,7 @@ flowchart LR
     CODE --> SF
     CODE --> GIT[Git 提交]
     GIT --> GH[GitHub 远程仓库]
-    GH --> VPS[ok.xiaogushi.us 部署]
+    GH --> VPS[<production-domain> 部署]
 ```
 
 ## 生产部署路径
@@ -82,19 +82,19 @@ flowchart TD
     VERSION --> BUILD[npm ci + npm run build]
     BUILD --> PKG[打包 dist/server.mjs/serverSupport.mjs/builtinPersonaDossiers.mjs/package files]
     PKG --> UPLOAD[SSH 上传 release archive 到 VPS /tmp]
-    UPLOAD --> BACKUP[备份 /var/www/ok.xiaogushi.us/app]
-    BACKUP --> EXTRACT[解压新版本到 /var/www/ok.xiaogushi.us/app]
+    UPLOAD --> BACKUP[备份 <production-app-dir>]
+    BACKUP --> EXTRACT[解压新版本到 <production-app-dir>]
     EXTRACT --> INSTALL[npm ci --omit=dev]
     INSTALL --> SRV[server.mjs: 服务前端和 DeepSeek API]
-    SRV --> PM2[PM2 ok-xiaogushi-us: 127.0.0.1:4174]
-    PM2 --> NGINX[Nginx ok.xiaogushi.us.conf]
-    NGINX --> SITE[https://ok.xiaogushi.us]
+    SRV --> PM2[PM2 <production-pm2-name>: 127.0.0.1:<production-port>]
+    PM2 --> NGINX[Nginx <production-domain>.conf]
+    NGINX --> SITE[<production-url>]
     SRV --> KEY[.deepseek.local.json: 线上本地密钥文件]
     SRV --> DS[DeepSeek API]
-    PM2 --> HEALTH[health check: 127.0.0.1:4174/health]
+    PM2 --> HEALTH[health check: 127.0.0.1:<production-port>/health]
 ```
 
-生产自动部署由 `.github/workflows/deploy-production.yml` 执行，触发条件是 `main` 分支 push 或 GitHub Actions 手动触发。工作流使用 `APP_VERSION` 校验 `package.json` 和 `package-lock.json` 版本一致后再构建。工作流使用 GitHub Actions secrets 里的 SSH 凭据进入 VPS，但只允许操作 `/var/www/ok.xiaogushi.us/app`、`/root/ok.xiaogushi.us-backups` 和 PM2 进程 `ok-xiaogushi-us`。线上 `.deepseek.local.json` 不由 GitHub Actions 上传或覆盖。
+生产自动部署由 `.github/workflows/deploy-production.yml` 执行，触发条件是 `main` 分支 push 或 GitHub Actions 手动触发。工作流使用 `APP_VERSION` 校验 `package.json` 和 `package-lock.json` 版本一致后再构建。工作流使用 GitHub Actions secrets 里的 SSH 凭据和生产环境参数进入 VPS，只允许操作 secrets 配置的生产应用目录、备份目录和 PM2 进程。`LIAO_CHATROOM_ORIGIN` 也由 secrets 注入 PM2 环境；线上 `.deepseek.local.json` 不由 GitHub Actions 上传或覆盖。
 
 ## 当前 MVP 同步响应路径
 
@@ -140,7 +140,7 @@ flowchart TD
     K -- 否 --> M[可选择共享档案和对话]
 ```
 
-本项目的本地 `authSession` 存在内存中，服务重启后需要重新登录。上游 liao token 不返回前端，也不写入仓库；用户密码只在登录请求中转发给 liao 聊天室校验。
+本项目的本地 `authSession` 存在内存中，服务重启后需要重新登录。上游 liao token 不返回前端，也不写入仓库；用户密码只在登录请求中转发给 `LIAO_CHATROOM_ORIGIN` 配置的 liao 聊天室校验。
 
 ## 记忆召回路径
 
@@ -629,7 +629,7 @@ flowchart TD
     SSH --> UPLOAD["上传 release 到 VPS /tmp"]
     UPLOAD --> ACTIVATE["备份旧版本并解压新版本"]
     ACTIVATE --> PM2["npm ci --omit=dev + PM2 restart"]
-    PM2 --> HEALTH["curl 127.0.0.1:4174/health"]
+    PM2 --> HEALTH["curl 127.0.0.1:<production-port>/health"]
     HEALTH --> RESULT["Actions success/failure"]
 ```
 
@@ -666,7 +666,7 @@ flowchart LR
     GEN2 --> FIT
 ```
 
-左上角版本信息由 App Shell 读取 `package.json` 的 `version` 生成 `appVersionLabel`，并链接到 GitHub 仓库 `ttmanthatman/virtual-human-flow`。它只是页面元信息，不参与对话状态或认知模块数据流。
+左上角版本信息由 App Shell 读取 `package.json` 的 `version` 生成 `appVersionLabel`，并链接到 GitHub 仓库 `<owner>/<repo>`。它只是页面元信息，不参与对话状态或认知模块数据流。
 
 ## 待确认 MVP 架构问题
 
@@ -685,10 +685,10 @@ flowchart LR
 | 资源 | 状态 | 说明 |
 | --- | --- | --- |
 | liao 聊天室用户源 | known | 可读取公开前端脚本确认 `/api/login` 返回 token/user/isAdmin；本项目只用它校验登录，不修改聊天室数据 |
-| GitHub 账号 | known | 用户主页为 `ttmanthatman` |
-| GitHub 仓库 | known | `ttmanthatman/virtual-human-flow`，`main` 分支 push 触发自动部署 |
-| VPS | known | 仅允许后续部署 `ok.xiaogushi.us` 对应内容 |
-| 域名 | known | `ok.xiaogushi.us` |
+| GitHub 账号 | known | 用户主页为 `<github-owner>` |
+| GitHub 仓库 | known | `<owner>/<repo>`，`main` 分支 push 触发自动部署 |
+| VPS | known | 仅允许后续部署 `<production-domain>` 对应内容 |
+| 域名 | known | `<production-domain>` |
 | 国内地图服务 | pending | 尚未选型和接入；当前位置字段来自种子或人工维护 |
 
 ## 当前模块状态
@@ -702,7 +702,7 @@ flowchart LR
 | 多人档案 | initialized | 左侧可按 `personaDossierGroup` 分组、新建、切换、删除 `personaDossier`；每个档案绑定人物状态、配套场景素材和位置属性 |
 | 内置人物档案 | initialized | `builtinPersonaDossiers.mjs` 提供 7 个“马可福音10”和 7 个“郑州市”全局初始档案 |
 | 人物位置属性 | initialized | `CharacterState.location` 支持当前位置、速度、方向、周边道路/地点/建筑和环境摘要；当前来自 seed/manual |
-| 登录机制 | initialized | 用户来自 `liao.xiaogushi.us` 聊天室登录接口；未登录可看界面但操作会弹登录浮窗 |
+| 登录机制 | initialized | 用户来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室登录接口；未登录可看界面但操作会弹登录浮窗 |
 | 权限控制 | initialized | `isAdmin` 用户可维护共享档案和查看审计；普通登录用户只可选择共享档案并对话 |
 | 共享多人档案 | initialized | 管理员保存到 `.persona-dossiers.local.json`，所有登录用户可读取和使用 |
 | 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，仅管理员可查看、删除单条或清空 |
@@ -714,7 +714,7 @@ flowchart LR
 | 同步对话路径 | initialized | 事件 -> 评估 -> 记忆召回 -> 回应决策 -> 回应提示词 -> 回应输出 -> 状态更新 -> 信号评估 -> 状态变化 |
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |
-| 生产部署 | initialized | `ok.xiaogushi.us` 通过 nginx 反代 PM2 进程 `ok-xiaogushi-us`，线上目录 `/var/www/ok.xiaogushi.us/app` |
+| 生产部署 | initialized | `<production-domain>` 通过 nginx 反代 PM2 进程 `<production-pm2-name>`，线上目录 `<production-app-dir>` |
 | 生产自动部署 | initialized | GitHub Actions 在 `main` 分支新版本后自动构建、上传、备份、重启 PM2，并检查 `/health` |
 | 国内地图服务 | pending | 尚未接入真实地图商；当前位置和地图上下文不能声称来自地图 API |
 | 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现；记忆召回上下文已预留 `async_life` 来源 |
@@ -723,7 +723,7 @@ flowchart LR
 
 | 时间 | 提交/版本 | 域名 | 目录 | 进程 | 备份 | 验证 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2026-06-01 | `2a4b378` 后续生产服务补丁 | `https://ok.xiaogushi.us` | `/var/www/ok.xiaogushi.us/app` | PM2 `ok-xiaogushi-us` | `/root/ok.xiaogushi.us-backups/20260601103603` | HTTPS 首页、`/api/deepseek-config`、DeepSeek SSE、浏览器完整对话链路通过 |
-| 2026-06-01 | `2e15c71` LLM 解读人物和场景预览 | `https://ok.xiaogushi.us` | `/var/www/ok.xiaogushi.us/app` | PM2 `ok-xiaogushi-us` | `/root/ok.xiaogushi.us-backups/20260601153353` | 本地 build 通过；PM2 online；公网 HTTPS 首页和 `/api/deepseek-config` 通过；浏览器加载新摘要和预览按钮且无 console error |
-| 2026-06-02 | `cff06e4` 多人档案、人物场景一致性和生产健康检查 | `https://ok.xiaogushi.us` | `/var/www/ok.xiaogushi.us/app` | PM2 `ok-xiaogushi-us` | `/root/ok.xiaogushi.us-backups/20260601160930` | 本地 build 通过；PM2 online；公网 `/health` 返回 OK；公网 `/api/deepseek-config` 返回 DeepSeek 已保存；Playwright 看到多人档案、预览人物档案、预览场景且无 console error |
-| 2026-06-02 | `62e0dda` GitHub Actions 自动部署触发优化 | `https://ok.xiaogushi.us` | `/var/www/ok.xiaogushi.us/app` | PM2 `ok-xiaogushi-us` | `/root/ok.xiaogushi.us-backups/20260602035631.tgz` | GitHub Actions run #3 success；公网 `/health` 返回 OK；PM2 `ok-xiaogushi-us` online |
+| 2026-06-01 | `2a4b378` 后续生产服务补丁 | `<production-url>` | `<production-app-dir>` | PM2 `<production-pm2-name>` | `<production-backup-dir>/20260601103603` | HTTPS 首页、`/api/deepseek-config`、DeepSeek SSE、浏览器完整对话链路通过 |
+| 2026-06-01 | `2e15c71` LLM 解读人物和场景预览 | `<production-url>` | `<production-app-dir>` | PM2 `<production-pm2-name>` | `<production-backup-dir>/20260601153353` | 本地 build 通过；PM2 online；公网 HTTPS 首页和 `/api/deepseek-config` 通过；浏览器加载新摘要和预览按钮且无 console error |
+| 2026-06-02 | `cff06e4` 多人档案、人物场景一致性和生产健康检查 | `<production-url>` | `<production-app-dir>` | PM2 `<production-pm2-name>` | `<production-backup-dir>/20260601160930` | 本地 build 通过；PM2 online；公网 `/health` 返回 OK；公网 `/api/deepseek-config` 返回 DeepSeek 已保存；Playwright 看到多人档案、预览人物档案、预览场景且无 console error |
+| 2026-06-02 | `62e0dda` GitHub Actions 自动部署触发优化 | `<production-url>` | `<production-app-dir>` | PM2 `<production-pm2-name>` | `<production-backup-dir>/20260602035631.tgz` | GitHub Actions run #3 success；公网 `/health` 返回 OK；PM2 `<production-pm2-name>` online |

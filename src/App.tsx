@@ -1195,7 +1195,7 @@ export function App() {
             <div className="modal-head">
               <div>
                 <strong>登录后使用</strong>
-                <span>使用 liao.xiaogushi.us 的账号和原密码</span>
+                <span>使用配置的聊天室账号和原密码</span>
               </div>
               <button className="icon-button compact" type="button" onClick={() => setLoginModalOpen(false)} title="关闭">
                 <X size={15} />

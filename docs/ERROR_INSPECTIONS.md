@@ -288,7 +288,7 @@ AI 把“本地可回溯”误当成了“用户可在 GitHub 继续接手”。
 
 用户要求总结刚才配置 GitHub Actions 自动部署过程中 AI 犯了哪些错误，以及以后如何避免。
 
-本次配置目标是：新版本 push 到 GitHub `main` 后，GitHub Actions 自动构建并同步到 `ok.xiaogushi.us` VPS，不再依赖手动部署。
+本次配置目标是：新版本 push 到 GitHub `main` 后，GitHub Actions 自动构建并同步到 `<production-domain>` VPS，不再依赖手动部署。
 
 ### 错误现象
 
@@ -335,7 +335,7 @@ AI 把“本地能用这把 SSH key 登录 VPS”误当成了“GitHub Actions r
 2. 删除旧的多行 `PRODUCTION_SSH_KEY` secret。
 3. 删除 `PRODUCTION_SSH_PORT` secret，让端口使用 workflow 默认值 `22`，避免普通常量被日志遮罩。
 4. workflow 增加 `paths-ignore`，纯 `docs/**` 和 `README.md` 变更不触发生产部署。
-5. 重新 push 后验证 GitHub Actions run #2 和 run #3 成功，公网 `/health` 返回 `OK`，PM2 `ok-xiaogushi-us` online。
+5. 重新 push 后验证 GitHub Actions run #2 和 run #3 成功，公网 `/health` 返回 `OK`，PM2 `<production-pm2-name>` online。
 6. 部署成功后把最终部署记录写入 `docs/SYSTEM_FLOW.md`，并确认纯文档 commit 没有触发新的部署 run。
 
 ### 新增验证标准
@@ -440,7 +440,7 @@ Cannot read properties of undefined (reading 'length')
 
 ### 用户指出的问题
 
-用户打开 `https://ok.xiaogushi.us/` 后看到：
+用户打开 `<production-url>/` 后看到：
 
 ```text
 502 Bad Gateway
@@ -451,7 +451,7 @@ nginx/1.24.0 (Ubuntu)
 
 ### 错误现象
 
-公网 `curl https://ok.xiaogushi.us/` 复现 502。nginx 仍在响应，但上游 `127.0.0.1:4174` 的 Node/PM2 服务不可用。
+公网 `curl <production-url>/` 复现 502。nginx 仍在响应，但上游 `127.0.0.1:<production-port>` 的 Node/PM2 服务不可用。
 
 本地按 GitHub Actions 原部署包清单复现：
 
@@ -551,3 +551,38 @@ dist server.mjs package.json package-lock.json
 - 页面左上角 `appVersionLabel` 显示新版本。
 - GitHub Actions `APP_VERSION` 与 package 文件版本一致。
 - 本地 build 日志显示新版本对应的 package script，例如 `virtual-human-flow@0.2.0 build`。
+
+## 2026-06-03 Public 仓库暴露生产信息
+
+### 用户指出的问题
+
+用户指出 GitHub 上的 README 暴露了服务器地址和私有部署信息。仓库当前是 public，用户原本想设为 private，但担心私有仓库会影响 AI 访问。
+
+### 错误类型
+
+- 隐私边界错误：把生产域名、部署目录、PM2 进程、反代配置、备份路径等运维细节写入 public repo 文档。
+- 配置边界错误：自动部署 workflow 中硬编码了生产目录、备份目录、PM2 进程名和端口。
+- 认证边界错误：登录用户源 origin 曾经作为默认值写在服务端代码里，而不是完全来自环境配置。
+
+### 根因
+
+AI 把 README 和 docs 当作团队内部运维 runbook 使用，没有根据仓库 public/private 状态调整信息粒度。部署文档可以记录“需要哪些配置”和“操作边界”，但不应该记录具体服务器地址、真实路径、真实进程名或上游登录站点。
+
+### 修正
+
+1. README 和部署文档中的生产信息改为占位符或泛化描述。
+2. GitHub Actions workflow 的生产应用目录、备份目录、PM2 进程名、端口和登录源改为 GitHub Actions secrets。
+3. 服务端登录源 `LIAO_CHATROOM_ORIGIN` 不再有硬编码默认值；未配置时登录接口直接失败。
+4. 命名登记和系统流程同步改为泛化生产环境说明。
+
+### 新增验证标准
+
+以后提交或 push 到 public repo 前必须运行敏感信息搜索，至少覆盖：
+
+- 生产域名、登录源域名、真实服务器路径、反代配置路径、PM2 进程名、固定生产端口。
+- workflow 中是否存在 `PRODUCTION_*: /...`、真实 release 文件名或真实站点名。
+- README/docs 是否把占位符写回成真实环境信息。
+
+### 剩余风险
+
+普通提交只能清理默认分支当前内容，不能自动抹掉 Git 历史、GitHub cached view、fork 或外部索引里曾经出现过的信息。如果这些信息已经公开过，下一步应考虑把 GitHub repo 设为 private；若要从 public 历史中彻底移除，需要做历史重写并 force push。若曾暴露过密码、token、私钥或可直接登录的凭据，必须立即轮换；本次勘验针对的是服务器地址和部署细节，不等同于凭据泄漏。

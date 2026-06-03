@@ -100,12 +100,12 @@ fix: correct deployment nginx route
 
 MVP 部署目标：
 
-- 域名：`ok.xiaogushi.us`
+- 域名：`<production-domain>`
 - VPS：由用户单独授权使用
 
 部署约束：
 
-1. 只操作 `ok.xiaogushi.us` 对应站点、配置、进程和目录。
+1. 只操作 `<production-domain>` 对应站点、配置、进程和目录。
 2. 不触碰 VPS 上其他网站、数据库、进程和服务。
 3. 不把服务器密码写进仓库或日志文档。
 4. 部署前先备份即将修改的线上配置。

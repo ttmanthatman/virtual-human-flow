@@ -1,4 +1,4 @@
-name: Deploy ok.xiaogushi.us
+name: Deploy production
 
 on:
   push:
@@ -10,17 +10,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: production-ok-xiaogushi-us
+  group: production-deploy
   cancel-in-progress: false
 
 env:
   APP_VERSION: "0.2.0"
   NODE_VERSION: "22"
-  PRODUCTION_APP_DIR: /var/www/ok.xiaogushi.us/app
-  PRODUCTION_BACKUP_DIR: /root/ok.xiaogushi.us-backups
-  PRODUCTION_PM2_NAME: ok-xiaogushi-us
-  PRODUCTION_PORT: "4174"
-  RELEASE_ARCHIVE: ok-xiaogushi-us-release.tgz
+  RELEASE_ARCHIVE: production-release.tgz
 
 jobs:
   deploy:
@@ -70,11 +66,21 @@ jobs:
           PRODUCTION_SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
           PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
           PRODUCTION_SSH_KEY_B64: ${{ secrets.PRODUCTION_SSH_KEY_B64 }}
+          PRODUCTION_APP_DIR: ${{ secrets.PRODUCTION_APP_DIR }}
+          PRODUCTION_BACKUP_DIR: ${{ secrets.PRODUCTION_BACKUP_DIR }}
+          PRODUCTION_PM2_NAME: ${{ secrets.PRODUCTION_PM2_NAME }}
+          PRODUCTION_PORT: ${{ secrets.PRODUCTION_PORT }}
+          LIAO_CHATROOM_ORIGIN: ${{ secrets.LIAO_CHATROOM_ORIGIN }}
         run: |
           set -euo pipefail
           test -n "$PRODUCTION_SSH_HOST"
           test -n "$PRODUCTION_SSH_USER"
           test -n "$PRODUCTION_SSH_KEY_B64"
+          test -n "$PRODUCTION_APP_DIR"
+          test -n "$PRODUCTION_BACKUP_DIR"
+          test -n "$PRODUCTION_PM2_NAME"
+          test -n "$PRODUCTION_PORT"
+          test -n "$LIAO_CHATROOM_ORIGIN"
 
       - name: Prepare SSH
         env:
@@ -105,15 +111,28 @@ jobs:
           PRODUCTION_SSH_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
           PRODUCTION_SSH_USER: ${{ secrets.PRODUCTION_SSH_USER }}
           PRODUCTION_SSH_PORT: ${{ secrets.PRODUCTION_SSH_PORT }}
+          PRODUCTION_APP_DIR: ${{ secrets.PRODUCTION_APP_DIR }}
+          PRODUCTION_BACKUP_DIR: ${{ secrets.PRODUCTION_BACKUP_DIR }}
+          PRODUCTION_PM2_NAME: ${{ secrets.PRODUCTION_PM2_NAME }}
+          PRODUCTION_PORT: ${{ secrets.PRODUCTION_PORT }}
+          LIAO_CHATROOM_ORIGIN: ${{ secrets.LIAO_CHATROOM_ORIGIN }}
         run: |
           set -euo pipefail
           ssh_port="${PRODUCTION_SSH_PORT:-22}"
           ssh -p "$ssh_port" -i ~/.ssh/production_key "$PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST" \
-            "APP_DIR='$PRODUCTION_APP_DIR' BACKUP_DIR='$PRODUCTION_BACKUP_DIR' PM2_NAME='$PRODUCTION_PM2_NAME' PORT='$PRODUCTION_PORT' RELEASE_ARCHIVE='/tmp/$RELEASE_ARCHIVE' bash -s" <<'REMOTE_SCRIPT'
+            "APP_DIR='$PRODUCTION_APP_DIR' BACKUP_DIR='$PRODUCTION_BACKUP_DIR' PM2_NAME='$PRODUCTION_PM2_NAME' PORT='$PRODUCTION_PORT' LIAO_CHATROOM_ORIGIN='$LIAO_CHATROOM_ORIGIN' RELEASE_ARCHIVE='/tmp/$RELEASE_ARCHIVE' bash -s" <<'REMOTE_SCRIPT'
           set -euo pipefail
 
-          if [ "$APP_DIR" != "/var/www/ok.xiaogushi.us/app" ]; then
-            echo "Refusing to deploy outside ok.xiaogushi.us app directory: $APP_DIR" >&2
+          case "$APP_DIR" in
+            /*) ;;
+            *) echo "Configured app directory must be absolute" >&2; exit 1 ;;
+          esac
+          case "$BACKUP_DIR" in
+            /*) ;;
+            *) echo "Configured backup directory must be absolute" >&2; exit 1 ;;
+          esac
+          if [ "$APP_DIR" = "/" ] || [ "$BACKUP_DIR" = "/" ] || [ -z "$PM2_NAME" ] || [ -z "$PORT" ] || [ -z "$LIAO_CHATROOM_ORIGIN" ]; then
+            echo "Refusing unsafe production deployment settings" >&2
             exit 1
           fi
 
@@ -130,9 +149,9 @@ jobs:
           npm ci --omit=dev
 
           if pm2 describe "$PM2_NAME" >/dev/null 2>&1; then
-            PORT="$PORT" pm2 restart "$PM2_NAME" --update-env
+            PORT="$PORT" LIAO_CHATROOM_ORIGIN="$LIAO_CHATROOM_ORIGIN" pm2 restart "$PM2_NAME" --update-env
           else
-            PORT="$PORT" pm2 start server.mjs --name "$PM2_NAME" --update-env
+            PORT="$PORT" LIAO_CHATROOM_ORIGIN="$LIAO_CHATROOM_ORIGIN" pm2 start server.mjs --name "$PM2_NAME" --update-env
           fi
 
           pm2 save

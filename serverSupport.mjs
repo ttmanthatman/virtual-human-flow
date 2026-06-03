@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { builtinPersonaDossiers } from "./builtinPersonaDossiers.mjs";
 
 const rootDir = process.cwd();
-const liaoChatroomOrigin = process.env.LIAO_CHATROOM_ORIGIN || "https://liao.xiaogushi.us";
+const liaoChatroomOrigin = process.env.LIAO_CHATROOM_ORIGIN || "";
 const personaDossierStorePath = resolve(rootDir, ".persona-dossiers.local.json");
 const conversationAuditStorePath = resolve(rootDir, ".conversation-audits.local.json");
 const authSessionTtlMs = 7 * 24 * 60 * 60 * 1000;
@@ -67,6 +67,10 @@ export function requireAdminSession(request, response) {
 }
 
 export async function loginWithLiaoChatroom(username, password) {
+  if (!liaoChatroomOrigin) {
+    throw new Error("登录服务尚未配置");
+  }
+
   const upstream = await fetch(`${liaoChatroomOrigin}/api/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
