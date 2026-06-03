@@ -96,8 +96,9 @@ createServer(async (request, response) => {
     }
 
     if (pathname === "/api/persona-dossiers" && request.method === "GET") {
-      if (!requireSession(request, response)) return;
-      sendJson(response, 200, { dossiers: readPersonaDossiers() });
+      const session = requireSession(request, response);
+      if (!session) return;
+      sendJson(response, 200, { dossiers: readPersonaDossiers(session.user) });
       return;
     }
 

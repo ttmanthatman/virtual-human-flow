@@ -2,6 +2,45 @@
 
 本文档记录用户指出错误后的勘验、根因和流程修正。目的不是追责，而是防止同类错误反复出现。
 
+## 2026-06-03 对话历史按任务和用户隔离失败
+
+### 用户指出的问题
+
+用户指出两个问题：
+
+- 点击不同任务时，中间栏对话历史没有跟着切换。
+- 不同用户对同一个人的聊天历史是全局的，对所有用户可见。
+
+### 错误类型
+
+- 实现边界错误：前端只有一个全局 `messages` state，`activeDossierId` 切换时只替换人物状态和素材，不替换中间栏消息列表。
+- 架构边界错误：服务端 `/api/persona-dossiers/:id/conversation-state` 把对话产生的短期记忆、长期记忆、runtime 和关系变化写回 `.persona-dossiers.local.json` 的共享档案，导致其他用户读取同一角色时会拿到这些对话运行态。
+- 文档诱导错误：`README.md` 和 `docs/SYSTEM_FLOW.md` 明确写着“同一角色所有用户消息都会影响之后状态”，后续实现会自然沿着这个错误边界继续扩大。
+
+### 根因
+
+系统把“共享人物档案底稿”和“用户对某个角色的对话运行态”混成了一份数据。共享底稿应该由管理员维护，并允许所有用户读取；但中间栏消息、短期记忆、长期记忆和一轮对话后形成的状态变化属于当前用户和当前任务的历史，不应该写回全局档案。
+
+之前没有发现，是因为验证只覆盖了“对话完成后状态能保存”和“共享档案能读取”，没有覆盖两个关键矩阵：
+
+- 同一用户切换不同 `dossierId` 时，中间栏历史应不同。
+- 不同用户读取同一 `dossierId` 时，不应看到彼此的对话状态。
+
+### 修正
+
+1. 前端新增 `conversationHistoryKey = user + dossier`，中间栏消息历史改为 `conversationHistories` 分桶，并持久化到 localStorage 对应历史桶。
+2. 服务端新增 `.conversation-states.local.json`，保存按 `userId + dossierId` 隔离的私有角色运行态。
+3. `GET /api/persona-dossiers` 现在先读取共享档案，再叠加当前登录用户自己的私有运行态。
+4. `POST /api/persona-dossiers/:id/conversation-state` 不再覆盖 `.persona-dossiers.local.json`；它只写当前用户的私有运行态，并且关系余波也只传播到当前用户自己的角色网络。
+5. `.conversation-states.local.json` 加入 `.gitignore`，和 DeepSeek 密钥、共享档案、审计运行时文件一样不提交。
+
+### 新增验证标准
+
+- 新增 `npm run verify:conversation-history-isolation`：在临时运行目录中写入用户 A 的角色对话状态，验证用户 A 能读到、用户 B 和共享档案都读不到。
+- 以后涉及对话历史、角色状态保存或档案读取时，必须验证 `userId + dossierId` 隔离。
+- 文档中不能再把普通用户对话运行态描述为全局共享档案的一部分。
+- 前端切换档案时，中间栏消息必须跟着 `activeDossierId` 切换。
+
 ## 2026-06-03 Memory Recall 结构化 JSON 截断导致对话卡住
 
 ### 用户指出的问题

@@ -115,6 +115,35 @@ type AppUpdateLogEntry = {
 
 const distortionPassword = "扭曲时空密码";
 const authTokenStorageKey = "virtualHumanFlowAuthToken";
+const conversationHistoryStoragePrefix = "virtualHumanFlowConversationHistory";
+const maxConversationHistoryMessages = 160;
+
+type ConversationHistoryMap = Record<string, ChatMessage[]>;
+type MessageUpdater = ChatMessage[] | ((items: ChatMessage[]) => ChatMessage[]);
+
+function createConversationHistoryKey(user: AuthUser | undefined, dossierId: string) {
+  const userPart = user ? `user-${user.userId || user.username}` : "guest";
+  return `${userPart}::dossier-${dossierId || "none"}`;
+}
+
+function readStoredConversationHistory(historyKey: string) {
+  try {
+    const raw = localStorage.getItem(`${conversationHistoryStoragePrefix}:${historyKey}`);
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ChatMessage[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeStoredConversationHistory(historyKey: string, messages: ChatMessage[]) {
+  try {
+    localStorage.setItem(`${conversationHistoryStoragePrefix}:${historyKey}`, JSON.stringify(messages.slice(-maxConversationHistoryMessages)));
+  } catch {
+    // History persistence is best-effort; the active in-memory history still updates.
+  }
+}
 
 function createPersonaDossier(state: CharacterState, dossierDescription: string, sceneDescription: string, title?: string): PersonaDossier {
   const timestamp = nowIso();
@@ -135,10 +164,13 @@ export function App() {
   const initialDossierDescription = "林安，27岁，自由插画师，刚结束一段关系，性格克制敏感，不喜欢直接表达脆弱。";
   const initialSceneDescription = "雨夜的私人工作室，窗外有雨，桌上放着未完成的画稿和一杯快冷掉的茶。";
   const initialDossier = createPersonaDossier(seedState, initialDossierDescription, initialSceneDescription);
+  const initialConversationHistoryKey = createConversationHistoryKey(undefined, initialDossier.id);
   const [dossiers, setDossiers] = useState<PersonaDossier[]>([initialDossier]);
   const [activeDossierId, setActiveDossierId] = useState(initialDossier.id);
   const [state, setState] = useState<CharacterState>(initialDossier.state);
-  const [messages, setMessages] = useState<ChatMessage[]>(seedMessages);
+  const [conversationHistories, setConversationHistories] = useState<ConversationHistoryMap>(() => ({
+    [initialConversationHistoryKey]: readStoredConversationHistory(initialConversationHistoryKey) ?? seedMessages,
+  }));
   const [input, setInput] = useState("周末一起去爬山吗？");
   const [dossierDescription, setDossierDescription] = useState(initialDossierDescription);
   const [sceneDescription, setSceneDescription] = useState(initialSceneDescription);
@@ -184,6 +216,8 @@ export function App() {
     [state.concerns, state.runtime.activeConcernIds],
   );
   const activeDossier = useMemo(() => dossiers.find((dossier) => dossier.id === activeDossierId) ?? dossiers[0], [activeDossierId, dossiers]);
+  const activeConversationHistoryKey = useMemo(() => createConversationHistoryKey(authUser, activeDossierId), [authUser, activeDossierId]);
+  const messages = conversationHistories[activeConversationHistoryKey] ?? seedMessages;
   const groupedDossiers = useMemo(() => {
     const groups = new Map<string, PersonaDossier[]>();
     for (const dossier of dossiers) {
@@ -201,6 +235,16 @@ export function App() {
         : appUpdateStatus
           ? "已是最新"
           : "检查更新";
+
+  useEffect(() => {
+    setConversationHistories((current) => {
+      if (current[activeConversationHistoryKey]) return current;
+      return {
+        ...current,
+        [activeConversationHistoryKey]: readStoredConversationHistory(activeConversationHistoryKey) ?? seedMessages,
+      };
+    });
+  }, [activeConversationHistoryKey]);
 
   useEffect(() => {
     if (!activeDossier || !isAuthenticated || !deepseekConnected) return;
@@ -259,6 +303,23 @@ export function App() {
       ...extra,
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
+  }
+
+  function setMessages(updater: MessageUpdater) {
+    setMessagesForHistory(activeConversationHistoryKey, updater);
+  }
+
+  function setMessagesForHistory(historyKey: string, updater: MessageUpdater) {
+    setConversationHistories((current) => {
+      const existing = current[historyKey] ?? readStoredConversationHistory(historyKey) ?? seedMessages;
+      const nextMessages = typeof updater === "function" ? updater(existing) : updater;
+      const trimmedMessages = nextMessages.slice(-maxConversationHistoryMessages);
+      writeStoredConversationHistory(historyKey, trimmedMessages);
+      return {
+        ...current,
+        [historyKey]: trimmedMessages,
+      };
+    });
   }
 
   function clearLocalAuth() {
@@ -445,7 +506,7 @@ export function App() {
       setLoginPassword("");
       setLoginModalOpen(false);
       setError("");
-      setMessages((items) => [
+      setMessagesForHistory(createConversationHistoryKey(loggedInUser, activeDossierId), (items) => [
         ...items,
         {
           id: makeId("msg"),

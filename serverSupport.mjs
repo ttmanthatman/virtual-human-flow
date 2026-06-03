@@ -7,6 +7,7 @@ import { builtinPersonaDossiers } from "./builtinPersonaDossiers.mjs";
 const rootDir = process.cwd();
 const liaoChatroomOrigin = process.env.LIAO_CHATROOM_ORIGIN || "";
 const personaDossierStorePath = resolve(rootDir, ".persona-dossiers.local.json");
+const conversationStateStorePath = resolve(rootDir, ".conversation-states.local.json");
 const conversationAuditStorePath = resolve(rootDir, ".conversation-audits.local.json");
 const authSessionTtlMs = 7 * 24 * 60 * 60 * 1000;
 const maxAuditEntries = 1000;
@@ -95,7 +96,12 @@ export async function loginWithLiaoChatroom(username, password) {
   return data;
 }
 
-export function readPersonaDossiers() {
+export function readPersonaDossiers(user) {
+  const dossiers = readBasePersonaDossiers();
+  return user ? applyUserConversationStates(dossiers, user) : dossiers;
+}
+
+function readBasePersonaDossiers() {
   const store = readPersonaDossierStore();
   const storedDossiers = store.dossiers;
   const deletedBuiltinIds = new Set(Array.isArray(store.deletedBuiltinDossierIds) ? store.deletedBuiltinDossierIds : []);
@@ -170,11 +176,13 @@ export function updatePersonaDossierConversationState(dossierId, nextState, inte
     return { error: "缺少有效角色状态" };
   }
 
-  const { store, dossiers, index } = prepareDossierMutation(dossierId);
+  const baseDossiers = readBasePersonaDossiers();
+  const index = baseDossiers.findIndex((item) => item.id === dossierId);
   if (index < 0) return { error: "找不到档案" };
 
   const now = new Date().toISOString();
-  const sourceDossier = dossiers[index];
+  const userDossiers = applyUserConversationStates(baseDossiers, user);
+  const sourceDossier = userDossiers[index];
   const updatedSource = {
     ...sourceDossier,
     title: nextState.profile.name,
@@ -184,13 +192,13 @@ export function updatePersonaDossierConversationState(dossierId, nextState, inte
     lastInteractedByUserId: user.userId,
     lastInteractedByUsername: user.username,
   };
-  const withSource = dossiers.map((item, itemIndex) => (itemIndex === index ? updatedSource : item));
+  const withSource = userDossiers.map((item, itemIndex) => (itemIndex === index ? updatedSource : item));
   const propagated = propagateRelationshipInfluence(withSource, index, interaction, user, now);
   const changedIds = new Set([dossierId]);
   propagated.forEach((dossier, itemIndex) => {
     if (dossier !== withSource[itemIndex]) changedIds.add(dossier.id);
   });
-  writeMergedPersonaDossiers(store, propagated, changedIds);
+  writeUserConversationStates(user, propagated.filter((dossier) => changedIds.has(dossier.id)));
   return { dossier: propagated[index], dossiers: propagated };
 }
 
@@ -419,12 +427,76 @@ function readPersonaDossierStore() {
 
 function prepareDossierMutation(dossierId) {
   const store = readPersonaDossierStore();
-  const merged = readPersonaDossiers();
+  const merged = readBasePersonaDossiers();
   return {
     store,
     dossiers: merged,
     index: merged.findIndex((item) => item.id === dossierId),
   };
+}
+
+function readConversationStateStore() {
+  const store = readJsonFile(conversationStateStorePath, { entries: [] });
+  return {
+    entries: Array.isArray(store.entries) ? store.entries : [],
+  };
+}
+
+function applyUserConversationStates(dossiers, user) {
+  const store = readConversationStateStore();
+  const userId = normalizeUserId(user);
+  if (!userId) return dossiers;
+
+  const entriesByDossierId = new Map(
+    store.entries
+      .filter((entry) => normalizeUserId(entry) === userId && typeof entry.dossierId === "string")
+      .map((entry) => [entry.dossierId, entry]),
+  );
+
+  return dossiers.map((dossier) => {
+    const entry = entriesByDossierId.get(dossier.id);
+    if (!entry || !entry.state || typeof entry.state !== "object" || !entry.state.profile) return dossier;
+    return {
+      ...dossier,
+      title: typeof entry.title === "string" && entry.title ? entry.title : dossier.title,
+      state: entry.state,
+      updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : dossier.updatedAt,
+      lastInteractedAt: typeof entry.lastInteractedAt === "string" ? entry.lastInteractedAt : undefined,
+      lastInteractedByUserId: user.userId,
+      lastInteractedByUsername: user.username,
+    };
+  });
+}
+
+function writeUserConversationStates(user, changedDossiers) {
+  const store = readConversationStateStore();
+  const userId = normalizeUserId(user);
+  if (!userId) return;
+
+  const changedIds = new Set(changedDossiers.map((dossier) => dossier.id));
+  const retainedEntries = store.entries.filter((entry) => normalizeUserId(entry) !== userId || !changedIds.has(entry.dossierId));
+  const nextEntries = [
+    ...retainedEntries,
+    ...changedDossiers.map((dossier) => ({
+      userId: user.userId,
+      username: user.username,
+      dossierId: dossier.id,
+      title: dossier.title,
+      state: dossier.state,
+      updatedAt: dossier.updatedAt,
+      lastInteractedAt: dossier.lastInteractedAt,
+      lastInteractedByUserId: user.userId,
+      lastInteractedByUsername: user.username,
+    })),
+  ];
+  writeJsonFile(conversationStateStorePath, { entries: nextEntries });
+}
+
+function normalizeUserId(user) {
+  const userId = Number(user?.userId);
+  if (Number.isFinite(userId) && userId > 0) return `id:${userId}`;
+  const username = typeof user?.username === "string" ? user.username.trim() : "";
+  return username ? `name:${username}` : "";
 }
 
 function writeMergedPersonaDossiers(store, mergedDossiers, changedIds) {
