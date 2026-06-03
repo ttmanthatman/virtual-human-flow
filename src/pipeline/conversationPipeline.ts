@@ -1,4 +1,4 @@
-import { CharacterState, LlmConfig, PipelineStepProgress, PipelineTrace } from "../core/types";
+import { CharacterState, CognitiveModuleTrace, LlmConfig, PipelineStepProgress, PipelineTrace } from "../core/types";
 import { runAppraisal } from "./appraisal";
 import { retrieveMemory } from "./memoryRetrieval";
 import { decideResponse } from "./responseDecision";
@@ -35,7 +35,7 @@ export async function runConversationPipeline({ content, state, llmConfig, onPro
   const appraisal = await runAppraisal(event, state, llmConfig, (output) =>
     emit({ step: "appraisal", status: "streaming", output }),
   );
-  emit({ step: "appraisal", status: "completed", output: JSON.stringify(appraisal.output, null, 2), transport: appraisal.transport });
+  emit({ step: "appraisal", status: "completed", output: formatCognitiveTraceOutput(appraisal), transport: appraisal.transport });
 
   emit({
     step: "memoryRecall",
@@ -58,13 +58,13 @@ export async function runConversationPipeline({ content, state, llmConfig, onPro
   const memoryRecall = await retrieveMemory(event, appraisal.output, state, llmConfig, (output) =>
     emit({ step: "memoryRecall", status: "streaming", output }),
   );
-  emit({ step: "memoryRecall", status: "completed", output: JSON.stringify(memoryRecall.output, null, 2), transport: memoryRecall.transport });
+  emit({ step: "memoryRecall", status: "completed", output: formatCognitiveTraceOutput(memoryRecall), transport: memoryRecall.transport });
 
   emit({ step: "decision", status: "running", input: "回应决策模块输入\n\n" + JSON.stringify({ appraisal: appraisal.output, memoryRecall: memoryRecall.output, runtime: state.runtime }, null, 2), output: "等待模型输出..." });
   const decision = await decideResponse(appraisal.output, memoryRecall.output, state, llmConfig, (output) =>
     emit({ step: "decision", status: "streaming", output }),
   );
-  emit({ step: "decision", status: "completed", output: JSON.stringify(decision.output, null, 2), transport: decision.transport });
+  emit({ step: "decision", status: "completed", output: formatCognitiveTraceOutput(decision), transport: decision.transport });
 
   const llmRequest = generateNaturalPromptRequest(event, state, appraisal.output, memoryRecall.output, decision.output, llmConfig.provider, llmConfig.model);
   emit({ step: "llmRequest", status: "completed", input: "Prompt Generator 输入\n\n" + JSON.stringify({ event, appraisal: appraisal.output, memoryRecall: memoryRecall.output, decision: decision.output }, null, 2), output: llmRequest.prompt, transport: "local" });
@@ -88,7 +88,7 @@ export async function runConversationPipeline({ content, state, llmConfig, onPro
     llmConfig,
     (output) => emit({ step: "stateUpdate", status: "streaming", output }),
   );
-  emit({ step: "stateUpdate", status: "completed", output: JSON.stringify(stateUpdate.output, null, 2), transport: stateUpdate.transport });
+  emit({ step: "stateUpdate", status: "completed", output: formatCognitiveTraceOutput(stateUpdate), transport: stateUpdate.transport });
 
   emit({ step: "runtimeSignalEvaluation", status: "running", input: "信号评估模块输入\n\n" + JSON.stringify({ event, replyOutput: llmOutput, stateUpdatePlan: stateUpdate.output, runtime: stateAfterUpdate.runtime }, null, 2), output: "等待模型输出..." });
   const runtimeSignalEvaluation = await evaluateRuntimeSignals(
@@ -104,7 +104,7 @@ export async function runConversationPipeline({ content, state, llmConfig, onPro
     llmConfig,
     (output) => emit({ step: "runtimeSignalEvaluation", status: "streaming", output }),
   );
-  emit({ step: "runtimeSignalEvaluation", status: "completed", output: JSON.stringify(runtimeSignalEvaluation.output, null, 2), transport: runtimeSignalEvaluation.transport });
+  emit({ step: "runtimeSignalEvaluation", status: "completed", output: formatCognitiveTraceOutput(runtimeSignalEvaluation), transport: runtimeSignalEvaluation.transport });
   const { nextState, stateDelta } = applyRuntimeSignalEvaluation(stateAfterUpdate, deltaAfterUpdate, runtimeSignalEvaluation.output);
   emit({ step: "stateDelta", status: "completed", input: "确定性写回输入\n\n" + JSON.stringify({ stateAfterUpdate, runtimeSignalEvaluation: runtimeSignalEvaluation.output }, null, 2), output: JSON.stringify(stateDelta, null, 2), transport: "local" });
 
@@ -122,4 +122,8 @@ export async function runConversationPipeline({ content, state, llmConfig, onPro
       stateDelta,
     },
   };
+}
+
+function formatCognitiveTraceOutput(trace: CognitiveModuleTrace<unknown>) {
+  return JSON.stringify(trace.fallbackReason ? { fallbackReason: trace.fallbackReason, output: trace.output } : trace.output, null, 2);
 }

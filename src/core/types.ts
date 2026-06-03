@@ -290,6 +290,7 @@ export interface CognitiveModuleTrace<TOutput> {
   request: CognitiveModuleRequest;
   output: TOutput;
   transport: "mock_llm" | "external_llm";
+  fallbackReason?: string;
 }
 
 export type PipelineStepStatus = "pending" | "running" | "streaming" | "completed" | "failed";

@@ -376,8 +376,13 @@ async function streamDeepseek(body, config, apiKey, response) {
     return;
   }
 
-  const final = outputMode === "structured_json" ? parseJsonContent(content) : moduleName === "reply_generation" ? { reply: content } : content;
-  sendSse(response, { final });
+  try {
+    const final = outputMode === "structured_json" ? parseJsonContent(content) : moduleName === "reply_generation" ? { reply: content } : content;
+    sendSse(response, { final });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendSse(response, { error: `结构化 JSON 解析失败：${message}` });
+  }
   response.end();
 }
 
@@ -417,7 +422,7 @@ async function fetchDeepseek(body, config, apiKey, stream) {
       thinking: { type: "disabled" },
       stream,
       temperature: 0.4,
-      max_tokens: outputMode === "structured_json" ? 1400 : 700,
+      max_tokens: outputMode === "structured_json" ? 2600 : 700,
     }),
   }).finally(() => clearTimeout(timeout));
 }

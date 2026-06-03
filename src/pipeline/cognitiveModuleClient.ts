@@ -34,15 +34,27 @@ export async function runCognitiveModule<TOutput>(
       throw new Error(`${request.moduleName} module failed: ${response.status} ${detail.slice(0, 240)}`);
     }
 
-    const output = response.headers.get("Content-Type")?.includes("text/event-stream")
-      ? ((await readEventStream(response, options.onStream)) as TOutput)
-      : ((await response.json()) as TOutput);
+    let output: TOutput;
+    let fallbackReason: string | undefined;
+    try {
+      output = response.headers.get("Content-Type")?.includes("text/event-stream")
+        ? ((await readEventStream(response, options.onStream)) as TOutput)
+        : ((await response.json()) as TOutput);
+    } catch (caught) {
+      if (!shouldUseStructuredFallback(request, caught)) {
+        throw caught;
+      }
+      fallbackReason = formatStructuredFallbackReason(caught);
+      output = mockOutput;
+      options.onStream?.(JSON.stringify({ fallbackReason, output: mockOutput }, null, 2));
+    }
 
     return {
       moduleName: request.moduleName,
       request,
       output,
       transport: "external_llm",
+      fallbackReason,
     };
   }
 
@@ -97,4 +109,16 @@ async function readEventStream(response: Response, onStream?: (output: string) =
   if (finalJson) return JSON.parse(finalJson);
   if (accumulated.trim()) return JSON.parse(accumulated.trim());
   throw new Error("外部接口流结束但没有返回内容");
+}
+
+function shouldUseStructuredFallback(request: CognitiveModuleRequest, caught: unknown) {
+  if (request.outputMode !== "structured_json") return false;
+  if (caught instanceof SyntaxError) return true;
+  if (!(caught instanceof Error)) return false;
+  return /JSON|Unterminated|string|流结束|结构化/.test(caught.message);
+}
+
+function formatStructuredFallbackReason(caught: unknown) {
+  const message = caught instanceof Error ? caught.message : String(caught);
+  return `外部结构化输出无法解析，已使用本地候选结果继续流程：${message}`;
 }

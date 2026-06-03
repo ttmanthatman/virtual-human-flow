@@ -2,6 +2,36 @@
 
 本文档记录用户指出错误后的勘验、根因和流程修正。目的不是追责，而是防止同类错误反复出现。
 
+## 2026-06-03 Memory Recall 结构化 JSON 截断导致对话卡住
+
+### 用户指出的问题
+
+用户点击“王佳宁”并连续输入两次消息后，第二次流程卡在“记忆召回”，输入栏下方显示红色错误：`Unterminated string in JSON at position 4052 (line 161 column 15)`。用户怀疑第一次流程可能没有走完，导致第二次接收信息出错。
+
+### 错误类型
+
+- 实现边界错误：`runCognitiveModule` 虽然接收本地 `mockOutput` 作为 fallback，但外部结构化 JSON 解析失败时直接抛错，没有使用 fallback 继续流程。
+- 验证标准错误：之前只验证了正常流式输出和页面展示，没有验证“DeepSeek 返回截断 JSON”这种真实 LLM 常见失败形态。
+- 运行时韧性不足：Vite/生产代理在流结束后解析结构化 JSON 时没有捕获解析失败，可能让前端只看到半截流和裸 `JSON.parse` 错误。
+
+### 根因
+
+Memory Recall 的输入会带上短期记忆、长期记忆候选、关系和关切。第二轮对话比第一轮上下文更长，外部模型更容易返回较长结构化 JSON；一旦输出被截断，`readEventStream` 会在没有 `final` 的情况下解析累积文本，最终触发 `Unterminated string`。这和“第一次流程没走完”不是同一个根因；第一次如果正在写回或生成，会增加上下文变化和时序压力，但真正让第二次卡死的是结构化输出解析层没有兜底。
+
+### 修正
+
+1. `CognitiveModuleTrace` 新增 `fallbackReason`，记录外部结构化输出无法解析的原因。
+2. `runCognitiveModule` 在结构化 JSON 解析失败时使用传入的 `mockOutput` 继续流程，并把 fallback 原因推送到右侧流程追踪。
+3. Conversation Pipeline 和历史 trace 展示会把 `fallbackReason` 与实际输出一起显示，用户能看见发生过回退。
+4. Memory Recall prompt/contract 收紧输出长度：短期记忆最多 4 条，长期记忆最多 5 条，reason 使用短句。
+5. Vite 和生产 DeepSeek 代理捕获流式结构化 JSON 解析失败，并通过 SSE error 明确返回；结构化输出 token 上限从 1400 提高到 2600，降低截断概率。
+
+### 新增验证标准
+
+- 新增 `npm run verify:cognitive-fallback`：伪造未闭合 SSE JSON，验证 `runCognitiveModule` 不抛错，而是返回 fallback output 和 `fallbackReason`。
+- 以后涉及结构化认知模块、SSE、DeepSeek 代理或 Memory Recall 时，必须验证坏 JSON 不会中断整轮对话。
+- 右侧流程追踪必须能展示 fallback 原因，避免“静默降级”。
+
 ## 2026-06-03 完成功能后未同步版本号
 
 ### 用户指出的问题

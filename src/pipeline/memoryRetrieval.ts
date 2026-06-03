@@ -63,9 +63,10 @@ export async function retrieveMemory(
         `说话者关系：${retrievalContext.speakerRelationshipSummary}`,
         `长期记忆候选和本地混合评分：${JSON.stringify(rankedCandidates.slice(0, 8), null, 2)}`,
         "请复判这些候选。没有关键词命中但语义上相关的记忆也可以召回；只有词面命中但语义无关的记忆应降低权重。",
+        "输出要克制：shortTermContext 最多保留 4 条必要短期记忆，longTermMemories 最多返回 5 条，每条 reason 和 factor reason 都用短句。",
       ].join("\n\n"),
       outputContract:
-        "Return JSON: { source, retrievalMode, naturalLanguageQuery, shortTermContext: ShortTermMemory[], longTermMemories: [{ memoryId, summary, score, reason, factors }] }",
+        "Return JSON: { source, retrievalMode, naturalLanguageQuery, shortTermContext: ShortTermMemory[] max 4, longTermMemories: [{ memoryId, summary, score, reason, factors }] max 5 }",
     },
     llmConfig,
     mockOutput,

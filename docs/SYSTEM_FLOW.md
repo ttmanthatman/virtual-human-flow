@@ -20,7 +20,7 @@
 
 认知模块是另一类 LLM 调用。Appraisal、Memory Recall、Decision、State Update 都是独立的脑区式 LLM 模块；它们可以用结构化输入/输出约束，因为它们不是角色台词生成器，而是系统内部的判断模块。
 
-真实 LLM 的结构化输出必须先经过确定性归一化，再交给下游模块。Appraisal、Memory Recall、Decision 和 State Update 都有模块出口归一化层，用来处理数组缺失、关系对象变成字符串、未知 concern id、枚举漂移等情况。归一化层不能改变 Reply LLM 的自然语言边界，它只保护内部认知模块的数据契约。
+真实 LLM 的结构化输出必须先经过确定性归一化，再交给下游模块。Appraisal、Memory Recall、Decision 和 State Update 都有模块出口归一化层，用来处理数组缺失、关系对象变成字符串、未知 concern id、枚举漂移等情况。如果外部结构化 JSON 被截断或无法解析，Cognitive Module Client 会记录 `fallbackReason` 并使用本地候选结果继续流程，不能让用户对话卡死。归一化层不能改变 Reply LLM 的自然语言边界，它只保护内部认知模块的数据契约。
 
 Memory Recall 不是敏感词召回。触发词可以作为线索，但记忆浮现必须同时参考自然语言相关度、当前关切、说话者关系、情绪显著、近期性和词面线索。当前同步路径先在本地构建混合召回候选，再交给 Memory Recall LLM 复判；未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
 
@@ -367,9 +367,12 @@ flowchart TD
     FETCH --> STREAM{"SSE?"}
     STREAM -- "是" --> READ["readEventStream: 累积 delta / 解析 final JSON"]
     STREAM -- "否" --> JSON["response.json"]
+    READ --> PARSE{"结构化 JSON 可解析?"}
+    PARSE -- "否" --> FALLBACK["记录 fallbackReason + 使用 mockOutput"]
+    PARSE -- "是" --> TRACE
     CHECK -- "否" --> MOCK["mockOutput"]
-    READ --> TRACE["CognitiveModuleTrace"]
     JSON --> TRACE
+    FALLBACK --> TRACE["CognitiveModuleTrace"]
     MOCK --> TRACE
     TRACE --> CALLER["Appraisal/Memory/Decision/State/Signals/Generators"]
 ```
@@ -747,6 +750,7 @@ flowchart LR
 | 人物场景一致性检测 | initialized | Profile Scene Consistency LLM 判断人物和场景是否硬冲突；硬冲突需要扭曲时空密码继续 |
 | 同步对话路径 | initialized | 事件 -> 评估 -> 记忆召回 -> 回应决策 -> 回应提示词 -> 回应输出 -> 状态更新 -> 信号评估 -> 状态变化 |
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
+| 结构化输出回退 | initialized | 外部认知模块 JSON 截断或无法解析时记录 `fallbackReason`，使用本地候选结果继续对话 |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |
 | 生产部署 | initialized | `<production-domain>` 通过 nginx 反代 PM2 进程 `<production-pm2-name>`，线上目录 `<production-app-dir>` |
 | 站内手动更新 | initialized | 左上角自动检查远端版本；管理员可触发 VPS git pull、npm ci、npm run build 和重启 |

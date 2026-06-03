@@ -1782,12 +1782,12 @@ function buildCompletedTraceProgress(step: keyof PipelineTrace, trace: PipelineT
     };
   }
 
-  const cognitiveTrace = data as { request?: { prompt: string; outputContract?: string }; output?: unknown; transport?: PipelineStepProgress["transport"] };
+  const cognitiveTrace = data as { request?: { prompt: string; outputContract?: string }; output?: unknown; transport?: PipelineStepProgress["transport"]; fallbackReason?: string };
   return {
     step,
     status: "completed",
     input: [cognitiveTrace.request?.prompt, cognitiveTrace.request?.outputContract ? `\n\n输出契约：${cognitiveTrace.request.outputContract}` : ""].filter(Boolean).join(""),
-    output: JSON.stringify(cognitiveTrace.output, null, 2),
+    output: JSON.stringify(cognitiveTrace.fallbackReason ? { fallbackReason: cognitiveTrace.fallbackReason, output: cognitiveTrace.output } : cognitiveTrace.output, null, 2),
     transport: cognitiveTrace.transport,
   };
 }
