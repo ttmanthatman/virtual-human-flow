@@ -101,18 +101,20 @@
 | Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、内置/共享档案合并、共享档案存储、DeepSeek 预览缓存写回、用户私有消息历史、用户私有对话运行态、用户私有关系余波、对话审计和站内手动更新 | HTTP request, liao login response, local runtime JSON, builtin persona dossiers, git working tree | auth session, persona dossiers, audit entries, update status/SSE | Vite Dev Server/Production Server | liao Chatroom, local runtime files, Builtin Persona Dossiers, Git |
 | Conversation History Isolation Verification | `scripts/verify-conversation-history-isolation.mjs` | 在临时运行目录验证用户 A 的对话状态不会进入用户 B 或共享档案 | 无 | pass/fail | npm script | Server Support |
 | Conversation Message History Verification | `scripts/verify-conversation-message-history.mjs` | 在临时运行目录验证中间栏消息历史按用户和档案保存、读取和隔离 | 无 | pass/fail | npm script | Server Support |
+| User Relationship Memory Verification | `scripts/verify-user-relationship-memory.mjs` | 验证 State Update 会按当前说话用户写入自然语言关系印象记忆，并回写关系备注 | 无 | pass/fail | npm script | State Updater |
 | Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录站内手动更新、VPS git 工作树配置、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | manualVpsUpdate |
 
 ## 函数登记表
 
 | 函数名 | 文件 | 责任 | 参数 | 返回 | 副作用 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `runConversationPipeline` | `src/pipeline/conversationPipeline.ts` | 运行完整对话 pipeline | content, state, llmConfig | nextState, trace | 写入状态 | implemented |
+| `runConversationPipeline` | `src/pipeline/conversationPipeline.ts` | 运行完整对话 pipeline，并把当前登录用户作为事件说话者 | content, state, llmConfig, speaker | nextState, trace | 写入状态 | implemented |
 | `runCognitiveModule` | `src/pipeline/cognitiveModuleClient.ts` | 执行一个认知脑区式 LLM 模块；结构化输出不可解析时用 mockOutput 继续并记录原因 | request, config, mockOutput | CognitiveModuleTrace | 可调用外部 endpoint | implemented |
 | `runAppraisal` | `src/pipeline/appraisal.ts` | 通过 LLM 做事件到关切评估 | event, state, llmConfig | CognitiveModuleTrace<AppraisalResult> | 可调用外部 endpoint | implemented |
 | `normalizeAppraisalResult` | `src/pipeline/appraisal.ts` | 将 Appraisal LLM 输出归一化，防止关系、关切数组和事件 ID 形状漂移传入下游 | result, fallback, event, state | AppraisalResult | 无 | implemented |
 | `retrieveMemory` | `src/pipeline/memoryRetrieval.ts` | 通过 LLM 召回相关记忆 | event, appraisal, state, llmConfig | CognitiveModuleTrace<MemoryRecallResult> | 可调用外部 endpoint | implemented |
 | `createMemoryRetrievalContext` | `src/pipeline/memoryRetrieval.ts` | 将事件、评估、激活关切、说话者关系合成召回上下文，供同步和未来异步路径复用 | event, appraisal, state, source | MemoryRetrievalContext | 无 | implemented |
+| `buildRelationshipMemoryCandidates` | `src/pipeline/memoryRetrieval.ts` | 将 `relationshipMemory` 关系印象转换为长期记忆候选，参与混合召回 | state | LongTermMemory[] | 无 | implemented |
 | `rankLongTermMemoryCandidates` | `src/pipeline/memoryRetrieval.ts` | 对长期记忆做混合召回排序 | memories, context | RankedMemoryCandidate[] | 无 | implemented |
 | `scoreLongTermMemory` | `src/pipeline/memoryRetrieval.ts` | 计算单条长期记忆的自然语言相关、关切、关系、情绪、近期和词面因子 | memory, context | RankedMemoryCandidate | 无 | implemented |
 | `calculateNaturalLanguageRelevance` | `src/pipeline/memoryRetrieval.ts` | 用语义片段重合估算自然语言相关度，后续可替换为 embedding 评分器 | query, summary | number | 无 | implemented |
@@ -123,7 +125,8 @@
 | `runLlm` | `src/pipeline/llmClient.ts` | 调用 Reply LLM | request, config, simulateInput | ReplyOutput | 可调用外部 endpoint | implemented |
 | `readReplyEventStream` | `src/pipeline/llmClient.ts` | 读取 Reply LLM 的 SSE 输出并累积为回复文本 | response, onStream | ReplyOutput-like object | 调用 onStream 更新 live trace | implemented |
 | `applyStateUpdates` | `src/pipeline/stateUpdater.ts` | 调用 State Update LLM 并写回状态 | state, event, replyOutput, context, llmConfig | nextState, StateDelta, stateUpdate | 写入记忆和状态 | implemented |
-| `normalizeStateUpdatePlan` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 输出归一化，保证 concernUpdates、relationshipUpdates 和 internalStateNote 稳定 | result, fallback, state | StateUpdatePlan | 无 | implemented |
+| `normalizeStateUpdatePlan` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 输出归一化，保证 concernUpdates、relationshipUpdates、userRelationshipMemory 和 internalStateNote 稳定 | result, fallback, state, event | StateUpdatePlan | 无 | implemented |
+| `normalizeUserRelationshipMemory` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 生成的当前用户印象和关系总结归一化为自然语言关系记忆 | value, fallback, event | StateUpdatePlan.userRelationshipMemory | 无 | implemented |
 | `evaluateRuntimeSignals` | `src/pipeline/runtimeSignalEvaluator.ts` | 调用 Runtime Signal Evaluation LLM 评估能量、情绪、情绪倾向、唤醒度 | state, event, replyOutput, context, llmConfig | CognitiveModuleTrace<RuntimeSignalEvaluationResult> | 可调用外部 endpoint | implemented |
 | `applyRuntimeSignalEvaluation` | `src/pipeline/runtimeSignalEvaluator.ts` | 将信号评估结果写回 runtime 并追加 trace 变化 | state, stateDelta, evaluation | nextState, StateDelta | 写入 runtime signals | implemented |
 | `normalizeRuntimeSignalEvaluation` | `src/pipeline/runtimeSignalEvaluator.ts` | 将模型返回的信号评估结果归一化为稳定 UI 结构 | state, evaluation | RuntimeSignalEvaluationResult | 防止模型形状漂移导致 UI 崩溃 | implemented |
@@ -143,6 +146,7 @@
 | `createPersonaDossier` | `src/App.tsx` | 创建绑定人物状态和场景素材的可切换档案条目 | state, dossierDescription, sceneDescription, title | PersonaDossier | 无 | implemented |
 | `ensureDossierPreview` | `src/App.tsx` | 当前角色缺少预览时调用 DeepSeek 流式生成短预览，并提交后台全局保存 | dossier | Promise<void> | 调用 `/api/deepseek-chat` 和 `/api/persona-dossiers/:id/preview`，上报生成监视 | implemented |
 | `createConversationHistoryKey` | `src/App.tsx` | 为中间栏消息历史生成 `user + dossier` 隔离键 | user, dossierId | string | 无 | implemented |
+| `createConversationSpeaker` | `src/App.tsx` | 将登录用户归一化为 pipeline 事件说话者身份 | user | `{ id, name }` | 无 | implemented |
 | `readStoredConversationHistory` | `src/App.tsx` | 从 localStorage 读取指定历史桶 | historyKey | ChatMessage[]? | 读取 localStorage | implemented |
 | `writeStoredConversationHistory` | `src/App.tsx` | 将指定历史桶截断后写入 localStorage | historyKey, messages | void | 写入 localStorage | implemented |
 | `setMessagesForHistory` | `src/App.tsx` | 将消息更新写入指定 `conversationHistoryKey`，避免切任务或切用户串历史 | historyKey, updater | void | 更新 App state 和 localStorage | implemented |
@@ -214,6 +218,9 @@
 | `relationships` | `CharacterState` | `Record<string, Relationship>` | 角色对每个对象的关系档案 | seed/stateUpdater | appraisal/promptBuilder/UI | implemented |
 | `shortTermMemory` | `CharacterState` | `ShortTermMemory[]` | 最近对话原文 | stateUpdater | memoryRetrieval/promptBuilder | implemented |
 | `longTermMemory` | `CharacterState` | `LongTermMemory[]` | 长期摘要记忆 | seed/stateUpdater | memoryRetrieval/promptBuilder | implemented |
+| `relationshipMemory` | `CharacterState` | `RelationshipMemory[]` | 长期记忆中的关系记忆区，按当前用户保存自然语言印象、关系总结、证据和最近互动 | seed/builtin/stateUpdater | memoryRetrieval/promptBuilder/right panel | implemented |
+| `relationshipMemory[].impressionSummary` | `RelationshipMemory` | `string` | 人物对该用户的自然语言印象，不使用数值评分 | stateUpdater | promptBuilder/right panel | implemented |
+| `relationshipMemory[].relationshipSummary` | `RelationshipMemory` | `string` | 人物与该用户当前关系的自然语言总结，不使用数值评分 | stateUpdater | promptBuilder/right panel | implemented |
 | `runtime.derivedMood` | `RuntimeState` | object | 由状态信号评估模块产出的当前心情摘要 | seed/runtimeSignalEvaluator | UI/promptBuilder | implemented |
 | `runtime.signalProfiles` | `RuntimeState` | `Record<RuntimeSignalKey, RuntimeSignalProfile>` | UI 简化指标背后的自然语言考量，供 Prompt Generator 组织上下文 | seed/generator/stateUpdater | promptBuilder/UI | implemented |
 | `runtime.signalProfiles.*.cognitiveNarrative` | `RuntimeSignalProfile` | `string` | 状态信号背后的内在状态叙述，只描述属性和成因，不写回复指令 | seed/generator/stateUpdater | promptBuilder/UI | implemented |
@@ -248,6 +255,7 @@
 | `memoryRecall.retrievalMode` | `MemoryRecallResult` | `"hybrid_relevance"` | 标识当前使用混合相关度召回，不是敏感词召回 | memoryRetrieval | Pipeline Debug Panel | implemented |
 | `memoryRecall.naturalLanguageQuery` | `MemoryRecallResult` | `string` | 召回时交给本地排序和 LLM 复判的自然语言语义查询 | memoryRetrieval | Pipeline Debug Panel | implemented |
 | `memoryRecall.longTermMemories[].factors` | `MemoryRecallResult` | `MemoryRecallFactor[]` | 每条长期记忆被召回的分项原因和评分 | memoryRetrieval | Pipeline Debug Panel/Decision/Prompt Generator | implemented |
+| `stateUpdate.userRelationshipMemory` | `StateUpdatePlan` | object | State Update LLM 为当前说话用户生成的自然语言印象和关系总结 | stateUpdater | relationshipMemory writeback | implemented |
 | `stateUpdate` | `PipelineTrace` | `CognitiveModuleTrace<StateUpdatePlan>` | State Update LLM 的完整调用记录 | stateUpdater | Pipeline Debug Panel | implemented |
 | `runtimeSignalEvaluation` | `PipelineTrace` | `CognitiveModuleTrace<RuntimeSignalEvaluationResult>` | Runtime Signal Evaluation LLM 的完整调用记录 | runtimeSignalEvaluator | Pipeline Debug Panel | implemented |
 | `pipelineStepProgress` | App state | `PipelineStepProgress` | 执行中某一步的输入、输出、状态和 transport，用于 live trace | conversationPipeline | App Shell | implemented |

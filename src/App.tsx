@@ -126,6 +126,12 @@ function createConversationHistoryKey(user: AuthUser | undefined, dossierId: str
   return `${userPart}::dossier-${dossierId || "none"}`;
 }
 
+function createConversationSpeaker(user: AuthUser | undefined) {
+  const stableId = user ? `user:${user.userId || user.username}` : "user:guest";
+  const displayName = user?.nickname || user?.username || "当前对话者";
+  return { id: stableId, name: displayName };
+}
+
 function readStoredConversationHistory(historyKey: string) {
   try {
     const raw = localStorage.getItem(`${conversationHistoryStoragePrefix}:${historyKey}`);
@@ -217,6 +223,11 @@ export function App() {
   );
   const activeDossier = useMemo(() => dossiers.find((dossier) => dossier.id === activeDossierId) ?? dossiers[0], [activeDossierId, dossiers]);
   const activeConversationHistoryKey = useMemo(() => createConversationHistoryKey(authUser, activeDossierId), [authUser, activeDossierId]);
+  const activeConversationSpeaker = useMemo(() => createConversationSpeaker(authUser), [authUser]);
+  const activeRelationshipMemory = useMemo(
+    () => (state.relationshipMemory ?? []).find((memory) => memory.targetUserId === activeConversationSpeaker.id),
+    [activeConversationSpeaker.id, state.relationshipMemory],
+  );
   const messages = conversationHistories[activeConversationHistoryKey] ?? seedMessages;
   const groupedDossiers = useMemo(() => {
     const groups = new Map<string, PersonaDossier[]>();
@@ -779,6 +790,7 @@ export function App() {
       concerns: [],
       shortTermMemory: [],
       longTermMemory: [],
+      relationshipMemory: [],
       runtime: {
         ...seedState.runtime,
         activeConcernIds: [],
@@ -975,7 +987,7 @@ export function App() {
     const userMessage: ChatMessage = {
       id: makeId("msg"),
       speaker: "user",
-      speakerName: "当前对话者",
+      speakerName: activeConversationSpeaker.name,
       content: input.trim(),
       timestamp: nowIso(),
     };
@@ -986,6 +998,7 @@ export function App() {
         content: input.trim(),
         state,
         llmConfig,
+        speaker: activeConversationSpeaker,
         onProgress: (progress) => {
           updateMonitorProgress(progress);
         },
@@ -1557,6 +1570,41 @@ export function App() {
               );
             })}
           </div>
+
+          <section className="relationship-memory-card">
+            <div className="relationship-memory-head">
+              <div>
+                <strong>对当前用户的印象</strong>
+                <span>{activeConversationSpeaker.name}</span>
+              </div>
+              <Eye size={16} />
+            </div>
+            {activeRelationshipMemory ? (
+              <div className="relationship-memory-body">
+                <div>
+                  <span>印象</span>
+                  <p>{activeRelationshipMemory.impressionSummary}</p>
+                </div>
+                <div>
+                  <span>关系</span>
+                  <p>{activeRelationshipMemory.relationshipSummary}</p>
+                </div>
+                <div>
+                  <span>最近互动</span>
+                  <p>{activeRelationshipMemory.lastInteractionSummary}</p>
+                </div>
+                {activeRelationshipMemory.evidence.length > 0 ? (
+                  <ul>
+                    {activeRelationshipMemory.evidence.slice(-4).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : (
+              <p className="relationship-memory-empty">还没有形成稳定印象；发送几轮后会写入这个用户专属的关系记忆。</p>
+            )}
+          </section>
 
           {deepseekConnected ? (
             <div className="llm-settings connected-summary">

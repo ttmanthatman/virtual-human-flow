@@ -502,6 +502,7 @@ flowchart TD
     R --> COMMIT
     COMMIT --> STM["写入 shortTermMemory"]
     COMMIT --> LTM["可写入 longTermMemory"]
+    COMMIT --> RMEM["写入 relationshipMemory 关系记忆区"]
     COMMIT --> REL["更新 relationships"]
     COMMIT --> CONCERN["更新 concerns"]
     COMMIT --> NEXT["nextState + StateDelta"]
@@ -759,6 +760,7 @@ flowchart LR
 | 共享多人档案 | initialized | 管理员保存到 `.persona-dossiers.local.json`，所有登录用户可读取和使用 |
 | 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`，切换人物时加载对应中间栏历史 |
 | 用户私有对话运行态 | initialized | 登录用户对话后按 `userId + dossierId` 写入 `.conversation-states.local.json`，读取档案时只叠加当前用户条目 |
+| 用户关系印象记忆 | initialized | `CharacterState.relationshipMemory` 作为长期记忆中的关系记忆区，按当前说话用户保存自然语言印象、关系总结、证据和最近互动，并进入召回、回复提示词和右侧展示 |
 | 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，仅管理员可查看、删除单条或清空 |
 | 人物档案生成 | initialized | 通过 Dossier Interpretation LLM 重新解读用户素材，生成 profile、concerns、longTermMemory 和 runtime 预览 |
 | 人物档案预览 | initialized | 左侧只展示 `profile.displaySummary` 等摘要信息，用户确认后应用 |
@@ -766,7 +768,7 @@ flowchart LR
 | 场景生成 | initialized | 通过 Scene Interpretation LLM 重新解读用户素材，生成 scene、状态影响、人物影响、关切和记忆预览 |
 | 场景预览 | initialized | 先显示场景摘要和状态影响预览，用户确认后应用完整状态 |
 | 人物场景一致性检测 | initialized | Profile Scene Consistency LLM 判断人物和场景是否硬冲突；硬冲突需要扭曲时空密码继续 |
-| 同步对话路径 | initialized | 事件 -> 评估 -> 记忆召回 -> 回应决策 -> 回应提示词 -> 回应输出 -> 状态更新 -> 信号评估 -> 状态变化 |
+| 同步对话路径 | initialized | 登录用户身份 -> 事件 -> 评估 -> 记忆召回（含关系记忆区）-> 回应决策 -> 回应提示词（含当前用户印象）-> 回应输出 -> 状态更新（写入关系印象）-> 信号评估 -> 状态变化 |
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
 | 结构化输出回退 | initialized | 外部认知模块 JSON 截断或无法解析时记录 `fallbackReason`，使用本地候选结果继续对话 |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |

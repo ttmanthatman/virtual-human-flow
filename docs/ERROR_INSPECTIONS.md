@@ -2,6 +2,37 @@
 
 本文档记录用户指出错误后的勘验、根因和流程修正。目的不是追责，而是防止同类错误反复出现。
 
+## 2026-06-03 人物没有区分当前说话用户和关系印象
+
+### 用户指出的问题
+
+用户指出人物不仅要区分是谁在和它说话，还要生成对这个用户的印象，影响关系；长期记忆中要开辟关系记忆区，专门写关系和印象，并在右侧 pipeline 下方展示对该用户的印象和关系。
+
+### 错误类型
+
+- 事件身份错误：`runConversationPipeline` 仍把所有用户消息写成固定 `user_b / 当前对话者`，登录用户身份没有进入认知 pipeline。
+- 记忆结构错误：长期记忆只有通用 `longTermMemory`，没有专门面向当前用户的关系印象区。
+- 表达上下文错误：Reply LLM 只能看到旧的关系表和普通记忆，无法稳定参考“她对这个登录用户的具体印象”。
+- UI 可观测性错误：右侧流程面板只能看模块 trace，看不到当前用户对应的关系印象是否生成和变化。
+
+### 根因
+
+上一版把“对话历史/运行态按用户隔离”落到了持久化层，但前端发送消息时没有把 `authUser` 归一化为事件说话者；状态更新仍只维护旧的数值关系变化和普通长期记忆。这样不同登录用户虽然不会共享持久化状态，但人物大脑内部仍缺少“这个用户是谁、我怎么看他/她”的自然语言记忆结构。
+
+### 修正
+
+1. 前端新增 `createConversationSpeaker`，把登录用户转成稳定 `speaker.id` 和展示名；pipeline 事件使用该身份，不再写死 `user_b`。
+2. `CharacterState` 新增 `relationshipMemory`，作为长期记忆中的关系记忆区，按 `targetUserId` 保存 `impressionSummary`、`relationshipSummary`、`evidence`、`lastInteractionSummary` 和历史摘要。
+3. State Update LLM 输出契约新增 `userRelationshipMemory`，要求对当前说话用户生成自然语言印象和关系总结，不使用数值评分。
+4. 写回时更新 `relationshipMemory`，并把自然语言关系摘要同步到 `relationships[targetUserId].recentTone/notes`，让后续关系判断能受影响。
+5. Memory Recall 将 `relationshipMemory` 转为长期记忆候选；Prompt Generator 直接注入当前用户的印象、关系、最近互动和证据。
+6. 右侧 pipeline 下方新增“对当前用户的印象”展示区，显示当前登录用户对应的印象、关系、最近互动和证据。
+
+### 新增验证标准
+
+- 新增 `npm run verify:user-relationship-memory`：模拟 State Update LLM 返回当前用户关系印象，验证写入 `relationshipMemory`、按用户 ID 定位、字段为自然语言结构，并影响 `relationships` 的自然语言备注。
+- 以后涉及人物对用户关系、身份隔离或长期记忆结构时，必须验证 `speakerId` 来自登录用户，而不是固定占位用户。
+
 ## 2026-06-03 切换人物没有加载已保存的中间栏历史
 
 ### 用户指出的问题

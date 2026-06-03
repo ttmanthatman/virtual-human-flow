@@ -45,6 +45,7 @@ async function planStateUpdates(
 ) {
   const activeConcern = state.concerns.find((concern) => concern.status === "active" && concern.triggers.some((trigger) => event.content.includes(trigger)));
   const targetId = event.speakerId ?? "user_b";
+  const targetName = event.speakerName ?? "当前对话者";
   const mockOutput: StateUpdatePlan = {
     concernUpdates: activeConcern
       ? [
@@ -65,6 +66,17 @@ async function planStateUpdates(
       },
     ],
     newConcerns: [],
+    userRelationshipMemory: {
+      targetUserId: targetId,
+      targetUserName: targetName,
+      impressionSummary: `${targetName}这次说「${event.content}」，她会把这个人记成正在靠近但仍需观察的人。`,
+      relationshipSummary:
+        context.decision.responseMode === "short_avoidance"
+          ? `她对${targetName}保持礼貌但收紧的距离，愿意回应，却不想被推进太快。`
+          : `她对${targetName}维持可以继续对话的关系，正在根据对方是否尊重边界形成更具体判断。`,
+      evidence: [`对方说：「${event.content}」`, `她回应：「${replyOutput.reply || "沉默"}」`],
+      lastInteractionSummary: `本轮互动后，她对${targetName}的判断更具体：${context.decision.rationale}`,
+    },
     internalStateNote: activeConcern
       ? `她没有把「${activeConcern.title}」完整说出口，只是在心里停了一下。`
       : "这次对话没有明显戳中她的心事。",
@@ -82,10 +94,12 @@ async function planStateUpdates(
         `事件评估：${context.appraisal.appraisalSummary}`,
         `浮现的记忆：${context.memoryRecall.longTermMemories.map((memory) => memory.summary).join("；") || "没有特别强的记忆"}`,
         `回应姿态：${context.decision.rationale}`,
+        `当前说话者身份：${targetName}（${targetId}）。关系印象必须写给这个用户，不能写成泛化的“所有用户”。`,
         "请判断：哪些心事被加重或减轻、关系是否变化、是否产生新的心事、有没有没说出口但应该存入记忆的内心余波。",
+        "另外必须生成她对当前说话者的印象和关系总结。关系和印象不要用数值表示，不要写评分、等级、百分比或分数；用自然语言精确总结她如何看待这个用户，以及这次互动怎样改变他们的关系。",
       ].join("\n\n"),
       outputContract:
-        "Return JSON: { concernUpdates: [{ concernId, intensityDelta, valenceDelta, arousalDelta, status, note }], relationshipUpdates: [{ targetId, familiarityDelta, trustDelta, affectionDelta, tensionDelta, note }], newConcerns: [], internalStateNote }",
+        "Return JSON: { concernUpdates: [{ concernId, intensityDelta, valenceDelta, arousalDelta, status, note }], relationshipUpdates: [{ targetId, familiarityDelta, trustDelta, affectionDelta, tensionDelta, note }], newConcerns: [], userRelationshipMemory: { targetUserId, targetUserName, impressionSummary, relationshipSummary, evidence: string[], lastInteractionSummary }, internalStateNote }",
     },
     llmConfig,
     mockOutput,
@@ -94,7 +108,7 @@ async function planStateUpdates(
 
   return {
     ...trace,
-    output: normalizeStateUpdatePlan(trace.output, mockOutput, state),
+    output: normalizeStateUpdatePlan(trace.output, mockOutput, state, event),
   };
 }
 
@@ -124,7 +138,7 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
   for (const update of stateUpdatePlan.relationshipUpdates) {
     const existing = nextRelationships[update.targetId] ?? {
       targetId: update.targetId,
-      targetName: update.targetId,
+      targetName: event.speakerId === update.targetId ? event.speakerName ?? update.targetId : update.targetId,
       familiarity: 0.2,
       trust: 0.2,
       affection: 0,
@@ -141,6 +155,7 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
       affection: round(clamp(existing.affection + (update.affectionDelta ?? 0), -1, 1)),
       tension: round(clamp(existing.tension + (update.tensionDelta ?? 0), 0, 1)),
       lastInteractionAt: nowIso(),
+      targetName: event.speakerId === update.targetId ? event.speakerName ?? existing.targetName : existing.targetName,
       notes: [...existing.notes.slice(-5), update.note],
     };
     relationshipChanges.push(`${existing.targetName}: ${update.note}`);
@@ -187,6 +202,57 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
     memoryWrites.push("写入 internal_state_note 到长期记忆");
   }
 
+  const relationshipMemory = [...(state.relationshipMemory ?? [])];
+  const userRelationshipMemory = stateUpdatePlan.userRelationshipMemory;
+  if (userRelationshipMemory?.targetUserId) {
+    const targetUserId = userRelationshipMemory.targetUserId;
+    const existingIndex = relationshipMemory.findIndex((memory) => memory.targetUserId === targetUserId);
+    const existingMemory = existingIndex >= 0 ? relationshipMemory[existingIndex] : undefined;
+    const historyItem = {
+      id: makeId("relationship_history"),
+      summary: userRelationshipMemory.lastInteractionSummary,
+      createdAt: nowIso(),
+    };
+    const nextMemory = {
+      id: existingMemory?.id ?? makeId("relationship_memory"),
+      targetUserId,
+      targetUserName: userRelationshipMemory.targetUserName,
+      impressionSummary: userRelationshipMemory.impressionSummary,
+      relationshipSummary: userRelationshipMemory.relationshipSummary,
+      evidence: userRelationshipMemory.evidence.slice(-6),
+      lastInteractionSummary: userRelationshipMemory.lastInteractionSummary,
+      updatedAt: nowIso(),
+      history: [...(existingMemory?.history ?? []).slice(-5), historyItem],
+    };
+
+    if (existingIndex >= 0) {
+      relationshipMemory[existingIndex] = nextMemory;
+    } else {
+      relationshipMemory.push(nextMemory);
+    }
+
+    const existingRelationship = nextRelationships[targetUserId] ?? {
+      targetId: targetUserId,
+      targetName: userRelationshipMemory.targetUserName,
+      familiarity: 0.2,
+      trust: 0.2,
+      affection: 0,
+      tension: 0,
+      recentTone: "新关系",
+      unresolvedIssues: [],
+      notes: [],
+    };
+    nextRelationships[targetUserId] = {
+      ...existingRelationship,
+      targetName: userRelationshipMemory.targetUserName,
+      lastInteractionAt: nowIso(),
+      recentTone: userRelationshipMemory.relationshipSummary,
+      notes: [...existingRelationship.notes.slice(-4), userRelationshipMemory.impressionSummary, userRelationshipMemory.lastInteractionSummary],
+    };
+    relationshipChanges.push(`${userRelationshipMemory.targetUserName}: ${userRelationshipMemory.relationshipSummary}`);
+    memoryWrites.push(`写入对 ${userRelationshipMemory.targetUserName} 的关系印象记忆`);
+  }
+
   const activeConcernIds = nextConcerns.filter((concern) => concern.status === "active" && concern.intensity > 0.15).map((concern) => concern.id);
   const moodValence = round(clamp(nextConcerns.reduce((sum, concern) => sum + concern.valence * concern.intensity, 0) / Math.max(nextConcerns.length, 1), -1, 1));
   const moodArousal = round(clamp(nextConcerns.reduce((sum, concern) => sum + concern.arousal * concern.intensity, 0) / Math.max(nextConcerns.length, 1), 0, 1));
@@ -200,6 +266,7 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
       relationships: nextRelationships,
       shortTermMemory: shortTermMemory.slice(-20),
       longTermMemory: longTermMemory.slice(-30),
+      relationshipMemory: relationshipMemory.slice(-80),
       runtime: {
         ...state.runtime,
         activeConcernIds,
@@ -249,16 +316,18 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
   };
 }
 
-function normalizeStateUpdatePlan(result: unknown, fallback: StateUpdatePlan, state: CharacterState): StateUpdatePlan {
+function normalizeStateUpdatePlan(result: unknown, fallback: StateUpdatePlan, state: CharacterState, event: EventInput): StateUpdatePlan {
   if (!isRecord(result)) return fallback;
   const knownConcernIds = new Set(state.concerns.map((concern) => concern.id));
   const concernUpdates = normalizeConcernUpdates(result.concernUpdates, fallback.concernUpdates, knownConcernIds);
   const relationshipUpdates = normalizeRelationshipUpdates(result.relationshipUpdates, fallback.relationshipUpdates);
+  const userRelationshipMemory = normalizeUserRelationshipMemory(result.userRelationshipMemory, fallback.userRelationshipMemory, event);
 
   return {
     concernUpdates,
     relationshipUpdates,
     newConcerns: Array.isArray(result.newConcerns) ? result.newConcerns : fallback.newConcerns,
+    userRelationshipMemory,
     internalStateNote:
       typeof result.internalStateNote === "string" && result.internalStateNote.trim()
         ? result.internalStateNote
@@ -266,6 +335,33 @@ function normalizeStateUpdatePlan(result: unknown, fallback: StateUpdatePlan, st
           ? result.internal_state_note
           : fallback.internalStateNote,
   };
+}
+
+function normalizeUserRelationshipMemory(value: unknown, fallback: StateUpdatePlan["userRelationshipMemory"], event: EventInput): StateUpdatePlan["userRelationshipMemory"] {
+  const targetUserId = event.speakerId ?? fallback?.targetUserId ?? "unknown";
+  const targetUserName = event.speakerName ?? fallback?.targetUserName ?? "Unknown";
+  if (!isRecord(value)) return fallback ? { ...fallback, targetUserId, targetUserName } : undefined;
+
+  const impressionSummary = normalizeNaturalText(value.impressionSummary, fallback?.impressionSummary ?? `${targetUserName}这次互动后仍处在待观察的位置。`);
+  const relationshipSummary = normalizeNaturalText(value.relationshipSummary, fallback?.relationshipSummary ?? `她和${targetUserName}的关系还在形成中，会根据对方是否尊重边界继续调整。`);
+  const lastInteractionSummary = normalizeNaturalText(value.lastInteractionSummary, fallback?.lastInteractionSummary ?? `本轮互动让她对${targetUserName}有了新的具体印象。`);
+  const evidence = Array.isArray(value.evidence)
+    ? value.evidence.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean).slice(0, 6)
+    : fallback?.evidence ?? [];
+
+  return {
+    targetUserId,
+    targetUserName,
+    impressionSummary,
+    relationshipSummary,
+    evidence: evidence.length > 0 ? evidence : [`对方说：「${event.content}」`],
+    lastInteractionSummary,
+  };
+}
+
+function normalizeNaturalText(value: unknown, fallback: string) {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  return value.trim().replace(/(熟悉度|信任|紧张|分数|评分|百分比|score|trust|tension)\s*[:：]?\s*[-+]?\d+(\.\d+)?/gi, "").trim() || fallback;
 }
 
 function normalizeConcernUpdates(value: unknown, fallback: StateUpdatePlan["concernUpdates"], knownConcernIds: Set<string>) {

@@ -11,10 +11,14 @@ interface RunConversationPipelineInput {
   content: string;
   state: CharacterState;
   llmConfig: LlmConfig;
+  speaker: {
+    id: string;
+    name: string;
+  };
   onProgress?: (progress: PipelineStepProgress) => void;
 }
 
-export async function runConversationPipeline({ content, state, llmConfig, onProgress }: RunConversationPipelineInput): Promise<{
+export async function runConversationPipeline({ content, state, llmConfig, speaker, onProgress }: RunConversationPipelineInput): Promise<{
   nextState: CharacterState;
   trace: PipelineTrace;
 }> {
@@ -23,8 +27,8 @@ export async function runConversationPipeline({ content, state, llmConfig, onPro
     id: `event_${Date.now()}`,
     type: "user_message" as const,
     timestamp: new Date().toISOString(),
-    speakerId: "user_b",
-    speakerName: "当前对话者",
+    speakerId: speaker.id,
+    speakerName: speaker.name,
     roomId: "main_room",
     content,
   };

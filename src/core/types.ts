@@ -129,6 +129,22 @@ export interface LongTermMemory {
   importance: number;
 }
 
+export interface RelationshipMemory {
+  id: string;
+  targetUserId: string;
+  targetUserName: string;
+  impressionSummary: string;
+  relationshipSummary: string;
+  evidence: string[];
+  lastInteractionSummary: string;
+  updatedAt: string;
+  history: {
+    id: string;
+    summary: string;
+    createdAt: string;
+  }[];
+}
+
 export interface RuntimeState {
   attentionFocus?: string;
   energy: number;
@@ -172,6 +188,7 @@ export interface CharacterState {
   relationships: Record<string, Relationship>;
   shortTermMemory: ShortTermMemory[];
   longTermMemory: LongTermMemory[];
+  relationshipMemory: RelationshipMemory[];
   runtime: RuntimeState;
   scene?: SceneState;
   location?: CharacterLocation;
@@ -341,6 +358,14 @@ export interface StateUpdatePlan {
     arousal: number;
     triggers: string[];
   }[];
+  userRelationshipMemory?: {
+    targetUserId: string;
+    targetUserName: string;
+    impressionSummary: string;
+    relationshipSummary: string;
+    evidence: string[];
+    lastInteractionSummary: string;
+  };
   internalStateNote: string;
 }
 

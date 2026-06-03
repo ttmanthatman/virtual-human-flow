@@ -49,7 +49,8 @@ export async function retrieveMemory(
   onStream?: (output: string) => void,
 ): Promise<CognitiveModuleTrace<MemoryRecallResult>> {
   const retrievalContext = createMemoryRetrievalContext(event, appraisal, state, "sync_response");
-  const rankedCandidates = rankLongTermMemoryCandidates(state.longTermMemory, retrievalContext);
+  const longTermMemoryCandidates = [...state.longTermMemory, ...buildRelationshipMemoryCandidates(state)];
+  const rankedCandidates = rankLongTermMemoryCandidates(longTermMemoryCandidates, retrievalContext);
   const longTermMemories = selectRecallCandidates(rankedCandidates);
   const shortTermCandidates = state.shortTermMemory.slice(-4);
 
@@ -130,13 +131,15 @@ function createMemoryRetrievalContext(
   const speakerNames = [event.speakerId, event.speakerName, appraisal.speakerRelationship?.targetId, appraisal.speakerRelationship?.targetName]
     .filter(Boolean)
     .map((value) => String(value));
+  const relationshipMemory = (state.relationshipMemory ?? []).find((memory) => memory.targetUserId === event.speakerId);
   const speakerRelationshipSummary = appraisal.speakerRelationship
     ? [
         `${appraisal.speakerRelationship.targetName}`,
-        `熟悉度 ${appraisal.speakerRelationship.familiarity}`,
-        `信任 ${appraisal.speakerRelationship.trust}`,
-        `紧张 ${appraisal.speakerRelationship.tension}`,
         `最近气氛：${appraisal.speakerRelationship.recentTone}`,
+        relationshipMemory ? `她对这个用户的印象：${relationshipMemory.impressionSummary}` : "",
+        relationshipMemory ? `当前关系总结：${relationshipMemory.relationshipSummary}` : "",
+        relationshipMemory ? `最近一次关系记忆：${relationshipMemory.lastInteractionSummary}` : "",
+        appraisal.speakerRelationship.notes.length > 0 ? `关系备注：${appraisal.speakerRelationship.notes.slice(-3).join("；")}` : "",
         Array.isArray(appraisal.speakerRelationship.unresolvedIssues) && appraisal.speakerRelationship.unresolvedIssues.length > 0
           ? `未解决：${appraisal.speakerRelationship.unresolvedIssues.join("、")}`
           : "",
@@ -162,6 +165,28 @@ function createMemoryRetrievalContext(
     speakerNames,
     speakerRelationshipSummary,
   };
+}
+
+function buildRelationshipMemoryCandidates(state: CharacterState): LongTermMemory[] {
+  return (state.relationshipMemory ?? []).map((memory) => ({
+    id: memory.id,
+    summary: [
+      `关系记忆区：${memory.targetUserName}`,
+      `印象：${memory.impressionSummary}`,
+      `关系：${memory.relationshipSummary}`,
+      `最近互动：${memory.lastInteractionSummary}`,
+      memory.evidence.length > 0 ? `依据：${memory.evidence.join("；")}` : "",
+    ]
+      .filter(Boolean)
+      .join("。"),
+    relatedPeople: [memory.targetUserId, memory.targetUserName],
+    relatedConcerns: [],
+    emotionalValence: 0,
+    emotionalIntensity: 0.48,
+    createdAt: memory.updatedAt,
+    lastAccessedAt: memory.updatedAt,
+    importance: 0.82,
+  }));
 }
 
 function normalizeMemoryRecallResult(

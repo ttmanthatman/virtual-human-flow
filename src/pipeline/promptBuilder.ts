@@ -37,9 +37,20 @@ export function generateNaturalPromptRequest(
           .join(" ")
       : "这句话没有明显戳中她最核心的心事，她可以按普通互动来处理。";
 
-  const relationshipNarrative = appraisal.speakerRelationship
-    ? `说话的人是 ${appraisal.speakerRelationship.targetName}。她和这个人有一点熟悉，信任感不算很高，最近的互动气氛是「${appraisal.speakerRelationship.recentTone}」。`
-    : "说话的人没有明确关系档案，她会保持礼貌距离。";
+  const relationshipMemory = (state.relationshipMemory ?? []).find((memory) => memory.targetUserId === event.speakerId);
+  const relationshipNarrative = relationshipMemory
+    ? [
+        `说话的人是 ${relationshipMemory.targetUserName}。`,
+        `她对这个用户的印象是：${relationshipMemory.impressionSummary}`,
+        `她和这个用户的当前关系是：${relationshipMemory.relationshipSummary}`,
+        `最近一次互动留下的关系余波是：${relationshipMemory.lastInteractionSummary}`,
+        relationshipMemory.evidence.length > 0 ? `形成这个印象的依据包括：${relationshipMemory.evidence.join("；")}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : appraisal.speakerRelationship
+      ? `说话的人是 ${appraisal.speakerRelationship.targetName}。最近的互动气氛是「${appraisal.speakerRelationship.recentTone}」。她会参考这些自然语言备注判断距离：${appraisal.speakerRelationship.notes.slice(-3).join("；") || "没有更多备注"}。`
+      : "说话的人没有明确关系档案，她会保持礼貌距离，并在这次互动后开始形成对这个用户的印象。";
 
   const memoryNarrative =
     memoryRecall.longTermMemories.length > 0

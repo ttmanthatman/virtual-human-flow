@@ -156,6 +156,25 @@ export const seedState: CharacterState = {
       importance: 0.32,
     },
   ],
+  relationshipMemory: [
+    {
+      id: "relationship_memory_user_b",
+      targetUserId: "user_b",
+      targetUserName: "当前对话者",
+      impressionSummary: "这个人曾经用轻松的语气聊过徒步，暂时不像是在逼问她，但还没有真正理解她和前任之间未完成的余波。",
+      relationshipSummary: "林安对这个人保持半熟的友好距离：能礼貌回应，也会在涉及周末、约定和靠近时先谨慎判断。",
+      evidence: ["两周前聊过一次徒步，语气轻松，没有恶意。", "这个人偶尔邀请林安参加活动，但不了解她和前任的细节。"],
+      lastInteractionSummary: "还没有新的直接互动，当前印象主要来自既有背景记忆。",
+      updatedAt: nowIso(),
+      history: [
+        {
+          id: "relationship_history_user_b_seed",
+          summary: "初始关系印象：半熟、友好但保持距离，邀请类话题会触碰她的谨慎。",
+          createdAt: nowIso(),
+        },
+      ],
+    },
+  ],
   runtime: {
     attentionFocus: "还没完全放下前任，但不想表现出来",
     energy: 0.58,

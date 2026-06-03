@@ -601,6 +601,25 @@ function createDossier(spec) {
         importance: event.importance,
       })),
     ].slice(-30),
+    relationshipMemory: [
+      {
+        id: `relationship_memory_${spec.id}_user_b`,
+        targetUserId: "user_b",
+        targetUserName: "当前对话者",
+        impressionSummary: `当前对话者还不了解${spec.name}的具体处境，初始印象停留在陌生或半熟的礼貌互动上。`,
+        relationshipSummary: `${spec.name}会先保持基本礼貌，之后根据对方是否理解其处境、是否尊重边界来调整亲近或防备。`,
+        evidence: [`当前对话者还不了解${spec.name}的具体处境，需要靠当下语气慢慢建立关系。`],
+        lastInteractionSummary: "还没有新的直接互动，当前关系记忆来自初始人物档案。",
+        updatedAt: timestamp,
+        history: [
+          {
+            id: `relationship_history_${spec.id}_user_b_seed`,
+            summary: "初始关系印象：陌生或半熟，礼貌观察，等待通过真实互动形成更具体判断。",
+            createdAt: timestamp,
+          },
+        ],
+      },
+    ],
     runtime: {
       attentionFocus: spec.concerns[0]?.[0] ?? "当前处境",
       energy: 0.58,
