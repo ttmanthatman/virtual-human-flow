@@ -25,11 +25,13 @@ Memory Recall 的输入会带上短期记忆、长期记忆候选、关系和关
 3. Conversation Pipeline 和历史 trace 展示会把 `fallbackReason` 与实际输出一起显示，用户能看见发生过回退。
 4. Memory Recall prompt/contract 收紧输出长度：短期记忆最多 4 条，长期记忆最多 5 条，reason 使用短句。
 5. Vite 和生产 DeepSeek 代理捕获流式结构化 JSON 解析失败，并通过 SSE error 明确返回；结构化输出 token 上限从 1400 提高到 2600，降低截断概率。
+6. 后续复查确认同步 pipeline 已经逐个 `await` 模块，没有把多个模块合成一次提交；但 Memory Recall 让 LLM 输出完整短期记忆和长期记忆摘要是不合理的。已改为 LLM 只返回记忆 ID、分数和短理由，完整记忆内容、summary 和 factors 由本地候选表回填。
 
 ### 新增验证标准
 
 - 新增 `npm run verify:cognitive-fallback`：伪造未闭合 SSE JSON，验证 `runCognitiveModule` 不抛错，而是返回 fallback output 和 `fallbackReason`。
 - 以后涉及结构化认知模块、SSE、DeepSeek 代理或 Memory Recall 时，必须验证坏 JSON 不会中断整轮对话。
+- Memory Recall LLM 输出契约必须保持为 ID 选择结果，不能要求模型复述完整短期记忆、长期记忆摘要或 factors。
 - 右侧流程追踪必须能展示 fallback 原因，避免“静默降级”。
 
 ## 2026-06-03 完成功能后未同步版本号

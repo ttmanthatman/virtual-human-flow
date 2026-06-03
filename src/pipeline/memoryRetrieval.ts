@@ -29,6 +29,18 @@ interface RankedMemoryCandidate {
   factors: MemoryRecallFactor[];
 }
 
+interface MemoryRecallSelectionResult {
+  source?: MemoryRecallSource;
+  retrievalMode?: "hybrid_relevance";
+  naturalLanguageQuery?: string;
+  shortTermMemoryIds?: string[];
+  longTermMemories?: {
+    memoryId?: string;
+    score?: number;
+    reason?: string;
+  }[];
+}
+
 export async function retrieveMemory(
   event: EventInput,
   appraisal: AppraisalResult,
@@ -39,16 +51,35 @@ export async function retrieveMemory(
   const retrievalContext = createMemoryRetrievalContext(event, appraisal, state, "sync_response");
   const rankedCandidates = rankLongTermMemoryCandidates(state.longTermMemory, retrievalContext);
   const longTermMemories = selectRecallCandidates(rankedCandidates);
+  const shortTermCandidates = state.shortTermMemory.slice(-4);
 
   const mockOutput: MemoryRecallResult = {
     source: retrievalContext.source,
     retrievalMode: "hybrid_relevance",
     naturalLanguageQuery: retrievalContext.naturalLanguageQuery,
-    shortTermContext: state.shortTermMemory.slice(-8),
+    shortTermContext: shortTermCandidates,
     longTermMemories,
   };
+  const fallbackSelection: MemoryRecallSelectionResult = {
+    source: mockOutput.source,
+    retrievalMode: mockOutput.retrievalMode,
+    naturalLanguageQuery: mockOutput.naturalLanguageQuery,
+    shortTermMemoryIds: shortTermCandidates.map((memory) => memory.id),
+    longTermMemories: longTermMemories.map((memory) => ({
+      memoryId: memory.memoryId,
+      score: memory.score,
+      reason: memory.reason,
+    })),
+  };
 
-  const trace = await runCognitiveModule<MemoryRecallResult>(
+  const compactLongTermCandidates = rankedCandidates.slice(0, 8).map((candidate) => ({
+    memoryId: candidate.memoryId,
+    summary: candidate.summary,
+    score: candidate.score,
+    factorScores: Object.fromEntries(candidate.factors.map((factor) => [factor.name, factor.score])),
+  }));
+
+  const trace = await runCognitiveModule<MemoryRecallSelectionResult>(
     {
       moduleName: "memory_retrieval",
       inputMode: "structured_context",
@@ -61,21 +92,22 @@ export async function retrieveMemory(
         `自然语言召回查询：${retrievalContext.naturalLanguageQuery}`,
         `当前激活关切：${retrievalContext.activatedConcernSummaries.join("；") || "没有强激活关切"}`,
         `说话者关系：${retrievalContext.speakerRelationshipSummary}`,
-        `长期记忆候选和本地混合评分：${JSON.stringify(rankedCandidates.slice(0, 8), null, 2)}`,
-        "请复判这些候选。没有关键词命中但语义上相关的记忆也可以召回；只有词面命中但语义无关的记忆应降低权重。",
-        "输出要克制：shortTermContext 最多保留 4 条必要短期记忆，longTermMemories 最多返回 5 条，每条 reason 和 factor reason 都用短句。",
+        `短期记忆候选 ID：${shortTermCandidates.map((memory) => `${memory.id}=${memory.speakerName}：「${memory.content}」`).join("；") || "无"}`,
+        `长期记忆候选和本地混合评分：${JSON.stringify(compactLongTermCandidates, null, 2)}`,
+        "请复判这些候选。只选择会自然浮现的记忆 ID，不要复述短期记忆全文，不要复述长期记忆 summary，不要输出 factors。",
+        "输出要克制：shortTermMemoryIds 最多 4 个，longTermMemories 最多 5 条，每条只包含 memoryId、score、短 reason。",
       ].join("\n\n"),
       outputContract:
-        "Return JSON: { source, retrievalMode, naturalLanguageQuery, shortTermContext: ShortTermMemory[] max 4, longTermMemories: [{ memoryId, summary, score, reason, factors }] max 5 }",
+        "Return JSON: { source, retrievalMode, naturalLanguageQuery, shortTermMemoryIds: string[] max 4, longTermMemories: [{ memoryId, score, reason }] max 5 }",
     },
     llmConfig,
-    mockOutput,
+    fallbackSelection,
     { onStream },
   );
 
   return {
     ...trace,
-    output: normalizeMemoryRecallResult(trace.output, mockOutput),
+    output: normalizeMemoryRecallResult(trace.output, fallbackSelection, retrievalContext, shortTermCandidates, rankedCandidates, mockOutput),
   };
 }
 
@@ -132,37 +164,51 @@ function createMemoryRetrievalContext(
   };
 }
 
-function normalizeMemoryRecallResult(result: unknown, fallback: MemoryRecallResult): MemoryRecallResult {
+function normalizeMemoryRecallResult(
+  result: unknown,
+  fallbackSelection: MemoryRecallSelectionResult,
+  retrievalContext: MemoryRetrievalContext,
+  shortTermCandidates: MemoryRecallResult["shortTermContext"],
+  rankedCandidates: RankedMemoryCandidate[],
+  fallback: MemoryRecallResult,
+): MemoryRecallResult {
   if (!isRecord(result)) return fallback;
 
+  const shortTermMemoryIds = Array.isArray(result.shortTermMemoryIds)
+    ? result.shortTermMemoryIds.filter((value): value is string => typeof value === "string").slice(0, 4)
+    : fallbackSelection.shortTermMemoryIds ?? [];
+  const shortTermContext = shortTermMemoryIds
+    .map((memoryId) => shortTermCandidates.find((memory) => memory.id === memoryId))
+    .filter((memory): memory is MemoryRecallResult["shortTermContext"][number] => Boolean(memory));
+
   return {
-    source: result.source === "async_life" || result.source === "sync_response" ? result.source : fallback.source,
+    source: result.source === "async_life" || result.source === "sync_response" ? result.source : fallbackSelection.source ?? fallback.source,
     retrievalMode: result.retrievalMode === "hybrid_relevance" ? result.retrievalMode : fallback.retrievalMode,
     naturalLanguageQuery:
       typeof result.naturalLanguageQuery === "string" && result.naturalLanguageQuery.trim()
         ? result.naturalLanguageQuery
-        : fallback.naturalLanguageQuery,
-    shortTermContext: Array.isArray(result.shortTermContext) ? result.shortTermContext : fallback.shortTermContext,
-    longTermMemories: normalizeRecalledMemories(result.longTermMemories, fallback.longTermMemories),
+        : fallbackSelection.naturalLanguageQuery ?? retrievalContext.naturalLanguageQuery,
+    shortTermContext,
+    longTermMemories: normalizeRecalledMemories(result.longTermMemories, rankedCandidates, fallback.longTermMemories),
   };
 }
 
-function normalizeRecalledMemories(value: unknown, fallback: MemoryRecallResult["longTermMemories"]) {
+function normalizeRecalledMemories(value: unknown, rankedCandidates: RankedMemoryCandidate[], fallback: MemoryRecallResult["longTermMemories"]) {
   if (!Array.isArray(value)) return fallback;
 
   const normalized: MemoryRecallResult["longTermMemories"] = [];
   for (const item of value) {
     if (!isRecord(item)) continue;
     const memoryId = typeof item.memoryId === "string" ? item.memoryId : "";
-    const summary = typeof item.summary === "string" ? item.summary : "";
-    if (!memoryId || !summary) continue;
+    const candidate = rankedCandidates.find((memory) => memory.memoryId === memoryId);
+    if (!memoryId || !candidate) continue;
 
     normalized.push({
       memoryId,
-      summary,
-      score: round(clamp(typeof item.score === "number" ? item.score : 0.3, 0, 1)),
-      reason: typeof item.reason === "string" && item.reason.trim() ? item.reason : "模型未给出明确原因，已按低强度召回保留。",
-      factors: Array.isArray(item.factors) ? (item.factors as MemoryRecallFactor[]) : undefined,
+      summary: candidate.summary,
+      score: round(clamp(typeof item.score === "number" ? item.score : candidate.score, 0, 1)),
+      reason: typeof item.reason === "string" && item.reason.trim() ? item.reason.slice(0, 80) : candidate.reason,
+      factors: candidate.factors,
     });
   }
 

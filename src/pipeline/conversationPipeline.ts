@@ -46,9 +46,9 @@ export async function runConversationPipeline({ content, state, llmConfig, onPro
         {
           event,
           appraisal: appraisal.output,
-          shortTermMemory: state.shortTermMemory.slice(-8),
-          longTermMemory: state.longTermMemory,
-          runtime: state.runtime,
+          recentShortTermMemory: state.shortTermMemory.slice(-4),
+          longTermMemoryCount: state.longTermMemory.length,
+          runtimeMood: state.runtime.derivedMood,
         },
         null,
         2,

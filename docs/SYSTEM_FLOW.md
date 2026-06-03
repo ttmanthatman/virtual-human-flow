@@ -22,7 +22,7 @@
 
 真实 LLM 的结构化输出必须先经过确定性归一化，再交给下游模块。Appraisal、Memory Recall、Decision 和 State Update 都有模块出口归一化层，用来处理数组缺失、关系对象变成字符串、未知 concern id、枚举漂移等情况。如果外部结构化 JSON 被截断或无法解析，Cognitive Module Client 会记录 `fallbackReason` 并使用本地候选结果继续流程，不能让用户对话卡死。归一化层不能改变 Reply LLM 的自然语言边界，它只保护内部认知模块的数据契约。
 
-Memory Recall 不是敏感词召回。触发词可以作为线索，但记忆浮现必须同时参考自然语言相关度、当前关切、说话者关系、情绪显著、近期性和词面线索。当前同步路径先在本地构建混合召回候选，再交给 Memory Recall LLM 复判；未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
+Memory Recall 不是敏感词召回。触发词可以作为线索，但记忆浮现必须同时参考自然语言相关度、当前关切、说话者关系、情绪显著、近期性和词面线索。当前同步路径先在本地构建混合召回候选，再交给 Memory Recall LLM 复判；Memory Recall LLM 只选择短期/长期记忆 ID 和简短理由，不输出完整短期记忆、长期记忆摘要或召回因子，完整内容由本地候选表回填。未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
 
 左侧 UI 里的 DeepSeek 预览、性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由 DeepSeek 预览缓存、专门的 Runtime Signal Evaluation LLM 模块、种子档案或管理员维护字段提供，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `fullLifeStory`、`lifeEvents`、`socialPersonaPattern`、`personalitySummary`、`personalityFacets`、`relationships`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
 
@@ -112,7 +112,7 @@ flowchart TD
     AUTH -- 否 --> LOGIN[打开登录浮窗]
     AUTH -- 是 --> E[事件输入]
     E --> A[评估模块: 判断事件触发关切]
-    A --> M[记忆召回模块: 混合相关度候选 + LLM复判]
+    A --> M[记忆召回模块: 本地候选 + LLM只选择ID]
     M --> D[回应决策模块: 判断是否回应和回应姿态]
     D --> P[Prompt Generator: 生成自然语言回复上下文 + 位置语境]
     P --> R[DeepSeek Flash Reply LLM: 只生成角色台词]
@@ -162,9 +162,10 @@ flowchart TD
     Q --> S[长期记忆本地混合排序]
     L[长期记忆库] --> S
     S --> F[召回因子: 自然语言相关/关切/关系/情绪/近期/词面]
-    F --> M[Memory Recall LLM 复判]
+    F --> M[Memory Recall LLM 只选择记忆ID]
     B[短期记忆最近几轮] --> M
-    M --> O[MemoryRecallResult]
+    M --> H[本地回填短期记忆和长期记忆摘要/factors]
+    H --> O[MemoryRecallResult]
     O --> D[回应决策]
     O --> P[Prompt Generator]
     X[未来异步生命路径] -. 复用召回上下文 .-> Q
