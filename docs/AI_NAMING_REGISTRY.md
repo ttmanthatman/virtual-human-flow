@@ -49,6 +49,7 @@
 | 人物档案组合 | `personaDossier` | UI/domain object | 一个可切换的多人档案条目，绑定人物状态、人物素材和配套场景素材 | `profileSlot`, `characterTab` |
 | 人物档案分组 | `personaDossierGroup` | UI/domain object | 多人档案列表中的分组名称，例如“马可福音10”“郑州市” | `folder`, `categoryName` |
 | 人物预览缓存 | `personaDossierPreviewCache` | persisted domain field | 由 DeepSeek 生成并全局保存的短预览；缺失时 UI 显示“预览生成中”，源码不手写预览文案 | `manualPreview`, `localPreview` |
+| 生成监视 | `generationMonitor` | UI trace area | 右侧显示人物短预览、人物档案生成和场景生成的输入、流式输出和状态 | `generationLog`, `previewDebugger` |
 | 人物详细生平 | `lifeEvent` | domain object | 角色从小到大的关键经历、心理变化和关系变化 | `backstoryLine`, `historyItem` |
 | 社会人格位置 | `socialPersonaPattern` | domain field | 角色在人群性格分布中的位置，用来避免所有角色都同质化为压抑谨慎 | `personalityTypeLabel`, `archetypeOnly` |
 | 全局角色状态写回 | `globalPersonaStateWrite` | persistence workflow | 登录用户与角色对话后写回同一个共享角色状态，并向相关人物传播关系余波 | `userPersonaCopy`, `privateCharacterState` |
@@ -121,17 +122,20 @@
 | `readEventStream` | `src/pipeline/cognitiveModuleClient.ts` | 读取认知模块 SSE 输出，累积并解析最终 JSON | response, onStream | parsed module output | 调用 onStream 更新 live trace | implemented |
 | `buildCompletedTraceProgress` | `src/App.tsx` | 将最终 PipelineTrace 转成输入/输出/状态展示结构 | step, trace | PipelineStepProgress | 无 | implemented |
 | `traceStatusLabel` | `src/App.tsx` | 将步骤状态转换为中文 UI 文案 | status | string | 无 | implemented |
-| `generateDossierFromDescription` | `src/pipeline/generators.ts` | 调用人物档案解读 LLM，将用户素材归类为展示摘要、长期记忆、人性/人格、标签、关切和状态信号 | description, current state, llmConfig | CharacterState | 可调用外部 endpoint；生成待应用状态预览 | implemented |
-| `generateSceneFromDescription` | `src/pipeline/generators.ts` | 调用场景解读 LLM，将用户场景素材归类为场景摘要、状态影响和人物影响 | description, current state, llmConfig | CharacterState | 可调用外部 endpoint；生成待应用状态预览 | implemented |
+| `generateDossierFromDescription` | `src/pipeline/generators.ts` | 调用人物档案解读 LLM，将用户素材归类为展示摘要、长期记忆、人性/人格、标签、关切和状态信号 | description, current state, llmConfig, onProgress? | CharacterState | 可调用外部 endpoint；生成待应用状态预览并上报生成监视 | implemented |
+| `generateSceneFromDescription` | `src/pipeline/generators.ts` | 调用场景解读 LLM，将用户场景素材归类为场景摘要、状态影响和人物影响 | description, current state, llmConfig, onProgress? | CharacterState | 可调用外部 endpoint；生成待应用状态预览并上报生成监视 | implemented |
 | `applyDossierInterpretation` | `src/pipeline/generators.ts` | 将人物档案解读结果归一化并写入预览状态 | source, current, result | CharacterState | 生成 profile/concerns/longTermMemory/runtime 预览 | implemented |
 | `applySceneInterpretation` | `src/pipeline/generators.ts` | 将场景解读结果归一化并写入预览状态 | source, current, result | CharacterState | 生成 scene/concerns/longTermMemory/runtime/profile 预览 | implemented |
 | `compactText` | `src/pipeline/generators.ts` | 限制展示文本长度并避免完整原文进入展示字段 | value, fallback, maxLength, source | string | 无 | implemented |
 | `evaluateProfileSceneConsistency` | `src/pipeline/profileSceneConsistency.ts` | 调用一致性检测 LLM，判断人物和场景是否存在时代/世界观硬冲突 | state, llmConfig | ProfileSceneConsistencyResult | 可调用外部 endpoint | implemented |
 | `normalizeProfileSceneConsistency` | `src/pipeline/profileSceneConsistency.ts` | 稳定一致性检测结果并确保 hard mismatch 必须需要门禁 | result, fallback | ProfileSceneConsistencyResult | 无 | implemented |
 | `createPersonaDossier` | `src/App.tsx` | 创建绑定人物状态和场景素材的可切换档案条目 | state, dossierDescription, sceneDescription, title | PersonaDossier | 无 | implemented |
-| `ensureDossierPreview` | `src/App.tsx` | 当前角色缺少预览时调用 DeepSeek 生成短预览，并提交后台全局保存 | dossier | Promise<void> | 调用 `/api/deepseek-chat` 和 `/api/persona-dossiers/:id/preview` | implemented |
+| `ensureDossierPreview` | `src/App.tsx` | 当前角色缺少预览时调用 DeepSeek 流式生成短预览，并提交后台全局保存 | dossier | Promise<void> | 调用 `/api/deepseek-chat` 和 `/api/persona-dossiers/:id/preview`，上报生成监视 | implemented |
 | `syncConversationState` | `src/App.tsx` | 一轮对话完成后把角色最新状态写回全局共享档案 | nextState, interaction | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-state` 并更新本地档案列表 | implemented |
 | `formatDossierDetailForPreview` | `src/App.tsx` | 将详细人物档案整理成 DeepSeek 预览生成输入 | dossier | string | 无 | implemented |
+| `updateMonitorProgress` | `src/App.tsx` | 将对话流程或生成监视的一步进度写入右侧 live trace，并切换当前查看步骤 | progress | void | 更新 `activeStep` 和 `liveTrace` | implemented |
+| `readNaturalLanguageEventStream` | `src/App.tsx` | 读取人物短预览自然语言 SSE，累积 delta 并兼容最终文本或 reply 对象 | response, onStream? | string | 调用 onStream 更新生成监视 | implemented |
+| `isPipelineTraceStep` | `src/App.tsx` | 区分对话流程步骤和生成监视步骤，避免生成步骤被当作 `PipelineTrace` 读取 | step | boolean type guard | 无 | implemented |
 | `LocationCard` | `src/App.tsx` | 在左侧显示角色当前位置、速度、方向和周边地图上下文摘要 | location | JSX | 无 | implemented |
 | `handleCreateDossier` | `src/App.tsx` | 在左栏新建一个空的人物-场景配套档案 | 无 | void | 更新 App state | implemented |
 | `handleDeleteDossier` | `src/App.tsx` | 管理员删除当前或指定人物档案，删空后工作台回到无当前共享档案状态 | dossier id | void | 更新 App state | implemented |
@@ -225,6 +229,9 @@
 | `stateUpdate` | `PipelineTrace` | `CognitiveModuleTrace<StateUpdatePlan>` | State Update LLM 的完整调用记录 | stateUpdater | Pipeline Debug Panel | implemented |
 | `runtimeSignalEvaluation` | `PipelineTrace` | `CognitiveModuleTrace<RuntimeSignalEvaluationResult>` | Runtime Signal Evaluation LLM 的完整调用记录 | runtimeSignalEvaluator | Pipeline Debug Panel | implemented |
 | `pipelineStepProgress` | App state | `PipelineStepProgress` | 执行中某一步的输入、输出、状态和 transport，用于 live trace | conversationPipeline | App Shell | implemented |
+| `generationMonitorStep` | Core type | `GenerationMonitorStep` | 右侧生成监视可选步骤：`dossierSummaryGeneration`、`dossierGeneration`、`sceneGeneration` | App Shell/generators | live trace UI | implemented |
+| `dossier_summary_generation` | `CognitiveModuleName` | string literal | 人物短预览自然语言生成模块名，只写 `personaDossier.previewSummary` | App Shell `/api/deepseek-chat` | DeepSeek proxy | implemented |
+| `liveTrace` | App state | `TraceDisplayState` | 同时保存对话流程和生成监视的实时输入、输出、状态 | conversation pipeline/generators/preview cache | right panel | implemented |
 | `deepseekConnected` | App state | `boolean` | 顶部显示 DeepSeek 是否已有本地密钥并可作为真实 LLM 入口 | `/api/deepseek-config` / 测试连接 | App Shell | implemented |
 | `deepseekStatus` | App state | `string` | DeepSeek 密钥保存和真实连接测试的人类可读状态 | `/api/deepseek-config` / `/api/deepseek-chat` | App Shell | implemented |
 | `appVersionLabel` | App constant | `string` | 页面左上角显示的版本号，如 `v0.1.0` | `package.json` | App Shell | implemented |

@@ -27,7 +27,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { ChatMessage, CharacterState, LlmConfig, PersonaDossier, PipelineStepProgress, PipelineTrace, ProfileSceneConsistencyResult } from "./core/types";
+import { ChatMessage, CharacterState, GenerationMonitorStep, LlmConfig, PersonaDossier, PipelineStepProgress, PipelineTrace, ProfileSceneConsistencyResult } from "./core/types";
 import { makeId, nowIso } from "./core/utils";
 import { defaultLlmConfig, seedMessages, seedState } from "./data/seedState";
 import { runConversationPipeline } from "./pipeline/conversationPipeline";
@@ -50,6 +50,12 @@ const traceSteps: { key: keyof PipelineTrace; label: string; icon: typeof Activi
   { key: "stateDelta", label: "状态变化", icon: Network },
 ];
 
+const generationSteps: { key: GenerationMonitorStep; label: string; icon: typeof Activity }[] = [
+  { key: "dossierSummaryGeneration", label: "短预览生成", icon: Sparkles },
+  { key: "dossierGeneration", label: "人物档案生成", icon: UserRound },
+  { key: "sceneGeneration", label: "场景生成", icon: MapPin },
+];
+
 const concernStatusLabels = {
   active: "活跃",
   dormant: "休眠",
@@ -64,7 +70,8 @@ const motionStateLabels: Record<NonNullable<CharacterState["location"]>["motionS
   unknown: "未知",
 };
 
-type TraceDisplayState = Partial<Record<keyof PipelineTrace, PipelineStepProgress>>;
+type MonitorStepKey = keyof PipelineTrace | GenerationMonitorStep;
+type TraceDisplayState = Partial<Record<MonitorStepKey, PipelineStepProgress>>;
 type ConsistencyGate = {
   candidate: CharacterState;
   result: ProfileSceneConsistencyResult;
@@ -141,7 +148,7 @@ export function App() {
   const [llmConfig, setLlmConfig] = useState<LlmConfig>(defaultLlmConfig);
   const [activeTrace, setActiveTrace] = useState<PipelineTrace | undefined>();
   const [liveTrace, setLiveTrace] = useState<TraceDisplayState>({});
-  const [activeStep, setActiveStep] = useState<keyof PipelineTrace>("event");
+  const [activeStep, setActiveStep] = useState<MonitorStepKey>("event");
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
@@ -168,7 +175,7 @@ export function App() {
   const [updateLogs, setUpdateLogs] = useState<AppUpdateLogEntry[]>([]);
   const generatingPreviewIds = useRef(new Set<string>());
 
-  const selectedTraceData = liveTrace[activeStep] ?? buildCompletedTraceProgress(activeStep, activeTrace);
+  const selectedTraceData = liveTrace[activeStep] ?? (isPipelineTraceStep(activeStep) ? buildCompletedTraceProgress(activeStep, activeTrace) : undefined);
   const traceDisplay = formatTraceDisplay(selectedTraceData);
   const isAuthenticated = Boolean(authToken && authUser);
   const isAdmin = Boolean(authUser?.isAdmin);
@@ -326,25 +333,38 @@ export function App() {
     setDossiers((items) => items.map((item) => (item.id === dossier.id ? { ...item, previewStatus: "generating" } : item)));
     try {
       const detail = formatDossierDetailForPreview(dossier);
+      const prompt = [
+        "请为下面这个虚拟人物档案生成一段给左侧列表使用的中文预览。",
+        "只输出预览文本本身，不要标题、编号、解释或引号。",
+        "预览控制在 45 到 70 个中文字符之间，要体现此人的社会角色、核心张力和区别于其他人的气质。",
+        detail,
+      ].join("\n\n");
+      updateMonitorProgress({
+        step: "dossierSummaryGeneration",
+        status: "running",
+        input: prompt,
+        output: "等待 DeepSeek 生成短预览...",
+      });
       const response = await fetch("/api/deepseek-chat", {
         method: "POST",
         headers: authHeaders(authToken, { "Content-Type": "application/json" }),
         body: JSON.stringify({
           model: "deepseek-v4-flash",
-          moduleName: "dossier_preview",
+          moduleName: "dossier_summary_generation",
           inputMode: "natural_language",
           outputMode: "natural_language",
-          prompt: [
-            "请为下面这个虚拟人物档案生成一段给左侧列表使用的中文预览。",
-            "只输出预览文本本身，不要标题、编号、解释或引号。",
-            "预览控制在 45 到 70 个中文字符之间，要体现此人的社会角色、核心张力和区别于其他人的气质。",
-            detail,
-          ].join("\n\n"),
+          prompt,
+          stream: true,
         }),
       });
       if (!response.ok) throw new Error("DeepSeek 预览生成失败");
-      const data = (await response.json()) as { reply?: string };
-      const previewSummary = data.reply?.trim();
+      const previewSummary = (await readNaturalLanguageEventStream(response, (output) =>
+        updateMonitorProgress({
+          step: "dossierSummaryGeneration",
+          status: "streaming",
+          output,
+        }),
+      )).trim();
       if (!previewSummary) throw new Error("DeepSeek 没有返回预览文本");
 
       const saveResponse = await fetch(`/api/persona-dossiers/${encodeURIComponent(dossier.id)}/preview`, {
@@ -355,10 +375,23 @@ export function App() {
       const saveData = (await saveResponse.json()) as { dossier?: PersonaDossier; error?: string };
       if (!saveResponse.ok || !saveData.dossier) throw new Error(saveData.error || "预览全局保存失败");
       setDossiers((items) => items.map((item) => (item.id === dossier.id ? saveData.dossier! : item)));
+      updateMonitorProgress({
+        step: "dossierSummaryGeneration",
+        status: "completed",
+        input: prompt,
+        output: previewSummary,
+        transport: "external_llm",
+      });
       setDossierSyncStatus("人物预览已由 DeepSeek 生成并全局保存");
     } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "人物预览生成失败";
       setDossiers((items) => items.map((item) => (item.id === dossier.id ? { ...item, previewStatus: "pending" } : item)));
-      setDossierSyncStatus(caught instanceof Error ? caught.message : "人物预览生成失败");
+      updateMonitorProgress({
+        step: "dossierSummaryGeneration",
+        status: "failed",
+        error: message,
+      });
+      setDossierSyncStatus(message);
     } finally {
       generatingPreviewIds.current.delete(dossier.id);
     }
@@ -601,6 +634,17 @@ export function App() {
   function appendUpdateLog(entry: Omit<AppUpdateLogEntry, "id">) {
     if (!entry.text.trim()) return;
     setUpdateLogs((items) => [...items, { ...entry, id: makeId("update") }].slice(-120));
+  }
+
+  function updateMonitorProgress(progress: PipelineStepProgress) {
+    setActiveStep(progress.step);
+    setLiveTrace((current) => ({
+      ...current,
+      [progress.step]: {
+        ...current[progress.step],
+        ...progress,
+      },
+    }));
   }
 
   function updateActiveDossier(patch: Partial<Pick<PersonaDossier, "state" | "dossierDescription" | "sceneDescription" | "title" | "groupName">>) {
@@ -853,14 +897,7 @@ export function App() {
         state,
         llmConfig,
         onProgress: (progress) => {
-          setActiveStep(progress.step);
-          setLiveTrace((current) => ({
-            ...current,
-            [progress.step]: {
-              ...current[progress.step],
-              ...progress,
-            },
-          }));
+          updateMonitorProgress(progress);
         },
       });
       setState(result.nextState);
@@ -923,7 +960,7 @@ export function App() {
     setError("");
 
     try {
-      const preview = await generateDossierFromDescription(dossierDescription, state, llmConfig);
+      const preview = await generateDossierFromDescription(dossierDescription, state, llmConfig, updateMonitorProgress);
       setDossierPreview(preview);
       setMessages((items) => [
         ...items,
@@ -938,6 +975,11 @@ export function App() {
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "人物档案预览失败";
       setError(message);
+      updateMonitorProgress({
+        step: "dossierGeneration",
+        status: "failed",
+        error: message,
+      });
     } finally {
       setIsGeneratingDossier(false);
     }
@@ -956,7 +998,7 @@ export function App() {
     setError("");
 
     try {
-      const preview = await generateSceneFromDescription(sceneDescription, state, llmConfig);
+      const preview = await generateSceneFromDescription(sceneDescription, state, llmConfig, updateMonitorProgress);
       setScenePreview(preview);
       setMessages((items) => [
         ...items,
@@ -971,6 +1013,11 @@ export function App() {
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "场景预览失败";
       setError(message);
+      updateMonitorProgress({
+        step: "sceneGeneration",
+        status: "failed",
+        error: message,
+      });
     } finally {
       setIsGeneratingScene(false);
     }
@@ -1153,18 +1200,24 @@ export function App() {
                     <span>{groupName}</span>
                     <small>{groupDossiers.length}</small>
                   </div>
-                  {groupDossiers.map((dossier) => (
-                    <button
-                      className={dossier.id === activeDossierId ? "dossier-tab selected" : "dossier-tab"}
-                      key={dossier.id}
-                      type="button"
-                      onClick={() => handleSelectDossier(dossier)}
-                    >
-                      <span>{dossier.title}</span>
-                      <small>{dossier.previewSummary ?? "预览生成中"}</small>
-                      {dossier.state.location ? <small>{dossier.state.location.label}</small> : null}
-                    </button>
-                  ))}
+                  {groupDossiers.map((dossier) => {
+                    const previewIsGenerating = !dossier.previewSummary || dossier.previewStatus === "generating";
+                    return (
+                      <button
+                        className={["dossier-tab", dossier.id === activeDossierId ? "selected" : "", previewIsGenerating ? "generating" : ""].filter(Boolean).join(" ")}
+                        key={dossier.id}
+                        type="button"
+                        onClick={() => handleSelectDossier(dossier)}
+                      >
+                        <div className="dossier-tab-head">
+                          <span>{dossier.title}</span>
+                          {previewIsGenerating ? <Sparkles className="generating-icon" size={13} /> : null}
+                        </div>
+                        <small className={previewIsGenerating ? "preview-summary generating" : "preview-summary"}>{dossier.previewSummary ?? "预览生成中"}</small>
+                        {dossier.state.location ? <small>{dossier.state.location.label}</small> : null}
+                      </button>
+                    );
+                  })}
                 </section>
               ))}
             </div>
@@ -1374,6 +1427,7 @@ export function App() {
         <aside className="panel trace-panel">
           <PanelTitle icon={Activity} title="流程追踪" />
 
+          <div className="flow-group-label">对话流程</div>
           <div className="flow-rail">
             {traceSteps.map((step) => {
               const Icon = step.icon;
@@ -1388,6 +1442,27 @@ export function App() {
                   <Icon size={15} />
                   <span>{step.label}</span>
                   <small>{traceStatusLabel(liveTrace[step.key]?.status ?? (activeTrace ? "completed" : "pending"))}</small>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flow-group-label">生成监视</div>
+          <div className="flow-rail generation-rail">
+            {generationSteps.map((step) => {
+              const Icon = step.icon;
+              const progress = liveTrace[step.key];
+              return (
+                <button
+                  className={activeStep === step.key ? "flow-step selected" : "flow-step"}
+                  key={step.key}
+                  type="button"
+                  onClick={() => setActiveStep(step.key)}
+                  disabled={!progress}
+                >
+                  <Icon size={15} />
+                  <span>{step.label}</span>
+                  <small>{traceStatusLabel(progress?.status ?? "pending")}</small>
                 </button>
               );
             })}
@@ -1440,7 +1515,7 @@ export function App() {
 
           <div className="json-view">
             <div className="json-head">
-              <strong>{traceSteps.find((step) => step.key === activeStep)?.label ?? "追踪"}</strong>
+              <strong>{[...traceSteps, ...generationSteps].find((step) => step.key === activeStep)?.label ?? "追踪"}</strong>
               <span>{selectedTraceData ? traceStatusLabel(selectedTraceData.status) : "等待中"}</span>
             </div>
             {traceDisplay}
@@ -1585,7 +1660,7 @@ export function App() {
 
 function formatTraceDisplay(progress: PipelineStepProgress | undefined) {
   if (!progress) {
-    return <pre>{JSON.stringify({ hint: "发送一条消息后，这里显示每一步的输入、输出和状态。" }, null, 2)}</pre>;
+    return <pre>{JSON.stringify({ hint: "发送消息或触发档案、场景生成后，这里显示对应模块的输入、输出和状态。" }, null, 2)}</pre>;
   }
 
   return (
@@ -1604,6 +1679,63 @@ function formatTraceDisplay(progress: PipelineStepProgress | undefined) {
       </section>
     </div>
   );
+}
+
+async function readNaturalLanguageEventStream(response: Response, onStream?: (output: string) => void) {
+  if (!response.headers.get("Content-Type")?.includes("text/event-stream")) {
+    const data = await response.json();
+    if (typeof data === "string") return data;
+    if (typeof data?.reply === "string") return data.reply;
+    return JSON.stringify(data);
+  }
+
+  if (!response.body) {
+    throw new Error("外部接口没有返回可读取的流");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let accumulated = "";
+  let finalText = "";
+
+  const consumeEvent = (event: string) => {
+    const data = event
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .join("\n");
+    if (!data || data === "[DONE]") return;
+
+    const parsed = JSON.parse(data) as { delta?: string; final?: string | { reply?: string }; error?: string };
+    if (parsed.error) throw new Error(parsed.error);
+    if (typeof parsed.delta === "string") {
+      accumulated += parsed.delta;
+      onStream?.(accumulated);
+    }
+    if (typeof parsed.final === "string") {
+      finalText = parsed.final;
+    } else if (typeof parsed.final?.reply === "string") {
+      finalText = parsed.final.reply;
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+    for (const event of events) consumeEvent(event);
+  }
+  if (buffer.trim()) consumeEvent(buffer);
+
+  return finalText || accumulated;
+}
+
+function isPipelineTraceStep(step: MonitorStepKey): step is keyof PipelineTrace {
+  return traceSteps.some((item) => item.key === step);
 }
 
 function buildCompletedTraceProgress(step: keyof PipelineTrace, trace: PipelineTrace | undefined): PipelineStepProgress | undefined {

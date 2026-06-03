@@ -274,6 +274,7 @@ export type CognitiveModuleName =
   | "runtime_signal_evaluation"
   | "dossier_interpretation"
   | "scene_interpretation"
+  | "dossier_summary_generation"
   | "profile_scene_consistency";
 
 export interface CognitiveModuleRequest {
@@ -293,8 +294,10 @@ export interface CognitiveModuleTrace<TOutput> {
 
 export type PipelineStepStatus = "pending" | "running" | "streaming" | "completed" | "failed";
 
+export type GenerationMonitorStep = "dossierSummaryGeneration" | "dossierGeneration" | "sceneGeneration";
+
 export interface PipelineStepProgress {
-  step: keyof PipelineTrace;
+  step: keyof PipelineTrace | GenerationMonitorStep;
   status: PipelineStepStatus;
   input?: string;
   output?: string;

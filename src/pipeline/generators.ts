@@ -6,6 +6,7 @@ import {
   LlmConfig,
   LongTermMemory,
   PersonalityFacet,
+  PipelineStepProgress,
   RuntimeSignalKey,
   RuntimeSignalProfile,
   SceneState,
@@ -77,57 +78,93 @@ interface SceneInterpretationResult {
 
 const runtimeSignalKeys: RuntimeSignalKey[] = ["energy", "mood", "valence", "arousal"];
 
-export async function generateDossierFromDescription(description: string, current: CharacterState, llmConfig: LlmConfig): Promise<CharacterState> {
+type GenerationProgressCallback = (progress: PipelineStepProgress) => void;
+
+export async function generateDossierFromDescription(description: string, current: CharacterState, llmConfig: LlmConfig, onProgress?: GenerationProgressCallback): Promise<CharacterState> {
   const source = description.trim();
   const fallback = buildFallbackDossier(source, current);
+  const request = {
+    moduleName: "dossier_interpretation" as const,
+    inputMode: "structured_context" as const,
+    outputMode: "structured_json" as const,
+    prompt: [
+      "你是人物档案解读模块。用户输入的是素材，不是最终档案。你必须重新解读、归类、摘要，不能把原文整段照抄到展示字段。",
+      "把素材分成四类：需要写入长期记忆的事实或余波；稳定的人性和人格部分；给左侧 UI 的短标签；当下状态信号。",
+      "人物必须有从小到大的故事脉络。lifeEvents 要覆盖童年、青少年、成年或近期的关键经历，并写明心理变化和关系变化。",
+      "性格设定要符合社会中常见的差异分布，避免所有人都压抑、谨慎、慢热。socialPersonaPattern 用一句话说明她在人群中的人格类型和差异点。",
+      "个人展示只能是短摘要。displaySummary 不超过 45 个中文字符，stableBackground 不超过 90 个中文字符，personalitySummary 不超过 120 个中文字符，fullLifeStory 不超过 420 个中文字符。",
+      "长期记忆只写已经足够稳定、之后会影响反应的内容；不要把所有输入都塞进记忆。",
+      `当前人物：${current.profile.name}。当前摘要：${current.profile.displaySummary || current.profile.background}`,
+      `用户素材：${source}`,
+    ].join("\n\n"),
+    outputContract:
+      "Return JSON: { name, age, displaySummary, stableBackground, socialPersonaPattern, fullLifeStory, lifeEvents: [{ lifeStage, ageRange, title, summary, psychologicalChange, relationshipChange, relatedPeople, emotionalValence, importance }], personalityTraits: string[], personalitySummary, personalityFacets: [{ label, summary, evidence, tension, expression }], speakingStyle, values: string[], boundaries: string[], examples: [{ situation, expectedReply }], concerns: [{ title, object, type, description, intensity, valence, arousal, triggers, possibleResolutions }], longTermMemories: [{ summary, relatedPeople, relatedConcernTitles, emotionalValence, emotionalIntensity, importance }], attentionFocus, derivedMood: { valence, arousal, label }, signalProfiles: { energy, mood, valence, arousal } }",
+  };
+  onProgress?.({
+    step: "dossierGeneration",
+    status: "running",
+    input: [request.prompt, `输出契约：${request.outputContract}`].join("\n\n"),
+    output: "等待模型输出...",
+  });
   const trace = await runCognitiveModule<DossierInterpretationResult>(
-    {
-      moduleName: "dossier_interpretation",
-      inputMode: "structured_context",
-      outputMode: "structured_json",
-      prompt: [
-        "你是人物档案解读模块。用户输入的是素材，不是最终档案。你必须重新解读、归类、摘要，不能把原文整段照抄到展示字段。",
-        "把素材分成四类：需要写入长期记忆的事实或余波；稳定的人性和人格部分；给左侧 UI 的短标签；当下状态信号。",
-        "人物必须有从小到大的故事脉络。lifeEvents 要覆盖童年、青少年、成年或近期的关键经历，并写明心理变化和关系变化。",
-        "性格设定要符合社会中常见的差异分布，避免所有人都压抑、谨慎、慢热。socialPersonaPattern 用一句话说明她在人群中的人格类型和差异点。",
-        "个人展示只能是短摘要。displaySummary 不超过 45 个中文字符，stableBackground 不超过 90 个中文字符，personalitySummary 不超过 120 个中文字符，fullLifeStory 不超过 420 个中文字符。",
-        "长期记忆只写已经足够稳定、之后会影响反应的内容；不要把所有输入都塞进记忆。",
-        `当前人物：${current.profile.name}。当前摘要：${current.profile.displaySummary || current.profile.background}`,
-        `用户素材：${source}`,
-      ].join("\n\n"),
-      outputContract:
-        "Return JSON: { name, age, displaySummary, stableBackground, socialPersonaPattern, fullLifeStory, lifeEvents: [{ lifeStage, ageRange, title, summary, psychologicalChange, relationshipChange, relatedPeople, emotionalValence, importance }], personalityTraits: string[], personalitySummary, personalityFacets: [{ label, summary, evidence, tension, expression }], speakingStyle, values: string[], boundaries: string[], examples: [{ situation, expectedReply }], concerns: [{ title, object, type, description, intensity, valence, arousal, triggers, possibleResolutions }], longTermMemories: [{ summary, relatedPeople, relatedConcernTitles, emotionalValence, emotionalIntensity, importance }], attentionFocus, derivedMood: { valence, arousal, label }, signalProfiles: { energy, mood, valence, arousal } }",
-    },
+    request,
     llmConfig,
     fallback,
+    {
+      onStream: (output) => onProgress?.({ step: "dossierGeneration", status: "streaming", output }),
+    },
   );
+  onProgress?.({
+    step: "dossierGeneration",
+    status: "completed",
+    input: [trace.request.prompt, trace.request.outputContract ? `输出契约：${trace.request.outputContract}` : ""].filter(Boolean).join("\n\n"),
+    output: JSON.stringify(trace.output, null, 2),
+    transport: trace.transport,
+  });
 
   return applyDossierInterpretation(source, current, trace.output);
 }
 
-export async function generateSceneFromDescription(description: string, current: CharacterState, llmConfig: LlmConfig): Promise<CharacterState> {
+export async function generateSceneFromDescription(description: string, current: CharacterState, llmConfig: LlmConfig, onProgress?: GenerationProgressCallback): Promise<CharacterState> {
   const source = description.trim();
   const fallback = buildFallbackScene(source, current);
+  const request = {
+    moduleName: "scene_interpretation" as const,
+    inputMode: "structured_context" as const,
+    outputMode: "structured_json" as const,
+    prompt: [
+      "你是场景解读模块。用户输入的是场景素材，不是最终展示文案。你必须重新解读、归类、摘要，不能把原文整段照抄到展示字段。",
+      "把素材分成三类：场景本身；会改变当前状态的压力、身体感、注意力；可能影响人物长期反应的事实或记忆。",
+      "场景展示只能是短摘要。scene.description 不超过 70 个中文字符，atmosphere 不超过 35 个中文字符，cognitiveNarrative 不超过 120 个中文字符。",
+      "如果场景会影响人物，请通过 newConcerns、longTermMemories、personalityTraitTags 或 personalityFacetUpdates 表达。不要只更新 scene 字段。",
+      `当前人物摘要：${current.profile.displaySummary || current.profile.background}`,
+      `当前关切：${current.concerns.map((concern) => `${concern.title}：${concern.description}`).join("；")}`,
+      `用户场景素材：${source}`,
+    ].join("\n\n"),
+    outputContract:
+      "Return JSON: { scene: { title, description, atmosphere, visibleCues, activeObjects, sensoryProfile, interactionPressure, cognitiveNarrative }, newConcerns: [{ title, object, type, description, intensity, valence, arousal, triggers, possibleResolutions }], longTermMemories: [{ summary, relatedPeople, relatedConcernTitles, emotionalValence, emotionalIntensity, importance }], personalityTraitTags: string[], personalityFacetUpdates: [{ label, summary, evidence, tension, expression }], attentionFocus, derivedMood: { valence, arousal, label }, signalProfiles: { energy, mood, valence, arousal } }",
+  };
+  onProgress?.({
+    step: "sceneGeneration",
+    status: "running",
+    input: [request.prompt, `输出契约：${request.outputContract}`].join("\n\n"),
+    output: "等待模型输出...",
+  });
   const trace = await runCognitiveModule<SceneInterpretationResult>(
-    {
-      moduleName: "scene_interpretation",
-      inputMode: "structured_context",
-      outputMode: "structured_json",
-      prompt: [
-        "你是场景解读模块。用户输入的是场景素材，不是最终展示文案。你必须重新解读、归类、摘要，不能把原文整段照抄到展示字段。",
-        "把素材分成三类：场景本身；会改变当前状态的压力、身体感、注意力；可能影响人物长期反应的事实或记忆。",
-        "场景展示只能是短摘要。scene.description 不超过 70 个中文字符，atmosphere 不超过 35 个中文字符，cognitiveNarrative 不超过 120 个中文字符。",
-        "如果场景会影响人物，请通过 newConcerns、longTermMemories、personalityTraitTags 或 personalityFacetUpdates 表达。不要只更新 scene 字段。",
-        `当前人物摘要：${current.profile.displaySummary || current.profile.background}`,
-        `当前关切：${current.concerns.map((concern) => `${concern.title}：${concern.description}`).join("；")}`,
-        `用户场景素材：${source}`,
-      ].join("\n\n"),
-      outputContract:
-        "Return JSON: { scene: { title, description, atmosphere, visibleCues, activeObjects, sensoryProfile, interactionPressure, cognitiveNarrative }, newConcerns: [{ title, object, type, description, intensity, valence, arousal, triggers, possibleResolutions }], longTermMemories: [{ summary, relatedPeople, relatedConcernTitles, emotionalValence, emotionalIntensity, importance }], personalityTraitTags: string[], personalityFacetUpdates: [{ label, summary, evidence, tension, expression }], attentionFocus, derivedMood: { valence, arousal, label }, signalProfiles: { energy, mood, valence, arousal } }",
-    },
+    request,
     llmConfig,
     fallback,
+    {
+      onStream: (output) => onProgress?.({ step: "sceneGeneration", status: "streaming", output }),
+    },
   );
+  onProgress?.({
+    step: "sceneGeneration",
+    status: "completed",
+    input: [trace.request.prompt, trace.request.outputContract ? `输出契约：${trace.request.outputContract}` : ""].filter(Boolean).join("\n\n"),
+    output: JSON.stringify(trace.output, null, 2),
+    transport: trace.transport,
+  });
 
   return applySceneInterpretation(source, current, trace.output);
 }

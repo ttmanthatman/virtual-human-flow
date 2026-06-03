@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-当前已建立第一版本地 MVP：三栏工作台展示分组多人档案、人物状态、当前位置、聊天室和流程追踪。系统能根据用户素材预览人物档案和配套场景，并在发送消息后展示多模块 LLM 数据流。
+当前已建立第一版本地 MVP：三栏工作台展示分组多人档案、人物状态、当前位置、聊天室、流程追踪和生成监视。系统能根据用户素材预览人物档案和配套场景，并在发送消息后展示多模块 LLM 数据流。
 
 当前系统已接入登录和权限边界。未登录用户可以看到完整工作台界面，但发送消息、切换档案、生成或应用档案、保存 DeepSeek 密钥、测试 DeepSeek、查看审计等操作会打开登录浮窗。登录账号来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室用户；本项目只调用 liao 聊天室 `/api/login` 校验用户名和密码，不保存密码，不修改聊天室数据。
 
@@ -12,7 +12,7 @@
 
 系统启动时会合并 `builtinPersonaDossiers.mjs` 中的内置全局档案和 `.persona-dossiers.local.json` 中管理员保存的共享档案。当前内置 14 个档案：7 个“马可福音10”人物和 7 个“郑州市”人物；每个档案都包含人物、从小到大的关键经历、心理变化、关系变化、熟人关系、场景、分组和位置属性。管理员删除内置档案时不会改源码，而是在运行时存储里记录 tombstone。
 
-人物档案显示分成预览和详细。详细档案直接来自 `CharacterProfile` 的 `fullLifeStory`、`lifeEvents`、`personalityFacets` 和 `relationships`；预览短文由 DeepSeek 生成，不由源码手写。角色缺少 `personaDossier.previewSummary` 时，UI 显示“预览生成中”；登录用户打开该角色后，前端调用 DeepSeek 生成短预览，再通过 `/api/persona-dossiers/:id/preview` 全局保存。
+人物档案显示分成预览和详细。详细档案直接来自 `CharacterProfile` 的 `fullLifeStory`、`lifeEvents`、`personalityFacets` 和 `relationships`；预览短文由 DeepSeek 生成，不由源码手写。角色缺少 `personaDossier.previewSummary` 时，UI 显示“预览生成中”并在左侧档案卡显示扫光动画；登录用户打开该角色后，前端调用 DeepSeek 生成短预览，再通过 `/api/persona-dossiers/:id/preview` 全局保存。短预览生成和管理员人物/场景生成使用独立生成状态，不设置聊天 `isRunning`，因此生成过程中仍可发送对话。
 
 后台会记录每个登录用户的一次输入和虚拟人输出。审计记录写入 `.conversation-audits.local.json`，共享档案写入 `.persona-dossiers.local.json`；二者都是运行时文件，被 `.gitignore` 忽略，只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计。
 
@@ -34,7 +34,7 @@ Memory Recall 不是敏感词召回。触发词可以作为线索，但记忆浮
 
 DeepSeek 接入必须关闭思考模式。应用固定使用真实 DeepSeek 本地代理和 `deepseek-v4-flash`，不再暴露模拟语言模型选项。代理层对所有 DeepSeek Chat Completions 请求显式传入 `thinking: { type: "disabled" }`，不发送 `reasoning_effort`，并把 `deepseek-reasoner` 纠正为 `deepseek-v4-flash`。
 
-流程追踪面板不是事后 dump。每个模块开始时会自动切换到当前步骤，并显示该模块的输入、流式输出和状态。每个步骤都必须让用户能分清“发给模块的输入”和“模块返回的输出”。
+流程追踪面板不是事后 dump。每个模块开始时会自动切换到当前步骤，并显示该模块的输入、流式输出和状态。右侧面板分为对话流程和生成监视两组，生成监视覆盖人物短预览、人物档案生成和场景生成。每个步骤都必须让用户能分清“发给模块的输入”和“模块返回的输出”。
 
 ## 总体工作流
 
@@ -181,6 +181,8 @@ flowchart TD
     B -- 场景 --> E[场景解读 LLM]
     D --> D1[分类: 生平事件/长期记忆/人性人格/标签/关切/状态信号]
     E --> E1[分类: 场景摘要/状态影响/人物影响]
+    D -. 流式输出 .-> MONITOR[右侧生成监视]
+    E -. 流式输出 .-> MONITOR
     D1 --> F[确定性归一化: 限长/补 ID/clamp/去原文整段]
     E1 --> F
     F --> G[左侧显示摘要预览]
@@ -201,7 +203,9 @@ flowchart TD
     A[登录用户选中角色] --> B{是否已有 previewSummary}
     B -- 有 --> C[左侧显示 DeepSeek 预览]
     B -- 无 --> D[显示 预览生成中]
+    D --> ANIM[左侧档案卡扫光动画]
     D --> E[调用 /api/deepseek-chat 生成短预览]
+    E -. 流式输出 .-> TRACE[右侧生成监视: 输入/输出/状态]
     E --> F[POST /api/persona-dossiers/:id/preview]
     F --> STORE[.persona-dossiers.local.json]
     STORE --> C
@@ -683,6 +687,8 @@ flowchart LR
     CHAT[中间对话] --> PIPE
     PIPE --> TRACE[右侧流程追踪]
     TRACE --> JSON[事件/评估/记忆/决策/回应提示词/回应输出/状态更新/信号评估/状态变化]
+    LEFT --> MONITOR[右侧生成监视]
+    MONITOR --> GENJSON[人物短预览/人物档案/场景生成输入输出状态]
     TRACE --> AUDIT[管理员输入输出审计]
     TOP --> LOGIN[登录浮窗]
     TOP --> UPDATE[服务器更新浮窗]
@@ -735,6 +741,7 @@ flowchart LR
 | 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，仅管理员可查看、删除单条或清空 |
 | 人物档案生成 | initialized | 通过 Dossier Interpretation LLM 重新解读用户素材，生成 profile、concerns、longTermMemory 和 runtime 预览 |
 | 人物档案预览 | initialized | 左侧只展示 `profile.displaySummary` 等摘要信息，用户确认后应用 |
+| 生成监视 | initialized | 右侧展示人物短预览、人物档案和场景生成的输入、流式输出和状态；生成不阻塞聊天发送 |
 | 场景生成 | initialized | 通过 Scene Interpretation LLM 重新解读用户素材，生成 scene、状态影响、人物影响、关切和记忆预览 |
 | 场景预览 | initialized | 先显示场景摘要和状态影响预览，用户确认后应用完整状态 |
 | 人物场景一致性检测 | initialized | Profile Scene Consistency LLM 判断人物和场景是否硬冲突；硬冲突需要扭曲时空密码继续 |

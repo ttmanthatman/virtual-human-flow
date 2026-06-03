@@ -442,8 +442,30 @@ select {
   cursor: pointer;
   display: grid;
   gap: 3px;
+  overflow: hidden;
   padding: 9px 10px;
+  position: relative;
   text-align: left;
+}
+
+.dossier-tab.generating::after {
+  animation: dossier-shine 1.8s linear infinite;
+  background: linear-gradient(135deg, transparent 38%, rgba(255, 255, 255, 0.72) 50%, transparent 62%);
+  content: "";
+  inset: -70%;
+  pointer-events: none;
+  position: absolute;
+  transform: translate(-40%, -40%);
+}
+
+@keyframes dossier-shine {
+  from {
+    transform: translate(-42%, -42%);
+  }
+
+  to {
+    transform: translate(42%, 42%);
+  }
 }
 
 .dossier-group {
@@ -480,14 +502,37 @@ select {
   border-color: rgba(15, 118, 110, 0.38);
 }
 
-.dossier-tab span {
+.dossier-tab-head {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: space-between;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.dossier-tab-head span {
   font-size: 13px;
   font-weight: 760;
+  overflow-wrap: anywhere;
+}
+
+.generating-icon {
+  color: #0f766e;
+  flex-shrink: 0;
 }
 
 .dossier-tab small {
   color: #718189;
   font-size: 11px;
+  position: relative;
+  z-index: 1;
+}
+
+.preview-summary.generating {
+  color: #0f766e;
+  font-weight: 720;
 }
 
 .location-card {
@@ -892,6 +937,17 @@ textarea {
   display: grid;
   gap: 7px;
   grid-template-columns: repeat(2, 1fr);
+}
+
+.flow-group-label {
+  color: #65747c;
+  font-size: 11px;
+  font-weight: 760;
+  margin-bottom: -2px;
+}
+
+.generation-rail {
+  margin-bottom: 3px;
 }
 
 .flow-step {
