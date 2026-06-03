@@ -11,8 +11,10 @@ import {
   LogIn,
   LogOut,
   Lock,
+  MapPin,
   MessageSquare,
   Network,
+  Navigation,
   Play,
   Plus,
   RefreshCcw,
@@ -54,6 +56,14 @@ const concernStatusLabels = {
   resolved: "已解决",
 };
 
+const motionStateLabels: Record<NonNullable<CharacterState["location"]>["motionState"], string> = {
+  stationary: "停留",
+  walking: "步行",
+  riding: "骑行",
+  driving: "驾车",
+  unknown: "未知",
+};
+
 type TraceDisplayState = Partial<Record<keyof PipelineTrace, PipelineStepProgress>>;
 type ConsistencyGate = {
   candidate: CharacterState;
@@ -88,6 +98,7 @@ function createPersonaDossier(state: CharacterState, dossierDescription: string,
   return {
     id: makeId("dossier"),
     title: title ?? state.profile.name,
+    groupName: "未分组",
     state,
     dossierDescription,
     sceneDescription,
@@ -142,6 +153,14 @@ export function App() {
     [state.concerns, state.runtime.activeConcernIds],
   );
   const activeDossier = useMemo(() => dossiers.find((dossier) => dossier.id === activeDossierId) ?? dossiers[0], [activeDossierId, dossiers]);
+  const groupedDossiers = useMemo(() => {
+    const groups = new Map<string, PersonaDossier[]>();
+    for (const dossier of dossiers) {
+      const groupName = dossier.groupName || "未分组";
+      groups.set(groupName, [...(groups.get(groupName) ?? []), dossier]);
+    }
+    return Array.from(groups.entries());
+  }, [dossiers]);
 
   useEffect(() => {
     fetch("/api/deepseek-config")
@@ -348,7 +367,38 @@ export function App() {
     setAuditStatus(data.entries?.length ? "已读取用户输入输出" : "暂无用户输入输出记录");
   }
 
-  function updateActiveDossier(patch: Partial<Pick<PersonaDossier, "state" | "dossierDescription" | "sceneDescription" | "title">>) {
+  async function deleteConversationAuditEntry(auditId: string) {
+    if (!requireAdmin("删除审计记录")) return;
+    const response = await fetch(`/api/conversation-audits/${encodeURIComponent(auditId)}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      setAuditStatus(`审计删除失败：${detail.slice(0, 80)}`);
+      return;
+    }
+    setAuditEntries((items) => items.filter((entry) => entry.id !== auditId));
+    setAuditStatus("已删除一条用户输入输出记录");
+  }
+
+  async function clearConversationAuditEntries() {
+    if (!requireAdmin("清空审计记录")) return;
+    if (auditEntries.length > 0 && !window.confirm("确定清空所有用户输入输出记录吗？")) return;
+    const response = await fetch("/api/conversation-audits", {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      setAuditStatus(`审计清空失败：${detail.slice(0, 80)}`);
+      return;
+    }
+    setAuditEntries([]);
+    setAuditStatus("已清空用户输入输出记录");
+  }
+
+  function updateActiveDossier(patch: Partial<Pick<PersonaDossier, "state" | "dossierDescription" | "sceneDescription" | "title" | "groupName">>) {
     setDossiers((items) =>
       items.map((item) =>
         item.id === activeDossierId
@@ -411,6 +461,27 @@ export function App() {
         interactionPressure: "等待 LLM 判断场景压力。",
         cognitiveNarrative: "人物和场景尚未形成配套语境。",
       },
+      location: {
+        ...seedState.location!,
+        label: "待配置位置",
+        address: "等待管理员填写或未来地图服务解析",
+        region: "未分组区域",
+        coordinate: undefined,
+        speedKmh: 0,
+        headingDeg: 0,
+        headingLabel: "原地",
+        motionState: "stationary",
+        mapContext: {
+          nearbyRoads: [],
+          nearbyPlaces: [],
+          nearbyBuildings: [],
+          environmentSummary: "地图服务尚未接入，当前仅保留可手动维护的位置字段。",
+          source: "manual",
+          resolvedAt: nowIso(),
+        },
+        updatedAt: nowIso(),
+        source: "manual",
+      },
     };
     const nextDossier = createPersonaDossier(nextState, "", "", nextState.profile.name);
     setDossiers((items) => [...items, nextDossier]);
@@ -430,10 +501,6 @@ export function App() {
 
   async function handleDeleteDossier(id: string) {
     if (!requireAdmin("删除档案")) return;
-    if (dossiers.length <= 1) {
-      setError("至少保留一个档案。");
-      return;
-    }
 
     const response = await fetch(`/api/persona-dossiers/${encodeURIComponent(id)}`, {
       method: "DELETE",
@@ -450,10 +517,17 @@ export function App() {
     setDossiers(nextItems);
     if (removingActive) {
       const nextActive = nextItems[0];
-      setActiveDossierId(nextActive.id);
-      setState(nextActive.state);
-      setDossierDescription(nextActive.dossierDescription);
-      setSceneDescription(nextActive.sceneDescription);
+      if (nextActive) {
+        setActiveDossierId(nextActive.id);
+        setState(nextActive.state);
+        setDossierDescription(nextActive.dossierDescription);
+        setSceneDescription(nextActive.sceneDescription);
+      } else {
+        setActiveDossierId("");
+        setState(seedState);
+        setDossierDescription("");
+        setSceneDescription("");
+      }
       setDossierPreview(undefined);
       setScenePreview(undefined);
       setConsistencyGate(undefined);
@@ -478,6 +552,15 @@ export function App() {
     }
     setSceneDescription(value);
     updateActiveDossier({ sceneDescription: value });
+  }
+
+  function handleDossierGroupChange(value: string) {
+    if (!isAdmin) {
+      if (!isAuthenticated) setLoginModalOpen(true);
+      setError(isAuthenticated ? "只有管理员可以修改档案分组。" : "修改档案分组需要先登录。");
+      return;
+    }
+    updateActiveDossier({ groupName: value });
   }
 
   async function handleSaveDeepseekConfig() {
@@ -777,6 +860,7 @@ export function App() {
     setConsistencyGate(undefined);
     setDossiers([resetDossier]);
     setActiveDossierId(resetDossier.id);
+    if (authToken) void loadSharedDossiers(authToken);
   }
 
   return (
@@ -839,23 +923,45 @@ export function App() {
             </div>
             <small className="sync-status">{dossierSyncStatus}</small>
             <div className="dossier-tabs">
-              {dossiers.map((dossier) => (
-                <button
-                  className={dossier.id === activeDossierId ? "dossier-tab selected" : "dossier-tab"}
-                  key={dossier.id}
-                  type="button"
-                  onClick={() => handleSelectDossier(dossier)}
-                >
-                  <span>{dossier.title}</span>
-                  <small>{dossier.state.scene?.title ?? "未设场景"}</small>
-                </button>
+              {groupedDossiers.map(([groupName, groupDossiers]) => (
+                <section className="dossier-group" key={groupName}>
+                  <div className="dossier-group-title">
+                    <span>{groupName}</span>
+                    <small>{groupDossiers.length}</small>
+                  </div>
+                  {groupDossiers.map((dossier) => (
+                    <button
+                      className={dossier.id === activeDossierId ? "dossier-tab selected" : "dossier-tab"}
+                      key={dossier.id}
+                      type="button"
+                      onClick={() => handleSelectDossier(dossier)}
+                    >
+                      <span>{dossier.title}</span>
+                      <small>{dossier.state.scene?.title ?? "未设场景"}</small>
+                      {dossier.state.location ? <small>{dossier.state.location.label}</small> : null}
+                    </button>
+                  ))}
+                </section>
               ))}
             </div>
             <div className="dossier-actions">
-              <button className="secondary-button" type="button" onClick={() => persistPersonaDossier()}>
+              <label className="group-field">
+                <span>分组</span>
+                <input
+                  value={activeDossier?.groupName ?? "未分组"}
+                  onChange={(event) => handleDossierGroupChange(event.target.value)}
+                  onFocus={() => {
+                    if (!isAuthenticated) setLoginModalOpen(true);
+                    if (!isAdmin) setError(isAuthenticated ? "只有管理员可以修改档案分组。" : "修改档案分组需要先登录。");
+                  }}
+                  disabled={!activeDossierId}
+                  readOnly={!isAdmin}
+                />
+              </label>
+              <button className="secondary-button" type="button" onClick={() => persistPersonaDossier()} disabled={!activeDossierId}>
                 <Save size={15} /> 保存后台档案
               </button>
-              <button className="secondary-button danger-button" type="button" onClick={() => handleDeleteDossier(activeDossierId)} disabled={dossiers.length <= 1}>
+              <button className="secondary-button danger-button" type="button" onClick={() => handleDeleteDossier(activeDossierId)} disabled={!activeDossierId}>
                 <Trash2 size={15} /> 删除当前档案
               </button>
             </div>
@@ -882,6 +988,8 @@ export function App() {
               </div>
             </details>
           </div>
+
+          <LocationCard location={state.location} />
 
           <div className="metric-grid">
             <RuntimeMetric label="能量" value={state.runtime.energy.toFixed(2)} detail={state.runtime.signalProfiles.energy} />
@@ -1117,9 +1225,14 @@ export function App() {
                 <strong>用户输入输出</strong>
                 <span>仅管理员可见，后台保留最近 1000 条</span>
               </div>
-              <button className="icon-button compact" type="button" onClick={() => setAuditPanelOpen(false)} title="关闭">
-                <X size={15} />
-              </button>
+              <div className="modal-actions">
+                <button className="secondary-button danger-button compact-text-button" type="button" onClick={clearConversationAuditEntries}>
+                  <Trash2 size={14} /> 清空
+                </button>
+                <button className="icon-button compact" type="button" onClick={() => setAuditPanelOpen(false)} title="关闭">
+                  <X size={15} />
+                </button>
+              </div>
             </div>
             <div className="audit-list">
               {auditEntries.length ? (
@@ -1127,7 +1240,12 @@ export function App() {
                   <article className="audit-entry" key={entry.id}>
                     <div className="audit-entry-head">
                       <strong>{entry.nickname || entry.username}</strong>
-                      <span>{new Date(entry.createdAt).toLocaleString("zh-CN")}</span>
+                      <div className="audit-entry-actions">
+                        <span>{new Date(entry.createdAt).toLocaleString("zh-CN")}</span>
+                        <button className="icon-button compact" type="button" onClick={() => deleteConversationAuditEntry(entry.id)} title="删除这条记录">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                     <small>{entry.dossierTitle || "未记录档案"} · {entry.status === "failed" ? "失败" : "完成"}</small>
                     <section>
@@ -1253,6 +1371,54 @@ function PanelTitle({ icon: Icon, title }: { icon: typeof Activity; title: strin
       <Icon size={18} />
       <h2>{title}</h2>
     </div>
+  );
+}
+
+function LocationCard({ location }: { location: CharacterState["location"] }) {
+  if (!location) {
+    return (
+      <section className="location-card">
+        <div className="location-card-head">
+          <MapPin size={15} />
+          <strong>位置未设定</strong>
+        </div>
+        <p>当前角色还没有明确物理位置。</p>
+      </section>
+    );
+  }
+
+  const context = location.mapContext;
+  return (
+    <section className="location-card">
+      <div className="location-card-head">
+        <MapPin size={15} />
+        <div>
+          <strong>{location.label}</strong>
+          <span>{location.region}</span>
+        </div>
+      </div>
+      <p>{location.address}</p>
+      <div className="location-grid">
+        <div>
+          <Navigation size={14} />
+          <span>{motionStateLabels[location.motionState]}</span>
+          <strong>{location.speedKmh.toFixed(1)} km/h</strong>
+        </div>
+        <div>
+          <Navigation size={14} />
+          <span>方向</span>
+          <strong>{location.headingLabel} · {location.headingDeg}°</strong>
+        </div>
+      </div>
+      {context ? (
+        <div className="location-context">
+          <small>道路：{context.nearbyRoads.length ? context.nearbyRoads.slice(0, 4).join(" / ") : "未记录"}</small>
+          <small>地点：{context.nearbyPlaces.length ? context.nearbyPlaces.slice(0, 4).join(" / ") : "未记录"}</small>
+          <small>建筑：{context.nearbyBuildings.length ? context.nearbyBuildings.slice(0, 4).join(" / ") : "未记录"}</small>
+          <p>{context.environmentSummary}</p>
+        </div>
+      ) : null}
+    </section>
   );
 }
 

@@ -126,6 +126,30 @@ export interface RuntimeState {
   lastActiveAt: string;
 }
 
+export interface CharacterLocation {
+  label: string;
+  address: string;
+  region: string;
+  coordinate?: {
+    lng: number;
+    lat: number;
+  };
+  speedKmh: number;
+  headingDeg: number;
+  headingLabel: string;
+  motionState: "stationary" | "walking" | "riding" | "driving" | "unknown";
+  mapContext?: {
+    nearbyRoads: string[];
+    nearbyPlaces: string[];
+    nearbyBuildings: string[];
+    environmentSummary: string;
+    source: "seed" | "manual" | "map_service";
+    resolvedAt: string;
+  };
+  updatedAt: string;
+  source: "seed" | "manual" | "map_service";
+}
+
 export interface CharacterState {
   profile: CharacterProfile;
   concerns: Concern[];
@@ -134,16 +158,19 @@ export interface CharacterState {
   longTermMemory: LongTermMemory[];
   runtime: RuntimeState;
   scene?: SceneState;
+  location?: CharacterLocation;
 }
 
 export interface PersonaDossier {
   id: string;
   title: string;
+  groupName: string;
   state: CharacterState;
   dossierDescription: string;
   sceneDescription: string;
   createdAt: string;
   updatedAt: string;
+  isBuiltin?: boolean;
 }
 
 export interface SceneState {

@@ -6,6 +6,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   appendConversationAudit,
   createLocalSession,
+  clearConversationAudits,
+  deleteConversationAudit,
   deletePersonaDossier,
   destroyLocalSession,
   getRequestSession,
@@ -105,6 +107,19 @@ function deepseekProxyPlugin(): Plugin {
         if (pathname === "/api/conversation-audits" && request.method === "GET") {
           if (!requireAdminSession(request, response)) return;
           sendJson(response, 200, { entries: readConversationAudits() });
+          return;
+        }
+
+        if (pathname === "/api/conversation-audits" && request.method === "DELETE") {
+          if (!requireAdminSession(request, response)) return;
+          sendJson(response, 200, clearConversationAudits());
+          return;
+        }
+
+        if (pathname?.startsWith("/api/conversation-audits/") && request.method === "DELETE") {
+          if (!requireAdminSession(request, response)) return;
+          const auditId = decodeURIComponent(pathname.replace("/api/conversation-audits/", ""));
+          sendJson(response, 200, deleteConversationAudit(auditId));
           return;
         }
 

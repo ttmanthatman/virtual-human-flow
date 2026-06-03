@@ -29,7 +29,7 @@
 自动部署执行以下步骤：
 
 1. GitHub runner 安装依赖并运行 `npm run build`。
-2. 打包 `dist/`、`server.mjs`、`package.json`、`package-lock.json`。
+2. 打包 `dist/`、`server.mjs`、`serverSupport.mjs`、`builtinPersonaDossiers.mjs`、`package.json`、`package-lock.json`。
 3. 通过 SSH 上传 release archive 到 VPS `/tmp`。
 4. VPS 端确认目标目录必须是 `/var/www/ok.xiaogushi.us/app`。
 5. 备份当前线上目录到 `/root/ok.xiaogushi.us-backups/<timestamp>.tgz`。

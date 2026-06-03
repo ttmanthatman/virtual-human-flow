@@ -46,8 +46,9 @@ jobs:
       - name: Package release
         run: |
           set -euo pipefail
-          tar --create --gzip --file "$RELEASE_ARCHIVE" dist server.mjs serverSupport.mjs package.json package-lock.json
+          tar --create --gzip --file "$RELEASE_ARCHIVE" dist server.mjs serverSupport.mjs builtinPersonaDossiers.mjs package.json package-lock.json
           tar --list --gzip --file "$RELEASE_ARCHIVE" | grep -Fx serverSupport.mjs
+          tar --list --gzip --file "$RELEASE_ARCHIVE" | grep -Fx builtinPersonaDossiers.mjs
 
       - name: Validate deployment secrets
         env:

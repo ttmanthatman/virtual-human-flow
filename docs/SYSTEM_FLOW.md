@@ -4,13 +4,15 @@
 
 ## 当前阶段
 
-当前已建立第一版本地 MVP：三栏工作台展示多人档案、人物状态、聊天室和流程追踪。系统能根据用户素材预览人物档案和配套场景，并在发送消息后展示多模块 LLM 数据流。
+当前已建立第一版本地 MVP：三栏工作台展示分组多人档案、人物状态、当前位置、聊天室和流程追踪。系统能根据用户素材预览人物档案和配套场景，并在发送消息后展示多模块 LLM 数据流。
 
 当前系统已接入登录和权限边界。未登录用户可以看到完整工作台界面，但发送消息、切换档案、生成或应用档案、保存 DeepSeek 密钥、测试 DeepSeek、查看审计等操作会打开登录浮窗。登录账号来自 `https://liao.xiaogushi.us/` 聊天室用户；本项目只调用 liao 聊天室 `/api/login` 校验用户名和密码，不保存密码，不修改聊天室数据。
 
-管理员权限沿用 liao 聊天室登录结果里的 `isAdmin`。只有管理员可以新增、保存、删除或应用共享多人档案；普通登录用户只能读取、选择和使用管理员保存的共享档案。用户对话时的角色状态变化只在当前浏览器会话内写回，不自动覆盖后台共享档案。
+管理员权限沿用 liao 聊天室登录结果里的 `isAdmin`。只有管理员可以新增、保存、删除或应用共享多人档案，也可以修改档案分组；普通登录用户只能读取、选择和使用管理员保存的共享档案。用户对话时的聊天内容、短期记忆、runtime 状态和关系变化只在当前浏览器会话内写回，不自动覆盖后台共享档案。
 
-后台会记录每个登录用户的一次输入和虚拟人输出。审计记录写入 `.conversation-audits.local.json`，共享档案写入 `.persona-dossiers.local.json`；二者都是运行时文件，被 `.gitignore` 忽略，只有管理员可以通过 `/api/conversation-audits` 读取审计。
+系统启动时会合并 `builtinPersonaDossiers.mjs` 中的内置全局档案和 `.persona-dossiers.local.json` 中管理员保存的共享档案。当前内置 14 个档案：7 个“马可福音10”人物和 7 个“郑州市”人物；每个档案都包含人物、成长背景、场景、分组和位置属性。管理员删除内置档案时不会改源码，而是在运行时存储里记录 tombstone。
+
+后台会记录每个登录用户的一次输入和虚拟人输出。审计记录写入 `.conversation-audits.local.json`，共享档案写入 `.persona-dossiers.local.json`；二者都是运行时文件，被 `.gitignore` 忽略，只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计。
 
 重要约束：Reply LLM 只接收自然语言上下文，只生成角色说出口的话。不能把 JSON、字段名、输出契约、工程术语或类似编程语言的内容混进这一步。
 
@@ -20,13 +22,13 @@
 
 Memory Recall 不是敏感词召回。触发词可以作为线索，但记忆浮现必须同时参考自然语言相关度、当前关切、说话者关系、情绪显著、近期性和词面线索。当前同步路径先在本地构建混合召回候选，再交给 Memory Recall LLM 复判；未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
 
-左侧 UI 里的性格标签、能量、情绪、情绪倾向、唤醒度是给人快速观察的摘要。它们由专门的 Runtime Signal Evaluation LLM 模块评估，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `personalitySummary`、`personalityFacets`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative` 等自然语言综合描述。
+左侧 UI 里的性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由专门的 Runtime Signal Evaluation LLM 模块、种子档案或管理员维护字段提供，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `personalitySummary`、`personalityFacets`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
 
 人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。Reply Prompt 的作用是把这些自然语言材料过一遍，让回复从人物整体状态中长出来，而不是让某个单独指标指挥台词风格。
 
 人物档案和场景预览也属于认知模块，不是本地字符串拼接。人物档案预览通过 Dossier Interpretation LLM 将用户素材拆成展示摘要、长期记忆、人性/人格、标签、关切和状态信号；场景预览通过 Scene Interpretation LLM 将用户素材拆成场景摘要、状态影响和人物影响。预览应用时写入的是 LLM 解读后的结构化状态，而不是用户原文。
 
-人物档案和场景设置作为 `personaDossier` 成组保存。左侧可以新建、切换和删除档案；切换档案时人物状态、人物素材和场景素材一起切换。应用人物或场景预览前，Profile Scene Consistency LLM 会判断人物与场景是否处于同一世界观、时代和社会语境；现代人物进入古代场景这类硬冲突需要输入本地“扭曲时空密码”才能继续。
+人物档案和场景设置作为 `personaDossier` 成组保存。左侧可以按 `personaDossierGroup` 分组展示、新建、切换和删除档案；切换档案时人物状态、人物素材、场景素材和位置属性一起切换。应用人物或场景预览前，Profile Scene Consistency LLM 会判断人物与场景是否处于同一世界观、时代和社会语境；现代人物进入古代场景这类硬冲突需要输入本地“扭曲时空密码”才能继续。
 
 DeepSeek 接入必须关闭思考模式。应用固定使用真实 DeepSeek 本地代理和 `deepseek-v4-flash`，不再暴露模拟语言模型选项。代理层对所有 DeepSeek Chat Completions 请求显式传入 `thinking: { type: "disabled" }`，不发送 `reasoning_effort`，并把 `deepseek-reasoner` 纠正为 `deepseek-v4-flash`。
 
@@ -77,7 +79,7 @@ flowchart LR
 flowchart TD
     G[推送 GitHub main] --> GA[GitHub Actions productionAutoDeploy]
     GA --> BUILD[npm ci + npm run build]
-    BUILD --> PKG[打包 dist/server.mjs/serverSupport.mjs/package files]
+    BUILD --> PKG[打包 dist/server.mjs/serverSupport.mjs/builtinPersonaDossiers.mjs/package files]
     PKG --> UPLOAD[SSH 上传 release archive 到 VPS /tmp]
     UPLOAD --> BACKUP[备份 /var/www/ok.xiaogushi.us/app]
     BACKUP --> EXTRACT[解压新版本到 /var/www/ok.xiaogushi.us/app]
@@ -103,7 +105,7 @@ flowchart TD
     E --> A[评估模块: 判断事件触发关切]
     A --> M[记忆召回模块: 混合相关度候选 + LLM复判]
     M --> D[回应决策模块: 判断是否回应和回应姿态]
-    D --> P[Prompt Generator: 生成自然语言回复上下文]
+    D --> P[Prompt Generator: 生成自然语言回复上下文 + 位置语境]
     P --> R[DeepSeek Flash Reply LLM: 只生成角色台词]
     R --> S[状态更新模块: 判断状态和记忆变化]
     S --> G[信号评估模块: 评估能量/情绪/情绪倾向/唤醒度]
@@ -187,25 +189,28 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[左栏多人档案列表] --> B{用户操作}
-    B -- 新建/保存/删除/应用预览 --> ADMIN{是否管理员}
+    BUILTIN[builtinPersonaDossiers.mjs] --> MERGE[Server Support 合并档案]
+    STORE[.persona-dossiers.local.json] --> MERGE
+    MERGE --> A[左栏分组多人档案列表]
+    A --> GROUP[按 personaDossier.groupName 分组]
+    GROUP --> B{用户操作}
+    B -- 新建/保存/删除/改分组/应用预览 --> ADMIN{是否管理员}
     ADMIN -- 否 --> BLOCK[阻止修改或打开登录浮窗]
     ADMIN -- 是 --> C[写入后台 sharedPersonaDossier]
     B -- 切换 --> LOGIN{是否已登录}
     LOGIN -- 否 --> POP[打开登录浮窗]
     LOGIN -- 是 --> D[读取 personaDossier.state]
-    B -- 删除 --> E{是否最后一个}
-    E -- 是 --> F[阻止删除]
-    E -- 否 --> ADMIN
-    C --> STORE[.persona-dossiers.local.json]
-    STORE --> READ[登录用户读取共享档案]
+    C --> STORE
+    C --> TOMBSTONE[内置档案删除时记录 deletedBuiltinDossierIds]
+    TOMBSTONE --> STORE
+    MERGE --> READ[登录用户读取全局可用档案]
     READ --> D
-    D --> H[左栏人物/场景输入同步切换]
+    D --> H[左栏人物/场景/位置输入同步切换]
     H --> I[聊天室后续使用当前档案状态]
     I --> J[对话状态更新写回当前浏览器会话]
 ```
 
-管理员保存的多人档案是共享初始档案。普通用户选择它之后可以对话使用；对话产生的短期记忆、runtime 状态和关系变化不自动写回 `.persona-dossiers.local.json`。
+内置档案和管理员保存的多人档案都是全局可用初始档案。普通用户选择它之后可以对话使用；对话产生的聊天内容、短期记忆、runtime 状态和关系变化不自动写回 `.persona-dossiers.local.json`。
 
 ## 对话审计路径
 
@@ -218,6 +223,10 @@ flowchart TD
     ADMIN[管理员点击输入输出审计] --> READ[GET /api/conversation-audits]
     READ --> STORE
     READ --> UI[右侧审计浮层展示每个用户输入输出]
+    UI --> DELONE[DELETE /api/conversation-audits/:id]
+    UI --> CLEAR[DELETE /api/conversation-audits]
+    DELONE --> STORE
+    CLEAR --> STORE
     USER[普通用户] -. 请求读取 .-> DENY[403: 只有管理员可以执行此操作]
 ```
 
@@ -258,6 +267,8 @@ flowchart TD
     U["浏览器用户"] --> UI["App Shell: 三栏工作台"]
     UI --> AUTH["authToken/authUser 登录状态"]
     UI --> DOS["多人档案状态: dossiers/activeDossierId"]
+    DOS --> GROUPS["groupedDossiers 分组渲染"]
+    DOS --> LOCUI["LocationCard 位置显示"]
     UI --> CFG["DeepSeek 配置状态"]
     UI --> CHAT["聊天输入和消息列表"]
     AUTH --> GATE["权限门禁: 未登录弹窗 / 非管理员只读档案"]
@@ -272,7 +283,7 @@ flowchart TD
     CFG --> PANEL
     UI --> PREVIEW["人物/场景预览操作"]
     PREVIEW --> GEN["Generators / Profile Scene Consistency"]
-    UI --> ADMIN["管理员审计浮层"]
+    UI --> ADMIN["管理员审计浮层: 查看/删除/清空"]
 ```
 
 ### Core Types
@@ -280,11 +291,13 @@ flowchart TD
 ```mermaid
 flowchart TD
     TYPES["Core Types"] --> STATE["CharacterState / PersonaDossier"]
+    TYPES --> LOCATION["CharacterLocation / mapContext"]
     TYPES --> EVENT["EventInput"]
     TYPES --> TRACE["PipelineTrace / CognitiveModuleTrace"]
     TYPES --> MEMORY["ShortTermMemory / LongTermMemory / MemoryRecallResult"]
     TYPES --> LLM["LlmConfig / CognitiveModuleRequest / ExpressionLlmRequest"]
     STATE --> MODULES["全 pipeline 模块共享接口"]
+    LOCATION --> STATE
     EVENT --> MODULES
     TRACE --> UI["App Shell trace 展示"]
     LLM --> CLIENTS["Cognitive Module Client / LLM Client"]
@@ -300,12 +313,14 @@ flowchart TD
     SEED --> MEM["初始长期记忆"]
     SEED --> RUNTIME["初始 runtime signals"]
     SEED --> SCENE["初始场景"]
+    SEED --> LOCATION["初始位置: 雨夜工作室"]
     PROFILE --> APP["App 初次加载"]
     CONCERNS --> APP
     REL --> APP
     MEM --> APP
     RUNTIME --> APP
     SCENE --> APP
+    LOCATION --> APP
 ```
 
 ### Cognitive Module Client
@@ -400,9 +415,11 @@ flowchart TD
     PG --> P1["人格/价值/边界/表达样本"]
     PG --> P2["场景和 runtime cognitiveNarrative"]
     PG --> P3["关切/关系/记忆/近期对话"]
+    PG --> P4["characterLocation + mapContext"]
     P1 --> PROMPT["自然语言 Reply Prompt"]
     P2 --> PROMPT
     P3 --> PROMPT
+    P4 --> PROMPT
     PROMPT --> REQ["ExpressionLlmRequest"]
     REQ --> LLM["LLM Client"]
 ```
@@ -557,13 +574,16 @@ flowchart TD
     REQ["认证/档案/审计 API request"] --> SUPPORT["serverSupport.mjs"]
     SUPPORT --> LIAO["liaoChatroom /api/login"]
     SUPPORT --> SESS["内存 authSession"]
+    SUPPORT --> BUILTIN["builtinPersonaDossiers.mjs"]
     SUPPORT --> DOS[".persona-dossiers.local.json"]
     SUPPORT --> AUD[".conversation-audits.local.json"]
     LIAO --> SESS
     SESS --> PERM["requireSession / requireAdminSession"]
+    BUILTIN --> MERGE["readPersonaDossiers 合并内置和运行时档案"]
     PERM --> DOS
     PERM --> AUD
-    DOS --> APP["App Shell 共享档案"]
+    DOS --> MERGE
+    MERGE --> APP["App Shell 全局档案"]
     AUD --> ADMINUI["管理员审计 UI"]
 ```
 
@@ -601,7 +621,7 @@ flowchart TD
     CHECKOUT --> NODE["setup-node"]
     NODE --> INSTALL["npm ci"]
     INSTALL --> BUILD["npm run build"]
-    BUILD --> PACKAGE["打包 dist/server.mjs/serverSupport.mjs/package files"]
+    BUILD --> PACKAGE["打包 dist/server.mjs/serverSupport.mjs/builtinPersonaDossiers.mjs/package files"]
     PACKAGE --> SECRETS["校验 Actions secrets"]
     SECRETS --> SSH["准备 SSH key"]
     SSH --> UPLOAD["上传 release 到 VPS /tmp"]
@@ -631,13 +651,13 @@ flowchart TD
 ```mermaid
 flowchart LR
     TOP[左上角版本/GitHub 链接 + 登录状态] --> LEFT
-    LEFT[左侧状态/人物档案/场景] --> PIPE[对话流程]
+    LEFT[左侧分组档案/状态/位置/人物档案/场景] --> PIPE[对话流程]
     CHAT[中间对话] --> PIPE
     PIPE --> TRACE[右侧流程追踪]
     TRACE --> JSON[事件/评估/记忆/决策/回应提示词/回应输出/状态更新/信号评估/状态变化]
     TRACE --> AUDIT[管理员输入输出审计]
     TOP --> LOGIN[登录浮窗]
-    LEFT --> DOS[多人档案: 新建/切换/删除]
+    LEFT --> DOS[多人档案: 分组/新建/切换/删除]
     LEFT --> GEN1[生成人物档案]
     LEFT --> GEN2[生成场景]
     GEN1 --> FIT[人物场景一致性检测]
@@ -667,6 +687,7 @@ flowchart LR
 | GitHub 仓库 | known | `ttmanthatman/virtual-human-flow`，`main` 分支 push 触发自动部署 |
 | VPS | known | 仅允许后续部署 `ok.xiaogushi.us` 对应内容 |
 | 域名 | known | `ok.xiaogushi.us` |
+| 国内地图服务 | pending | 尚未选型和接入；当前位置字段来自种子或人工维护 |
 
 ## 当前模块状态
 
@@ -676,11 +697,13 @@ flowchart LR
 | 命名登记 | initialized | 已建立 AI 用命名表 |
 | 系统流程 | initialized | 已建立初始工作流图 |
 | MVP 业务模块 | initialized | 已实现本地可运行的三栏工作台 |
-| 多人档案 | initialized | 左侧可新建、切换、删除 `personaDossier`；每个档案绑定人物状态和配套场景素材 |
+| 多人档案 | initialized | 左侧可按 `personaDossierGroup` 分组、新建、切换、删除 `personaDossier`；每个档案绑定人物状态、配套场景素材和位置属性 |
+| 内置人物档案 | initialized | `builtinPersonaDossiers.mjs` 提供 7 个“马可福音10”和 7 个“郑州市”全局初始档案 |
+| 人物位置属性 | initialized | `CharacterState.location` 支持当前位置、速度、方向、周边道路/地点/建筑和环境摘要；当前来自 seed/manual |
 | 登录机制 | initialized | 用户来自 `liao.xiaogushi.us` 聊天室登录接口；未登录可看界面但操作会弹登录浮窗 |
 | 权限控制 | initialized | `isAdmin` 用户可维护共享档案和查看审计；普通登录用户只可选择共享档案并对话 |
 | 共享多人档案 | initialized | 管理员保存到 `.persona-dossiers.local.json`，所有登录用户可读取和使用 |
-| 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，仅管理员可查看 |
+| 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，仅管理员可查看、删除单条或清空 |
 | 人物档案生成 | initialized | 通过 Dossier Interpretation LLM 重新解读用户素材，生成 profile、concerns、longTermMemory 和 runtime 预览 |
 | 人物档案预览 | initialized | 左侧只展示 `profile.displaySummary` 等摘要信息，用户确认后应用 |
 | 场景生成 | initialized | 通过 Scene Interpretation LLM 重新解读用户素材，生成 scene、状态影响、人物影响、关切和记忆预览 |
@@ -691,6 +714,7 @@ flowchart LR
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |
 | 生产部署 | initialized | `ok.xiaogushi.us` 通过 nginx 反代 PM2 进程 `ok-xiaogushi-us`，线上目录 `/var/www/ok.xiaogushi.us/app` |
 | 生产自动部署 | initialized | GitHub Actions 在 `main` 分支新版本后自动构建、上传、备份、重启 PM2，并检查 `/health` |
+| 国内地图服务 | pending | 尚未接入真实地图商；当前位置和地图上下文不能声称来自地图 API |
 | 异步生命路径 | pending | Memory Consolidation、Concern Decay、Internal Monologue、Proactive Scheduler 尚未实现；记忆召回上下文已预留 `async_life` 来源 |
 
 ## 部署记录

@@ -68,6 +68,15 @@ export function generateNaturalPromptRequest(
   const sceneNarrative = state.scene
     ? `${state.scene.title}：${state.scene.cognitiveNarrative} ${state.scene.sensoryProfile} ${state.scene.interactionPressure}`
     : "当前没有明确场景，按普通私聊处理。";
+  const locationNarrative = state.location
+    ? [
+        `她现在的位置是「${state.location.label}」，地址/范围是「${state.location.address}」，所在区域是「${state.location.region}」。`,
+        `移动状态是${describeMotionState(state.location.motionState)}，速度约 ${state.location.speedKmh} km/h，方向是${state.location.headingLabel}（${state.location.headingDeg}度）。`,
+        state.location.mapContext
+          ? `附近道路包括${formatMapList(state.location.mapContext.nearbyRoads)}，附近地点包括${formatMapList(state.location.mapContext.nearbyPlaces)}，附近建筑包括${formatMapList(state.location.mapContext.nearbyBuildings)}。现场地图语境是：${state.location.mapContext.environmentSummary}`
+          : "当前还没有可用的周边地图语境。",
+      ].join(" ")
+    : "当前没有明确物理位置，不能假装知道她身边的街道或建筑。";
 
   const prompt = [
     `现在进入 ${state.profile.name} 的表达时刻。下面是一段自然语言语境，不是规则清单。`,
@@ -77,6 +86,7 @@ export function generateNaturalPromptRequest(
     `她平常的说话质感是：${state.profile.speakingStyle}`,
     `类似情境里的表达样本是：${exampleNarrative}`,
     `此刻的场景语境是：${sceneNarrative}`,
+    `此刻的物理位置语境是：${locationNarrative}`,
     `界面上的能量、情绪、情绪倾向和唤醒度只是给人看的观察摘要。她内部真正参与反应的是这些自然语言状态：${runtimeNarrative}`,
     `${event.speakerName ?? "对方"}刚刚对她说：「${event.content}」`,
     concernNarrative,
@@ -92,6 +102,25 @@ export function generateNaturalPromptRequest(
     model,
     prompt,
   };
+}
+
+function formatMapList(items: string[]) {
+  return items.length > 0 ? `「${items.join("、")}」` : "未记录";
+}
+
+function describeMotionState(motionState: NonNullable<CharacterState["location"]>["motionState"]) {
+  switch (motionState) {
+    case "stationary":
+      return "停留";
+    case "walking":
+      return "步行";
+    case "riding":
+      return "骑行";
+    case "driving":
+      return "驾车";
+    case "unknown":
+      return "未知";
+  }
 }
 
 function describeIntensity(intensity: number) {

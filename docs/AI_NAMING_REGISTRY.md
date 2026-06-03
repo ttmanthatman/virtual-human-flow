@@ -30,6 +30,8 @@
 | 关切 | `concern` | domain entity | 虚拟人稳定在意的事项，是情绪的来源之一 | `moodItem` |
 | 关系档案 | `relationship` | domain entity | 虚拟人对某个对象的独立关系状态 | `friendship` |
 | 场景 | `scene` | domain entity | 当前对话发生的环境和氛围 | `background` |
+| 人物位置 | `characterLocation` | domain object | 角色当前物理位置、速度、方向和地图上下文 | `geoPoint`, `placeInfo` |
+| 地图上下文 | `mapContext` | domain object | 位置周边道路、地点、建筑和环境摘要；当前可由种子或人工维护，未来可由地图服务解析 | `mapDataDump`, `poiText` |
 | 管线追踪 | `pipelineTrace` | runtime object | 一轮对话的完整中间结果 | `debugInfo` |
 | 流程步骤进度 | `pipelineStepProgress` | runtime object | 执行中步骤的输入、输出、状态和 transport | `loadingStep`, `traceDump` |
 | 认知模块调用 | `cognitiveModuleTrace` | runtime object | 一个脑区式模块的一次 LLM 调用记录 | `debugInfo` |
@@ -45,8 +47,11 @@
 | 人物档案解读 | `dossierInterpretation` | cognitive module | 将用户人物素材重新解读为展示摘要、长期记忆、人性/人格、标签、关切和状态信号 | `profileRewrite`, `rawDossierPreview` |
 | 场景解读 | `sceneInterpretation` | cognitive module | 将用户场景素材重新解读为场景摘要、状态影响、人物影响、长期记忆和关切变化 | `sceneRewrite`, `rawScenePreview` |
 | 人物档案组合 | `personaDossier` | UI/domain object | 一个可切换的多人档案条目，绑定人物状态、人物素材和配套场景素材 | `profileSlot`, `characterTab` |
+| 人物档案分组 | `personaDossierGroup` | UI/domain object | 多人档案列表中的分组名称，例如“马可福音10”“郑州市” | `folder`, `categoryName` |
 | 共享人物档案 | `sharedPersonaDossier` | persisted domain object | 管理员保存到后台、所有登录用户可读取和使用的多人档案 | `globalProfile`, `publicDossier` |
+| 内置人物档案 | `builtinPersonaDossier` | seed domain object | 随服务启动提供的全局人物/场景/位置初始档案，可被管理员删除或覆盖 | `sampleProfile`, `demoDossier` |
 | 对话审计记录 | `conversationAuditEntry` | persisted audit object | 记录每个登录用户的一次输入、虚拟人输出和失败信息，仅管理员可读 | `chatLog`, `debugRecord` |
+| 对话审计删除 | `conversationAuditDeletion` | admin action | 管理员删除单条或清空用户输入输出审计记录 | `logCleanup`, `chatPurge` |
 | 人物场景一致性 | `profileSceneConsistency` | cognitive module | 判断人物档案和场景是否处于同一世界观、时代和社会语境 | `settingMatch`, `sceneFit` |
 | 扭曲时空密码 | `distortionPassword` | permission gate | 人物和场景硬冲突时允许继续应用的本地门禁短语 | `overrideCode`, `adminPassword` |
 | 混合记忆召回 | `hybridMemoryRetrieval` | pipeline design | 记忆召回同时参考自然语言相关度、关切关联、关系关联、情绪显著、近期性和词面线索 | `keywordMemorySearch`, `sensitiveWordRecall` |
@@ -64,6 +69,7 @@
 | App Shell | `src/App.tsx` | 三栏 MVP 工作台，DeepSeek 连接状态、聊天和 trace | 用户输入、按钮操作 | UI 状态 | 浏览器用户 | conversation pipeline |
 | Core Types | `src/core/types.ts` | 定义角色、关切、关系、记忆、事件、trace 类型 | 无 | TypeScript 类型 | 全模块 | 无 |
 | Seed State | `src/data/seedState.ts` | 提供林安初始状态和默认消息 | 无 | `CharacterState` | App Shell | Core Types |
+| Builtin Persona Dossiers | `builtinPersonaDossiers.mjs` | 提供“马可福音10”和“郑州市”全局初始人物/场景/位置档案 | 无 | `PersonaDossier[]` | Server Support | 无 |
 | Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Appraisal/Memory/Decision/State Update | 外部 LLM endpoint |
 | Appraisal | `src/pipeline/appraisal.ts` | 通过 LLM 判断事件触发了哪些关切 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | Conversation Pipeline | Cognitive Module Client |
 | Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 用混合召回候选和 LLM 复判判断哪些记忆会浮现；召回不能退化为敏感词过滤 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` | Conversation Pipeline | Cognitive Module Client |
@@ -77,7 +83,7 @@
 | Profile Scene Consistency | `src/pipeline/profileSceneConsistency.ts` | 通过 LLM 判断人物档案和场景是否匹配，并返回是否需要扭曲时空密码 | `CharacterState`, `LlmConfig` | `ProfileSceneConsistencyResult` | App Shell | Cognitive Module Client |
 | DeepSeek Local Proxy | `vite.config.ts` | 在本地开发服务器中代理 DeepSeek Chat Completions，固定 flash 模型、关闭 thinking 并保存根目录密钥文件 | `/api/deepseek-config`, `/api/deepseek-chat` | DeepSeek 响应或配置状态 | App Shell | DeepSeek API |
 | Production Server | `server.mjs` | 生产环境服务 `dist/` 并提供 DeepSeek API 代理 | HTTP request, `.deepseek.local.json` | HTML/assets/API/SSE | nginx reverse proxy | DeepSeek API |
-| Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、共享档案存储和对话审计存储 | HTTP request, liao login response, local runtime JSON | auth session, persona dossiers, audit entries | Vite Dev Server/Production Server | liao Chatroom, local runtime files |
+| Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、内置/共享档案合并、共享档案存储和对话审计存储 | HTTP request, liao login response, local runtime JSON, builtin persona dossiers | auth session, persona dossiers, audit entries | Vite Dev Server/Production Server | liao Chatroom, local runtime files, Builtin Persona Dossiers |
 | Production Auto Deploy | `.github/workflows/deploy-production.yml` | GitHub `main` 新提交后自动构建、上传 release、备份线上目录、重启 PM2 并健康检查 | GitHub push/workflow_dispatch, Actions secrets | 线上新版本、备份文件、Actions 结果 | GitHub Actions | production VPS, PM2 |
 | Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录自动部署触发方式、Secrets、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | GitHub Actions |
 
@@ -116,8 +122,12 @@
 | `evaluateProfileSceneConsistency` | `src/pipeline/profileSceneConsistency.ts` | 调用一致性检测 LLM，判断人物和场景是否存在时代/世界观硬冲突 | state, llmConfig | ProfileSceneConsistencyResult | 可调用外部 endpoint | implemented |
 | `normalizeProfileSceneConsistency` | `src/pipeline/profileSceneConsistency.ts` | 稳定一致性检测结果并确保 hard mismatch 必须需要门禁 | result, fallback | ProfileSceneConsistencyResult | 无 | implemented |
 | `createPersonaDossier` | `src/App.tsx` | 创建绑定人物状态和场景素材的可切换档案条目 | state, dossierDescription, sceneDescription, title | PersonaDossier | 无 | implemented |
+| `LocationCard` | `src/App.tsx` | 在左侧显示角色当前位置、速度、方向和周边地图上下文摘要 | location | JSX | 无 | implemented |
 | `handleCreateDossier` | `src/App.tsx` | 在左栏新建一个空的人物-场景配套档案 | 无 | void | 更新 App state | implemented |
-| `handleDeleteDossier` | `src/App.tsx` | 删除当前或指定人物档案，至少保留一个档案 | dossier id | void | 更新 App state | implemented |
+| `handleDeleteDossier` | `src/App.tsx` | 管理员删除当前或指定人物档案，删空后工作台回到无当前共享档案状态 | dossier id | void | 更新 App state | implemented |
+| `handleDossierGroupChange` | `src/App.tsx` | 管理员修改当前人物档案分组 | groupName | void | 更新 App state | implemented |
+| `deleteConversationAuditEntry` | `src/App.tsx` | 管理员在审计浮层删除单条用户输入输出记录 | auditId | Promise<void> | 调用审计删除 API 并更新 App state | implemented |
+| `clearConversationAuditEntries` | `src/App.tsx` | 管理员在审计浮层清空用户输入输出记录 | 无 | Promise<void> | 调用审计清空 API 并更新 App state | implemented |
 | `applyCandidateState` | `src/App.tsx` | 应用人物或场景预览前先运行人物场景一致性检测 | candidate, target | Promise<void> | 可能打开扭曲时空门禁或写入状态 | implemented |
 | `handleConfirmDistortionPassword` | `src/App.tsx` | 校验扭曲时空密码后继续应用硬冲突的人物/场景组合 | 无 | void | 写入状态 | implemented |
 | `streamDeepseek` | `vite.config.ts` | 代理 DeepSeek SSE 输出并转成前端可读事件 | body, config, apiKey, response | text/event-stream | 读取 DeepSeek API | implemented |
@@ -135,6 +145,10 @@
 | `deletePersonaDossier` | `serverSupport.mjs` | 管理员删除共享多人档案 | dossierId | deleted flag | 写入 `.persona-dossiers.local.json` | implemented |
 | `appendConversationAudit` | `serverSupport.mjs` | 记录登录用户的一次输入输出 | entry, user | ConversationAuditEntry | 写入 `.conversation-audits.local.json` | implemented |
 | `readConversationAudits` | `serverSupport.mjs` | 管理员读取最近用户输入输出 | limit | ConversationAuditEntry[] | 读取 `.conversation-audits.local.json` | implemented |
+| `deleteConversationAudit` | `serverSupport.mjs` | 管理员删除单条用户输入输出审计记录 | auditId | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
+| `clearConversationAudits` | `serverSupport.mjs` | 管理员清空用户输入输出审计记录 | 无 | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
+| `createDossier` | `builtinPersonaDossiers.mjs` | 将内置规格转换为全局 `PersonaDossier` | spec | PersonaDossier | 无 | implemented |
+| `createLocation` | `builtinPersonaDossiers.mjs` | 将内置位置规格转换为 `CharacterLocation` | location tuple | CharacterLocation-like object | 无 | implemented |
 
 ## 数据字段登记表
 
@@ -153,9 +167,21 @@
 | `runtime.signalProfiles.*.cognitiveNarrative` | `RuntimeSignalProfile` | `string` | 状态信号背后的内在状态叙述，只描述属性和成因，不写回复指令 | seed/generator/stateUpdater | promptBuilder/UI | implemented |
 | `scene` | `CharacterState` | `SceneState` | 当前场景 | seed/generator | UI/promptBuilder | implemented |
 | `scene.cognitiveNarrative` | `SceneState` | `string` | 场景如何改变注意力、身体感和关系距离的自然语言叙述 | seed/generator | promptBuilder/UI | implemented |
+| `location` | `CharacterState` | `CharacterLocation?` | 角色当前物理位置、速度、方向和地图上下文 | seed/builtin/manual | UI/promptBuilder | implemented |
+| `location.label` | `CharacterLocation` | `string` | 人可读当前位置名称 | seed/builtin/manual | UI/promptBuilder | implemented |
+| `location.address` | `CharacterLocation` | `string` | 当前位置地址或范围描述 | seed/builtin/manual | UI/promptBuilder | implemented |
+| `location.region` | `CharacterLocation` | `string` | 位置所属城市/区县/世界区域 | seed/builtin/manual | UI/promptBuilder | implemented |
+| `location.coordinate` | `CharacterLocation` | `{ lng: number; lat: number }?` | 经纬度坐标；当前仅作为种子/人工字段，未来可由国内地图服务解析 | seed/builtin/manual/mapService | UI/future map panel | implemented |
+| `location.speedKmh` | `CharacterLocation` | `number` | 角色移动速度，单位 km/h | seed/builtin/manual | UI/promptBuilder | implemented |
+| `location.headingDeg` | `CharacterLocation` | `number` | 角色移动方向角度 | seed/builtin/manual | UI/promptBuilder | implemented |
+| `location.headingLabel` | `CharacterLocation` | `string` | 角色移动方向中文摘要 | seed/builtin/manual | UI/promptBuilder | implemented |
+| `location.motionState` | `CharacterLocation` | enum | 停留、步行、骑行、驾车或未知 | seed/builtin/manual | UI/promptBuilder | implemented |
+| `location.mapContext` | `CharacterLocation` | object? | 周边道路、地点、建筑和环境摘要 | seed/builtin/manual/mapService | UI/promptBuilder | implemented |
 | `dossierPreview` | App state | `CharacterState?` | 人物档案生成后的待应用预览 | App Shell | UI/apply action | implemented |
 | `scenePreview` | App state | `CharacterState?` | 场景解读后的待应用状态预览，包含 scene、状态、关切、长期记忆和人物影响 | App Shell | UI/apply action | implemented |
 | `personaDossiers` / `dossiers` | App state | `PersonaDossier[]` | 左侧多人档案列表，每个条目绑定人物状态和场景输入 | App Shell | UI/switch/apply/delete | implemented |
+| `personaDossier.groupName` | `PersonaDossier` | `string` | 多人档案所属分组，例如“马可福音10”“郑州市” | builtin/admin UI | UI/shared dossier API | implemented |
+| `personaDossier.isBuiltin` | `PersonaDossier` | `boolean?` | 是否为服务内置全局初始档案 | Builtin Persona Dossiers | Server Support/Admin UI | implemented |
 | `activeDossierId` | App state | `string` | 当前选中的人物档案组合 ID | App Shell | UI/switch/apply/delete | implemented |
 | `consistencyGate` | App state | `ConsistencyGate?` | 一致性检测发现硬冲突后等待用户输入扭曲时空密码的门禁状态 | App Shell | UI/apply action | implemented |
 | `distortionPassword` | App constant | `string` | 本地门禁短语，当前为“扭曲时空密码” | App Shell | UI/apply action | implemented |
@@ -178,6 +204,8 @@
 | `authUser` | App state | `AuthUser?` | 当前登录用户，包含是否管理员 | `/api/auth/login` `/api/auth/session` | App Shell permission gates | implemented |
 | `isAdmin` | App derived state | `boolean` | 当前用户是否可维护共享档案和查看审计 | `authUser.isAdmin` | App Shell permission gates | implemented |
 | `dossierSyncStatus` | App state | `string` | 后台共享档案读取/保存状态文案 | shared dossier API | UI | implemented |
+| `groupedDossiers` | App derived state | `[groupName, PersonaDossier[]][]` | 左侧多人档案按分组聚合后的渲染结构 | `dossiers` | App Shell UI | implemented |
+| `conversationAuditEntry.id` | ConversationAuditEntry | `string` | 单条审计记录 ID，用于管理员删除 | serverSupport | Admin audit UI/API | implemented |
 | `conversationAuditEntry.userInput` | ConversationAuditEntry | `string` | 登录用户发送给虚拟人的输入 | App Shell | Admin audit UI | implemented |
 | `conversationAuditEntry.personaOutput` | ConversationAuditEntry | `string` | 虚拟人回复或失败时为空 | App Shell | Admin audit UI | implemented |
 
@@ -197,6 +225,8 @@
 | `/api/persona-dossiers/:id` | DELETE | 管理员删除后台共享多人档案 | 需要管理员会话；写 `.persona-dossiers.local.json` | implemented |
 | `/api/conversation-audits` | POST | 登录用户记录一次输入输出 | 需要登录会话；写 `.conversation-audits.local.json` | implemented |
 | `/api/conversation-audits` | GET | 管理员读取所有用户输入输出 | 需要管理员会话 | implemented |
+| `/api/conversation-audits` | DELETE | 管理员清空所有用户输入输出审计记录 | 需要管理员会话；写 `.conversation-audits.local.json` | implemented |
+| `/api/conversation-audits/:id` | DELETE | 管理员删除单条用户输入输出审计记录 | 需要管理员会话；写 `.conversation-audits.local.json` | implemented |
 
 ## 外部服务登记表
 
@@ -211,3 +241,4 @@
 | DeepSeek API | `deepseekApi` | 本地真实 LLM 测试，驱动认知模块和 Reply LLM | `.deepseek.local.json` 或 `DEEPSEEK_API_KEY`，不进 git | 通过 Vite 本地代理调用；固定 `deepseek-v4-flash` 并强制 `thinking.disabled` |
 | 外部 LLM Endpoint | `externalLlmEndpoint` | DeepSeek 本地代理入口 | 不在前端保存密钥；由 Vite 代理读取本地密钥 | 当前由 `/api/deepseek-chat` 承担本地代理，不作为 UI 可选模拟模式 |
 | liao 聊天室 | `liaoChatroom` | 本项目用户来源和密码校验来源 | `https://liao.xiaogushi.us/api/login`；本项目只调用登录校验，不写聊天室数据 | 上游接口不可用时无法登录 |
+| 国内地图服务 | `domesticMapService` | 未来解析真实道路、建筑、POI 和角色位置；当前尚未接入 | 待选型；不得使用 Google Maps 作为国内用户默认服务 | 当前 `mapContext.source=seed/manual`，不能假装来自真实地图 API |

@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { builtinPersonaDossiers } from "./builtinPersonaDossiers.mjs";
 
 const rootDir = process.cwd();
 const liaoChatroomOrigin = process.env.LIAO_CHATROOM_ORIGIN || "https://liao.xiaogushi.us";
@@ -89,32 +90,50 @@ export async function loginWithLiaoChatroom(username, password) {
 
 export function readPersonaDossiers() {
   const store = readJsonFile(personaDossierStorePath, { dossiers: [] });
-  return Array.isArray(store.dossiers) ? store.dossiers : [];
+  const storedDossiers = Array.isArray(store.dossiers) ? store.dossiers : [];
+  const deletedBuiltinIds = new Set(Array.isArray(store.deletedBuiltinDossierIds) ? store.deletedBuiltinDossierIds : []);
+  const storedById = new Map(storedDossiers.map((dossier) => [dossier.id, dossier]));
+  const builtinItems = builtinPersonaDossiers
+    .filter((dossier) => !deletedBuiltinIds.has(dossier.id))
+    .map((dossier) => storedById.get(dossier.id) ?? dossier);
+  const builtinIds = new Set(builtinPersonaDossiers.map((dossier) => dossier.id));
+  const customItems = storedDossiers.filter((dossier) => !builtinIds.has(dossier.id));
+  return [...builtinItems, ...customItems];
 }
 
 export function upsertPersonaDossier(dossier, user) {
-  const store = readJsonFile(personaDossierStorePath, { dossiers: [] });
+  const store = readJsonFile(personaDossierStorePath, { dossiers: [], deletedBuiltinDossierIds: [] });
   const dossiers = Array.isArray(store.dossiers) ? store.dossiers : [];
+  const deletedBuiltinDossierIds = Array.isArray(store.deletedBuiltinDossierIds) ? store.deletedBuiltinDossierIds : [];
   const now = new Date().toISOString();
   const safeDossier = {
     ...dossier,
+    groupName: typeof dossier.groupName === "string" && dossier.groupName.trim() ? dossier.groupName.trim() : "未分组",
     updatedAt: now,
     createdAt: typeof dossier.createdAt === "string" ? dossier.createdAt : now,
+    isBuiltin: Boolean(dossier.isBuiltin),
     ownerUserId: user.userId,
     ownerUsername: user.username,
   };
   const index = dossiers.findIndex((item) => item.id === safeDossier.id);
   const nextDossiers = index >= 0 ? dossiers.map((item, itemIndex) => (itemIndex === index ? safeDossier : item)) : [...dossiers, safeDossier];
-  writeJsonFile(personaDossierStorePath, { dossiers: nextDossiers });
+  writeJsonFile(personaDossierStorePath, {
+    dossiers: nextDossiers,
+    deletedBuiltinDossierIds: deletedBuiltinDossierIds.filter((id) => id !== safeDossier.id),
+  });
   return safeDossier;
 }
 
 export function deletePersonaDossier(dossierId) {
-  const store = readJsonFile(personaDossierStorePath, { dossiers: [] });
+  const store = readJsonFile(personaDossierStorePath, { dossiers: [], deletedBuiltinDossierIds: [] });
   const dossiers = Array.isArray(store.dossiers) ? store.dossiers : [];
+  const deletedBuiltinDossierIds = Array.isArray(store.deletedBuiltinDossierIds) ? store.deletedBuiltinDossierIds : [];
   const nextDossiers = dossiers.filter((item) => item.id !== dossierId);
-  writeJsonFile(personaDossierStorePath, { dossiers: nextDossiers });
-  return { deleted: dossiers.length !== nextDossiers.length };
+  const isBuiltinDossier = builtinPersonaDossiers.some((dossier) => dossier.id === dossierId);
+  const nextDeletedBuiltinDossierIds =
+    isBuiltinDossier && !deletedBuiltinDossierIds.includes(dossierId) ? [...deletedBuiltinDossierIds, dossierId] : deletedBuiltinDossierIds;
+  writeJsonFile(personaDossierStorePath, { dossiers: nextDossiers, deletedBuiltinDossierIds: nextDeletedBuiltinDossierIds });
+  return { deleted: dossiers.length !== nextDossiers.length || isBuiltinDossier };
 }
 
 export function appendConversationAudit(entry, user) {
@@ -142,6 +161,19 @@ export function readConversationAudits(limit = 200) {
   const store = readJsonFile(conversationAuditStorePath, { entries: [] });
   const entries = Array.isArray(store.entries) ? store.entries : [];
   return entries.slice(-limit).reverse();
+}
+
+export function deleteConversationAudit(auditId) {
+  const store = readJsonFile(conversationAuditStorePath, { entries: [] });
+  const entries = Array.isArray(store.entries) ? store.entries : [];
+  const nextEntries = entries.filter((entry) => entry.id !== auditId);
+  writeJsonFile(conversationAuditStorePath, { entries: nextEntries });
+  return { deleted: entries.length !== nextEntries.length };
+}
+
+export function clearConversationAudits() {
+  writeJsonFile(conversationAuditStorePath, { entries: [] });
+  return { deleted: true };
 }
 
 export function sendJson(response, statusCode, data) {

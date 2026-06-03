@@ -163,6 +163,29 @@ export const seedState: CharacterState = {
     interactionPressure: "这是私密空间，她可以说得轻一点，但也更容易被旧事牵动。",
     cognitiveNarrative: "雨夜工作室让她的注意力更容易落在画稿、热茶和雨声上，这些物件会成为她处理直接情绪的自然入口。",
   },
+  location: {
+    label: "雨夜工作室",
+    address: "虚构南方城市老城区一间临街工作室",
+    region: "虚构城市老城区",
+    coordinate: {
+      lng: 113.264,
+      lat: 23.129,
+    },
+    speedKmh: 0,
+    headingDeg: 0,
+    headingLabel: "原地",
+    motionState: "stationary",
+    mapContext: {
+      nearbyRoads: ["老街", "沿河小路"],
+      nearbyPlaces: ["便利店", "旧书店", "公交站"],
+      nearbyBuildings: ["临街工作室", "老居民楼"],
+      environmentSummary: "工作室位于老城区街边，雨夜人流少，窗外车辆和行人都会被雨声压低。",
+      source: "seed",
+      resolvedAt: nowIso(),
+    },
+    updatedAt: nowIso(),
+    source: "seed",
+  },
 };
 
 export const seedMessages: ChatMessage[] = [
