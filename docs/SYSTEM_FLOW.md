@@ -49,7 +49,8 @@ flowchart TD
     F --> G[更新命名登记表]
     G --> H[更新系统流程文档]
     H --> I[实现最小可验证变更]
-    I --> J[本地验证]
+    I --> V[同步递增 package 版本号]
+    V --> J[本地验证]
     J --> K[Git 提交留底]
     K --> L[同步到 GitHub]
     L --> M{是否需要部署}
@@ -70,7 +71,8 @@ flowchart LR
     WORK --> CODE[代码和配置]
     CODE --> NR
     CODE --> SF
-    CODE --> GIT[Git 提交]
+    CODE --> VER[package.json/package-lock.json 版本同步]
+    VER --> GIT[Git 提交]
     GIT --> GH[GitHub 远程仓库]
     GH --> WAIT[等待站内管理员更新]
     WAIT --> VPS[<production-domain> 部署]
@@ -691,7 +693,7 @@ flowchart LR
     GEN2 --> FIT
 ```
 
-左上角版本信息由 App Shell 读取 `package.json` 的 `version` 生成 `appVersionLabel`，并链接到 GitHub 仓库 `<owner>/<repo>`。同一区域会定期调用 `/api/app-update/status` 检查 VPS 当前提交与远端提交是否一致；如果发现新版本，普通用户只看到提示，管理员可以打开更新浮窗触发 `/api/app-update/run`。更新浮窗显示进度条和服务端命令日志。
+左上角版本信息由 App Shell 读取 `package.json` 的 `version` 生成 `appVersionLabel`，并链接到 GitHub 仓库 `<owner>/<repo>`。`package.json` 和 `package-lock.json` 的版本号是提交前硬性同步项；每个完成的 reviewable step 都必须递增，避免 Git 提交已经变化但 UI 仍显示旧版本。同一区域会定期调用 `/api/app-update/status` 检查 VPS 当前提交与远端提交是否一致；如果发现新版本，普通用户只看到提示，管理员可以打开更新浮窗触发 `/api/app-update/run`。更新浮窗显示进度条和服务端命令日志。
 
 ## 待确认 MVP 架构问题
 

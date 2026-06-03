@@ -67,6 +67,7 @@
 | 应用更新状态 | `appUpdateStatus` | UI/API state | 左上角检查服务器当前提交与远端提交是否一致 | `deployStatus`, `versionPoll` |
 | 应用更新日志 | `appUpdateLogEntry` | UI state | 站内更新窗口中显示的服务端步骤、stdout/stderr 和结果 | `deployLogLine`, `terminalDump` |
 | 应用版本标识 | `appVersionLabel` | UI constant | 页面左上角展示的应用版本号，来源于 `package.json` version | `buildLabel`, `releaseText` |
+| 应用版本同步 | `appVersionSync` | release workflow | 每个完成的 reviewable step 必须同步递增 `package.json` 和 `package-lock.json` 版本，防止 UI 版本滞后 | `manualVersionReminder`, `versionAfterthought` |
 | GitHub 仓库链接 | `githubRepositoryUrl` | UI constant | 页面左上角版本链接指向的项目仓库 | `repoLink`, `sourceUrl` |
 
 ## 模块登记表
@@ -227,6 +228,7 @@
 | `deepseekConnected` | App state | `boolean` | 顶部显示 DeepSeek 是否已有本地密钥并可作为真实 LLM 入口 | `/api/deepseek-config` / 测试连接 | App Shell | implemented |
 | `deepseekStatus` | App state | `string` | DeepSeek 密钥保存和真实连接测试的人类可读状态 | `/api/deepseek-config` / `/api/deepseek-chat` | App Shell | implemented |
 | `appVersionLabel` | App constant | `string` | 页面左上角显示的版本号，如 `v0.1.0` | `package.json` | App Shell | implemented |
+| `package.version` | `package.json` / `package-lock.json` | semver string | 应用版本源；每个完成的 reviewable step 都要同步递增 | release workflow | App Shell / build metadata | implemented |
 | `githubRepositoryUrl` | App constant | `string` | 页面左上角 GitHub 链接地址 | GitHub remote | App Shell | implemented |
 | `authToken` | App state / `LlmConfig` | `string` | 本项目本地登录 token，用于保护 DeepSeek 代理、共享档案和审计 API | `/api/auth/login` | App Shell/pipeline LLM clients | implemented |
 | `authUser` | App state | `AuthUser?` | 当前登录用户，包含是否管理员 | `/api/auth/login` `/api/auth/session` | App Shell permission gates | implemented |
