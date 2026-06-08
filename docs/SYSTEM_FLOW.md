@@ -479,9 +479,9 @@ flowchart TD
 flowchart TD
     E["EventInput"] --> PG["generateNaturalPromptRequest"]
     S["CharacterState"] --> PG
-    A["AppraisalResult"] --> PG
-    M["MemoryRecallResult"] --> PG
-    D["ResponseDecision"] --> PG
+    A["appraisalNarrative"] --> PG
+    M["memoryRecallNarrative"] --> PG
+    D["decisionNarrative"] --> PG
     PG --> P1["人格/价值/边界/表达样本"]
     PG --> P2["场景和 runtime cognitiveNarrative"]
     PG --> P3["关切/关系/记忆/近期对话"]

@@ -70,7 +70,15 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
   );
   emit({ step: "decision", status: "completed", output: formatCognitiveTraceOutput(decision), transport: decision.transport });
 
-  const llmRequest = generateNaturalPromptRequest(event, state, appraisal.output, memoryRecall.output, decision.output, llmConfig.provider, llmConfig.model);
+  const llmRequest = generateNaturalPromptRequest(
+    event,
+    state,
+    appraisal.output.narrative || "",
+    memoryRecall.output.narrative || "",
+    decision.output.narrative || decision.output.rationale,
+    llmConfig.provider,
+    llmConfig.model,
+  );
   emit({ step: "llmRequest", status: "completed", input: "Prompt Generator 输入\n\n" + JSON.stringify({ event, appraisal: appraisal.output, memoryRecall: memoryRecall.output, decision: decision.output }, null, 2), output: llmRequest.prompt, transport: "local" });
 
   emit({ step: "llmOutput", status: "running", input: llmRequest.prompt, output: "等待角色回复..." });
