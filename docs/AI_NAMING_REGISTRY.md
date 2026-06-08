@@ -77,6 +77,8 @@
 | GitHub 默认同步 | `defaultGithubPush` | release workflow | 每个完成并提交的 reviewable step 默认推送当前分支到 GitHub，除非用户明确要求不推送 | `manualPushOnly`, `askBeforePush` |
 | GitHub 仓库链接 | `githubRepositoryUrl` | UI constant | 页面左上角版本链接指向的项目仓库 | `repoLink`, `sourceUrl` |
 | 错误精髓摘要 | `errorInspectionSummary` | development workflow | `docs/ERROR_INSPECTIONS.md` 顶部的压缩原则区，每轮优先阅读，用来替代通读全部历史勘验 | `errorLogDump`, `fullMistakeHistory` |
+| 模块上下文包 | `moduleContextPack` | development workflow | `docs/modules/` 下的低 token 启动文档，按模块列出边界、文件、输入输出、不变量、查询线索和验证命令 | `fullContextDump`, `moduleWiki` |
+| 模块上下文包索引 | `moduleContextPackIndex` | development document | `docs/modules/README.md`，用于选择本轮应读取的模块包 | `contextMap`, `moduleDirectory` |
 | 模块参数审核 | `moduleParameterFlowReview` | review document | `docs/MODULE_PARAMETER_FLOW_REVIEW.md` 中面向人工审核的参数级模块说明和数据流说明 | `parameterDump`, `randomModuleNotes` |
 
 ## 模块登记表
@@ -108,6 +110,14 @@
 | User Relationship Memory Verification | `scripts/verify-user-relationship-memory.mjs` | 验证 State Update 会按当前说话用户写入自然语言关系印象记忆，并回写关系备注 | 无 | pass/fail | npm script | State Updater |
 | Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录站内手动更新、VPS git 工作树配置、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | manualVpsUpdate |
 | Module Parameter Flow Review | `docs/MODULE_PARAMETER_FLOW_REVIEW.md` | 逐项说明共享数据对象、模块输入参数、内部派生参数、输出参数和模块间数据流，供人工审核 | 当前代码模块和系统流 | 可读审核说明 | 用户/AI | App Shell, Conversation Pipeline, Server Support |
+| Module Context Pack Index | `docs/modules/README.md` | 选择本轮低 token 模块上下文包，说明模块包维护规则和查询方式 | 用户请求的模块或边界 | 模块包路径和查询规则 | 用户/AI | docs/modules/* |
+| App Shell Context Pack | `docs/modules/app-shell.md` | 记录 App Shell 的低 token 入口、边界、不变量和验证命令 | App Shell 相关任务 | 最小阅读清单 | 用户/AI | App Shell |
+| Conversation Pipeline Context Pack | `docs/modules/conversation-pipeline.md` | 记录同步响应路径的低 token 入口、边界、不变量和验证命令 | Conversation Pipeline 相关任务 | 最小阅读清单 | 用户/AI | Conversation Pipeline |
+| Memory Retrieval Context Pack | `docs/modules/memory-retrieval.md` | 记录混合记忆召回的低 token 入口、边界、不变量和验证命令 | Memory Retrieval 相关任务 | 最小阅读清单 | 用户/AI | Memory Retrieval |
+| Server Support Context Pack | `docs/modules/server-support.md` | 记录服务端支持层、运行时文件和 API 边界的低 token 入口 | Server Support 相关任务 | 最小阅读清单 | 用户/AI | Server Support |
+| Persona Dossiers Context Pack | `docs/modules/persona-dossiers.md` | 记录多人档案、人物/场景生成和一致性检测的低 token 入口 | Persona Dossier 相关任务 | 最小阅读清单 | 用户/AI | App Shell, Generators, Server Support |
+| Auth Permissions Context Pack | `docs/modules/auth-permissions.md` | 记录登录、会话和管理员权限边界的低 token 入口 | Auth/permission 相关任务 | 最小阅读清单 | 用户/AI | Server Support, App Shell |
+| Deployment Update Context Pack | `docs/modules/deployment-update.md` | 记录站内手动更新和生产部署边界的低 token 入口 | Deployment/update 相关任务 | 最小阅读清单 | 用户/AI | Server Support, Production Server |
 
 ## 函数登记表
 
