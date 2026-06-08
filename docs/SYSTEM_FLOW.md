@@ -518,8 +518,8 @@ flowchart TD
     S["当前 CharacterState"] --> PLAN["planStateUpdates"]
     E["EventInput"] --> PLAN
     R["ReplyOutput"] --> PLAN
-    C["Appraisal/Memory/Decision context"] --> PLAN
-    PLAN --> CLIENT["State Update LLM"]
+    C["Appraisal/Memory/Decision narrative"] --> PLAN
+    PLAN --> CLIENT["State Update LLM JSON 出口"]
     CLIENT --> RAW["StateUpdatePlan raw"]
     RAW --> NORM["normalizeStateUpdatePlan"]
     NORM --> COMMIT["commitStateUpdates"]

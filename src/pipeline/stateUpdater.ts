@@ -43,43 +43,21 @@ async function planStateUpdates(
   llmConfig: LlmConfig,
   onStream?: (output: string) => void,
 ) {
-  const activeConcern = state.concerns.find((concern) => concern.status === "active" && concern.triggers.some((trigger) => event.content.includes(trigger)));
   const targetId = event.speakerId ?? "user_b";
   const targetName = event.speakerName ?? "当前对话者";
   const mockOutput: StateUpdatePlan = {
-    concernUpdates: activeConcern
-      ? [
-          {
-            concernId: activeConcern.id,
-            intensityDelta: activeConcern.valence < 0 ? 0.05 : 0.02,
-            arousalDelta: 0.06,
-            note: `事件「${event.content}」和回复「${replyOutput.reply || "沉默"}」让「${activeConcern.title}」继续留在心里。`,
-          },
-        ]
-      : [],
-    relationshipUpdates: [
-      {
-        targetId,
-        familiarityDelta: 0.01,
-        tensionDelta: context.decision.responseMode === "short_avoidance" ? 0.02 : -0.01,
-        note: "本轮互动被记录为一次轻微关系变化。",
-      },
-    ],
+    concernUpdates: [],
+    relationshipUpdates: [],
     newConcerns: [],
     userRelationshipMemory: {
       targetUserId: targetId,
       targetUserName: targetName,
-      impressionSummary: `${targetName}这次说「${event.content}」，她会把这个人记成正在靠近但仍需观察的人。`,
-      relationshipSummary:
-        context.decision.responseMode === "short_avoidance"
-          ? `她对${targetName}保持礼貌但收紧的距离，愿意回应，却不想被推进太快。`
-          : `她对${targetName}维持可以继续对话的关系，正在根据对方是否尊重边界形成更具体判断。`,
-      evidence: [`对方说：「${event.content}」`, `她回应：「${replyOutput.reply || "沉默"}」`],
-      lastInteractionSummary: `本轮互动后，她对${targetName}的判断更具体：${context.decision.rationale}`,
+      impressionSummary: targetName + "这次互动后，她在心里有了一个初步的印象。",
+      relationshipSummary: "她和" + targetName + "的关系还在形成中。",
+      evidence: ["对方说：" + event.content],
+      lastInteractionSummary: "本轮互动让她对" + targetName + "有了更具体的判断。",
     },
-    internalStateNote: activeConcern
-      ? `她没有把「${activeConcern.title}」完整说出口，只是在心里停了一下。`
-      : "这次对话没有明显戳中她的心事。",
+    internalStateNote: "这次对话后，她的内心状态没有明显变化。",
   };
 
   const trace = await runCognitiveModule<StateUpdatePlan>(
@@ -88,16 +66,30 @@ async function planStateUpdates(
       inputMode: "structured_context",
       outputMode: "structured_json",
       prompt: [
-        "你是虚拟人大脑里的状态写回区。你不负责写台词，只负责根据刚才发生的事和她说出口的话，判断她内在状态如何变化。",
-        `事件：${event.speakerName ?? "对方"}说「${event.content}」`,
-        `她说出口的话：${replyOutput.reply || "她选择了沉默"}`,
-        `事件评估：${context.appraisal.appraisalSummary}`,
-        `浮现的记忆：${context.memoryRecall.longTermMemories.map((memory) => memory.summary).join("；") || "没有特别强的记忆"}`,
-        `回应姿态：${context.decision.rationale}`,
-        `当前说话者身份：${targetName}（${targetId}）。关系印象必须写给这个用户，不能写成泛化的“所有用户”。`,
-        "请判断：哪些心事被加重或减轻、关系是否变化、是否产生新的心事、有没有没说出口但应该存入记忆的内心余波。",
-        "另外必须生成她对当前说话者的印象和关系总结。关系和印象不要用数值表示，不要写评分、等级、百分比或分数；用自然语言精确总结她如何看待这个用户，以及这次互动怎样改变他们的关系。",
-      ].join("\n\n"),
+        "你是虚拟人大脑里的状态写回区。你根据刚发生的事和她的话，判断她内在状态的变化。",
+        "先理解下面这些自然语言叙述，然后把变化填入结构化出口。",
+        "",
+        "事件评估：",
+        context.appraisal.narrative || "",
+        "",
+        "记忆浮现：",
+        context.memoryRecall.narrative || "没有特别的记忆。",
+        "",
+        "回应决策：",
+        context.decision.narrative || "",
+        "",
+        "她说出口的话：" + (replyOutput.reply || "她选择了沉默"),
+        "当前说话者：" + targetName + "(" + targetId + ")",
+        "",
+        "当前心事状态：",
+        ...state.concerns.map((concern) => concern.title + "：强度" + concern.intensity + "，偏好" + concern.valence + "，唤醒" + concern.arousal),
+        "",
+        "请判断哪些数值需要调整。注意：",
+        "- 关切各维度变化一般在 -0.1 到 +0.1 之间",
+        "- 关系各维度变化一般在 -0.05 到 +0.05 之间",
+        "- 如果没有明显变化，填 0 或不包含该项",
+        "- 关系印象(userRelationshipMemory)必须用自然语言写，不要数字",
+      ].join("\n"),
       outputContract:
         "Return JSON: { concernUpdates: [{ concernId, intensityDelta, valenceDelta, arousalDelta, status, note }], relationshipUpdates: [{ targetId, familiarityDelta, trustDelta, affectionDelta, tensionDelta, note }], newConcerns: [], userRelationshipMemory: { targetUserId, targetUserName, impressionSummary, relationshipSummary, evidence: string[], lastInteractionSummary }, internalStateNote }",
     },
@@ -361,7 +353,7 @@ function normalizeUserRelationshipMemory(value: unknown, fallback: StateUpdatePl
 
 function normalizeNaturalText(value: unknown, fallback: string) {
   if (typeof value !== "string" || !value.trim()) return fallback;
-  return value.trim().replace(/(熟悉度|信任|紧张|分数|评分|百分比|score|trust|tension)\s*[:：]?\s*[-+]?\d+(\.\d+)?/gi, "").trim() || fallback;
+  return value.trim();
 }
 
 function normalizeConcernUpdates(value: unknown, fallback: StateUpdatePlan["concernUpdates"], knownConcernIds: Set<string>) {
