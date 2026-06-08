@@ -1,13 +1,4 @@
-import {
-  AppraisalResult,
-  CharacterState,
-  CognitiveModuleTrace,
-  EventInput,
-  LlmConfig,
-  LongTermMemory,
-  MemoryRecallResult,
-  MemoryRecallSource,
-} from "../core/types";
+import { CharacterState, CognitiveModuleTrace, EventInput, LlmConfig, LongTermMemory, MemoryRecallResult, MemoryRecallSource } from "../core/types";
 import { runCognitiveModule } from "./cognitiveModuleClient";
 
 interface MemoryRetrievalContext {
@@ -38,12 +29,12 @@ interface MemoryRecallSelectionResult {
 
 export async function retrieveMemory(
   event: EventInput,
-  appraisal: AppraisalResult,
+  appraisalNarrative: string,
   state: CharacterState,
   llmConfig: LlmConfig,
   onStream?: (output: string) => void,
 ): Promise<CognitiveModuleTrace<MemoryRecallResult>> {
-  const retrievalContext = createMemoryRetrievalContext(event, appraisal, state, "sync_response");
+  const retrievalContext = createMemoryRetrievalContext(event, appraisalNarrative, state, "sync_response");
   const longTermMemoryCandidates = [...state.longTermMemory, ...buildRelationshipMemoryCandidates(state)];
   const memoryCandidates = createMemoryCandidates(longTermMemoryCandidates);
   const shortTermCandidates = state.shortTermMemory.slice(-4);
@@ -65,6 +56,7 @@ export async function retrieveMemory(
       factors: memory.factors,
     })),
   };
+  mockOutput.narrative = formatMemoryRecallNarrative(mockOutput);
   const fallbackSelection: MemoryRecallSelectionResult = {
     source: mockOutput.source,
     retrievalMode: mockOutput.retrievalMode,
@@ -84,7 +76,7 @@ export async function retrieveMemory(
         "你是虚拟人大脑里的记忆召回区。",
         "",
         "当前情境：",
-        appraisal.narrative || "",
+        appraisalNarrative,
         "",
         buildNaturalCandidateList(state, retrievalContext, event.speakerId),
         "",
@@ -112,33 +104,27 @@ export async function retrieveMemory(
 
 function createMemoryRetrievalContext(
   event: EventInput,
-  appraisal: AppraisalResult,
+  appraisalNarrative: string,
   state: CharacterState,
   source: MemoryRecallSource,
 ): MemoryRetrievalContext {
-  const activatedConcernSummaries = appraisal.activatedConcerns
-    .map((item) => {
-      const concern = state.concerns.find((candidate) => candidate.id === item.concernId);
-      if (!concern) return "";
-      const triggerText = item.matchedTriggers.length > 0 ? `触发线索：${item.matchedTriggers.join("、")}` : "没有直接触发词";
-      return `${concern.title}：${concern.description}（激活 ${item.activationScore}，${triggerText}）`;
-    })
-    .filter(Boolean);
+  const activatedConcernSummaries: string[] = [];
 
-  const speakerNames = [event.speakerId, event.speakerName, appraisal.speakerRelationship?.targetId, appraisal.speakerRelationship?.targetName]
+  const speakerNames = [event.speakerId, event.speakerName]
     .filter(Boolean)
     .map((value) => String(value));
   const relationshipMemory = (state.relationshipMemory ?? []).find((memory) => memory.targetUserId === event.speakerId);
-  const speakerRelationshipSummary = appraisal.speakerRelationship
+  const speakerRelationship = event.speakerId ? state.relationships[event.speakerId] : undefined;
+  const speakerRelationshipSummary = speakerRelationship
     ? [
-        `${appraisal.speakerRelationship.targetName}`,
-        `最近气氛：${appraisal.speakerRelationship.recentTone}`,
+        `${speakerRelationship.targetName}`,
+        `最近气氛：${speakerRelationship.recentTone}`,
         relationshipMemory ? `她对这个用户的印象：${relationshipMemory.impressionSummary}` : "",
         relationshipMemory ? `当前关系总结：${relationshipMemory.relationshipSummary}` : "",
         relationshipMemory ? `最近一次关系记忆：${relationshipMemory.lastInteractionSummary}` : "",
-        appraisal.speakerRelationship.notes.length > 0 ? `关系备注：${appraisal.speakerRelationship.notes.slice(-3).join("；")}` : "",
-        Array.isArray(appraisal.speakerRelationship.unresolvedIssues) && appraisal.speakerRelationship.unresolvedIssues.length > 0
-          ? `未解决：${appraisal.speakerRelationship.unresolvedIssues.join("、")}`
+        speakerRelationship.notes.length > 0 ? `关系备注：${speakerRelationship.notes.slice(-3).join("；")}` : "",
+        Array.isArray(speakerRelationship.unresolvedIssues) && speakerRelationship.unresolvedIssues.length > 0
+          ? `未解决：${speakerRelationship.unresolvedIssues.join("、")}`
           : "",
       ]
         .filter(Boolean)
@@ -147,7 +133,7 @@ function createMemoryRetrievalContext(
 
   const naturalLanguageQuery = [
     event.content,
-    appraisal.narrative,
+    appraisalNarrative,
     ...activatedConcernSummaries,
     speakerRelationshipSummary,
   ]
@@ -243,7 +229,7 @@ function normalizeMemoryRecallResult(
   memoryCandidates: MemoryCandidate[],
   fallback: MemoryRecallResult,
 ): MemoryRecallResult {
-  if (!isRecord(result)) return fallback;
+  if (!isRecord(result)) return { ...fallback, narrative: fallback.narrative || formatMemoryRecallNarrative(fallback) };
 
   const shortTermMemoryIds = Array.isArray(result.shortTermMemoryIds)
     ? result.shortTermMemoryIds.filter((value): value is string => typeof value === "string").slice(0, 4)
@@ -252,7 +238,7 @@ function normalizeMemoryRecallResult(
     .map((memoryId) => shortTermCandidates.find((memory) => memory.id === memoryId))
     .filter((memory): memory is MemoryRecallResult["shortTermContext"][number] => Boolean(memory));
 
-  return {
+  const normalizedResult = {
     source: result.source === "async_life" || result.source === "sync_response" ? result.source : fallbackSelection.source ?? fallback.source,
     retrievalMode: result.retrievalMode === "hybrid_relevance" ? result.retrievalMode : fallback.retrievalMode,
     naturalLanguageQuery:
@@ -261,6 +247,11 @@ function normalizeMemoryRecallResult(
         : fallbackSelection.naturalLanguageQuery ?? retrievalContext.naturalLanguageQuery,
     shortTermContext,
     longTermMemories: normalizeRecalledMemories(result.longTermMemories, memoryCandidates, fallback.longTermMemories),
+  };
+
+  return {
+    ...normalizedResult,
+    narrative: formatMemoryRecallNarrative(normalizedResult),
   };
 }
 
@@ -296,6 +287,19 @@ function createMemoryCandidates(memories: LongTermMemory[]): Array<MemoryCandida
     createdAt: memory.createdAt,
     lastAccessedAt: memory.lastAccessedAt,
   }));
+}
+
+function formatMemoryRecallNarrative(result: Pick<MemoryRecallResult, "shortTermContext" | "longTermMemories">) {
+  const shortTermText =
+    result.shortTermContext.length > 0
+      ? result.shortTermContext.map((memory) => `${memory.speakerName}刚才说过：「${memory.content}」`).join(" ")
+      : "没有明显的短期上下文浮上来。";
+  const longTermText =
+    result.longTermMemories.length > 0
+      ? result.longTermMemories.map((memory) => `她此刻可能想起：${memory.summary}`).join(" ")
+      : "没有特别强的长期记忆浮上来。";
+
+  return [shortTermText, longTermText].join("\n");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

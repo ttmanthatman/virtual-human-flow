@@ -15,7 +15,7 @@ Memory Retrieval 负责把事件、自然语言评估、说话者关系和记忆
 
 ## 输入输出
 
-- 输入：`EventInput`、`AppraisalResult`、`CharacterState`、`LlmConfig`。
+- 输入：`EventInput`、`appraisalNarrative`、`CharacterState`、`LlmConfig`。
 - 内部派生：`naturalLanguageQuery`、`MemoryRetrievalContext`、自然语言候选清单、`MemoryCandidate`。
 - 输出：归一化后的 `MemoryRecallResult`，包含被选短期/长期记忆和召回理由。
 

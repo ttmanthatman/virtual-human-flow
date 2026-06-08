@@ -33,61 +33,81 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     content,
   };
 
-  emit({ step: "event", status: "completed", input: content, output: JSON.stringify(event, null, 2), transport: "local" });
+  emit({ step: "event", status: "completed", input: summarizeText(content), output: `${speaker.name}说：「${content}」`, transport: "local" });
 
-  emit({ step: "appraisal", status: "running", input: "事件评估模块输入\n\n" + JSON.stringify({ event, concerns: state.concerns, relationships: state.relationships }, null, 2), output: "等待模型输出..." });
+  emit({ step: "appraisal", status: "running", input: "事件评估模块输入\n\n" + summarizeText(event.content), output: "等待模型输出..." });
   const appraisal = await runAppraisal(event, state, llmConfig, (output) =>
-    emit({ step: "appraisal", status: "streaming", output }),
+    emit({ step: "appraisal", status: "streaming", output: summarizeText(output) }),
   );
-  emit({ step: "appraisal", status: "completed", output: formatCognitiveTraceOutput(appraisal), transport: appraisal.transport });
+  const appraisalNarrative = appraisal.output.narrative || "";
+  emit({
+    step: "appraisal",
+    status: "completed",
+    input: "事件评估模块输入\n\n" + summarizeText(event.content),
+    output: appraisalNarrative,
+    transport: appraisal.transport,
+  });
 
   emit({
     step: "memoryRecall",
     status: "running",
-    input:
-      "记忆召回模块输入\n\n" +
-      JSON.stringify(
-        {
-          event,
-          appraisal: appraisal.output,
-          recentShortTermMemory: state.shortTermMemory.slice(-4),
-          longTermMemoryCount: state.longTermMemory.length,
-          runtimeMood: state.runtime.derivedMood,
-        },
-        null,
-        2,
-      ),
+    input: "记忆召回模块输入\n\n情境：" + summarizeText(appraisalNarrative),
     output: "等待模型输出...",
   });
-  const memoryRecall = await retrieveMemory(event, appraisal.output, state, llmConfig, (output) =>
-    emit({ step: "memoryRecall", status: "streaming", output }),
+  const memoryRecall = await retrieveMemory(event, appraisalNarrative, state, llmConfig, (output) =>
+    emit({ step: "memoryRecall", status: "streaming", output: summarizeText(output) }),
   );
-  emit({ step: "memoryRecall", status: "completed", output: formatCognitiveTraceOutput(memoryRecall), transport: memoryRecall.transport });
+  const memoryNarrative = memoryRecall.output.narrative || "";
+  emit({
+    step: "memoryRecall",
+    status: "completed",
+    input: "记忆召回模块输入\n\n情境：" + summarizeText(appraisalNarrative, 200),
+    output: memoryNarrative,
+    transport: memoryRecall.transport,
+  });
 
-  emit({ step: "decision", status: "running", input: "回应决策模块输入\n\n" + JSON.stringify({ appraisal: appraisal.output, memoryRecall: memoryRecall.output, runtime: state.runtime }, null, 2), output: "等待模型输出..." });
-  const decision = await decideResponse(appraisal.output, memoryRecall.output, state, llmConfig, (output) =>
-    emit({ step: "decision", status: "streaming", output }),
+  emit({ step: "decision", status: "running", input: "回应决策模块输入\n\n" + summarizeText([appraisalNarrative, memoryNarrative].filter(Boolean).join("\n")), output: "等待模型输出..." });
+  const decision = await decideResponse(appraisalNarrative, memoryNarrative, state, llmConfig, (output) =>
+    emit({ step: "decision", status: "streaming", output: summarizeText(output) }),
   );
-  emit({ step: "decision", status: "completed", output: formatCognitiveTraceOutput(decision), transport: decision.transport });
+  const decisionNarrative = decision.output.narrative || decision.output.rationale;
+  emit({
+    step: "decision",
+    status: "completed",
+    input: "回应决策模块输入\n\n" + summarizeText([appraisalNarrative, memoryNarrative].filter(Boolean).join("\n")),
+    output: decisionNarrative,
+    transport: decision.transport,
+  });
 
   const llmRequest = generateNaturalPromptRequest(
     event,
     state,
-    appraisal.output.narrative || "",
-    memoryRecall.output.narrative || "",
-    decision.output.narrative || decision.output.rationale,
+    appraisalNarrative,
+    memoryNarrative,
+    decisionNarrative,
     llmConfig.provider,
     llmConfig.model,
   );
-  emit({ step: "llmRequest", status: "completed", input: "Prompt Generator 输入\n\n" + JSON.stringify({ event, appraisal: appraisal.output, memoryRecall: memoryRecall.output, decision: decision.output }, null, 2), output: llmRequest.prompt, transport: "local" });
+  emit({
+    step: "llmRequest",
+    status: "completed",
+    input: "Prompt Generator 输入\n\n" + summarizeText([event.content, appraisalNarrative, memoryNarrative, decisionNarrative].join("\n")),
+    output: summarizeText(llmRequest.prompt),
+    transport: "local",
+  });
 
-  emit({ step: "llmOutput", status: "running", input: llmRequest.prompt, output: "等待角色回复..." });
+  emit({ step: "llmOutput", status: "running", input: summarizeText(llmRequest.prompt), output: "等待角色回复..." });
   const llmOutput = await runLlm(llmRequest, llmConfig, { event, state, decision: decision.output }, (output) =>
-    emit({ step: "llmOutput", status: "streaming", output }),
+    emit({ step: "llmOutput", status: "streaming", output: summarizeText(output) }),
   );
   emit({ step: "llmOutput", status: "completed", output: llmOutput.reply || "（林安看见了，但没有回复。）", transport: "external_llm" });
 
-  emit({ step: "stateUpdate", status: "running", input: "状态更新模块输入\n\n" + JSON.stringify({ event, replyOutput: llmOutput, appraisal: appraisal.output, memoryRecall: memoryRecall.output, decision: decision.output }, null, 2), output: "等待模型输出..." });
+  emit({
+    step: "stateUpdate",
+    status: "running",
+    input: "状态更新模块输入\n\n" + summarizeText([event.content, llmOutput.reply || "她选择了沉默", appraisalNarrative, memoryNarrative, decisionNarrative].join("\n")),
+    output: "等待模型输出...",
+  });
   const { nextState: stateAfterUpdate, stateDelta: deltaAfterUpdate, stateUpdate } = await applyStateUpdates(
     state,
     event,
@@ -98,11 +118,16 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
       decision: decision.output,
     },
     llmConfig,
-    (output) => emit({ step: "stateUpdate", status: "streaming", output }),
+    (output) => emit({ step: "stateUpdate", status: "streaming", output: summarizeText(output) }),
   );
   emit({ step: "stateUpdate", status: "completed", output: formatCognitiveTraceOutput(stateUpdate), transport: stateUpdate.transport });
 
-  emit({ step: "runtimeSignalEvaluation", status: "running", input: "信号评估模块输入\n\n" + JSON.stringify({ event, replyOutput: llmOutput, stateUpdatePlan: stateUpdate.output, runtime: stateAfterUpdate.runtime }, null, 2), output: "等待模型输出..." });
+  emit({
+    step: "runtimeSignalEvaluation",
+    status: "running",
+    input: "信号评估模块输入\n\n" + summarizeText([appraisalNarrative, memoryNarrative, decisionNarrative, stateUpdate.output.narrative || stateUpdate.output.internalStateNote, llmOutput.reply || "她选择了沉默"].join("\n")),
+    output: "等待模型输出...",
+  });
   const runtimeSignalEvaluation = await evaluateRuntimeSignals(
     stateAfterUpdate,
     event,
@@ -114,11 +139,11 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
       stateUpdatePlan: stateUpdate.output,
     },
     llmConfig,
-    (output) => emit({ step: "runtimeSignalEvaluation", status: "streaming", output }),
+    (output) => emit({ step: "runtimeSignalEvaluation", status: "streaming", output: summarizeText(output) }),
   );
   emit({ step: "runtimeSignalEvaluation", status: "completed", output: formatCognitiveTraceOutput(runtimeSignalEvaluation), transport: runtimeSignalEvaluation.transport });
   const { nextState, stateDelta } = applyRuntimeSignalEvaluation(stateAfterUpdate, deltaAfterUpdate, runtimeSignalEvaluation.output);
-  emit({ step: "stateDelta", status: "completed", input: "确定性写回输入\n\n" + JSON.stringify({ stateAfterUpdate, runtimeSignalEvaluation: runtimeSignalEvaluation.output }, null, 2), output: JSON.stringify(stateDelta, null, 2), transport: "local" });
+  emit({ step: "stateDelta", status: "completed", input: "确定性写回输入\n\n状态更新和信号评估已完成", output: formatStateDelta(stateDelta), transport: "local" });
 
   return {
     nextState,
@@ -136,6 +161,27 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
   };
 }
 
-function formatCognitiveTraceOutput(trace: CognitiveModuleTrace<unknown>) {
-  return JSON.stringify(trace.fallbackReason ? { fallbackReason: trace.fallbackReason, output: trace.output } : trace.output, null, 2);
+function formatCognitiveTraceOutput(trace: CognitiveModuleTrace<any>) {
+  if (trace.output && typeof trace.output.narrative === "string" && trace.output.narrative.trim()) {
+    return trace.output.narrative;
+  }
+  if (trace.fallbackReason) {
+    return "[fallback] " + trace.fallbackReason;
+  }
+  return JSON.stringify(trace.output, null, 2);
+}
+
+function summarizeText(value: string, maxLength = 300) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return normalized.slice(0, maxLength - 1) + "…";
+}
+
+function formatStateDelta(stateDelta: PipelineTrace["stateDelta"]) {
+  return [
+    ...stateDelta.concernChanges.map((change) => "心事：" + change),
+    ...stateDelta.relationshipChanges.map((change) => "关系：" + change),
+    ...stateDelta.memoryWrites.map((change) => "记忆：" + change),
+    ...stateDelta.runtimeChanges.map((change) => "信号：" + change),
+  ].join("\n") || "没有明显变化。";
 }

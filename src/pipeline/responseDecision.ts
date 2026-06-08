@@ -1,9 +1,9 @@
-import { AppraisalResult, CharacterState, CognitiveModuleTrace, LlmConfig, MemoryRecallResult, ResponseDecision } from "../core/types";
+import { CharacterState, CognitiveModuleTrace, LlmConfig, ResponseDecision } from "../core/types";
 import { runCognitiveModule } from "./cognitiveModuleClient";
 
 export async function decideResponse(
-  appraisal: AppraisalResult,
-  memoryRecall: MemoryRecallResult,
+  appraisalNarrative: string,
+  memoryRecallNarrative: string,
   state: CharacterState,
   llmConfig: LlmConfig,
   onStream?: (output: string) => void,
@@ -15,12 +15,12 @@ export async function decideResponse(
     rationale: "当前是直接对话场景，默认给予简短自然的回应。",
   };
 
-  return runDecisionModule(appraisal, memoryRecall, state, llmConfig, mockOutput, onStream);
+  return runDecisionModule(appraisalNarrative, memoryRecallNarrative, state, llmConfig, mockOutput, onStream);
 }
 
 function runDecisionModule(
-  appraisal: AppraisalResult,
-  memoryRecall: MemoryRecallResult,
+  appraisalNarrative: string,
+  memoryRecallNarrative: string,
   state: CharacterState,
   llmConfig: LlmConfig,
   mockOutput: ResponseDecision,
@@ -33,10 +33,10 @@ function runDecisionModule(
     "她此刻的整体状态：" + state.runtime.derivedMood.label,
     "",
     "事件评估：",
-    appraisal.narrative || "",
+    appraisalNarrative,
     "",
     "记忆浮现：",
-    memoryRecall.narrative || "没有特别强的记忆浮上来。",
+    memoryRecallNarrative || "没有特别强的记忆浮上来。",
     "",
     "请判断她要不要开口回应。如果是直接对话、没有必须沉默的强理由，默认是。",
     "",

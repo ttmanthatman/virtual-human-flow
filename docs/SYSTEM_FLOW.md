@@ -434,7 +434,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     E["EventInput"] --> CTX["createMemoryRetrievalContext"]
-    A["AppraisalResult"] --> CTX
+    A["appraisalNarrative"] --> CTX
     S["CharacterState"] --> CTX
     CTX --> QUERY["naturalLanguageQuery"]
     S --> LTM["longTermMemory"]
@@ -457,13 +457,10 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["AppraisalResult"] --> RULES["本地决策 fallback"]
-    M["MemoryRecallResult"] --> RULES
-    S["CharacterState"] --> RULES
-    RULES --> MOCK["ResponseDecision fallback"]
-    A --> PROMPT["组装 Decision prompt"]
-    M --> PROMPT
-    S --> PROMPT
+    A["appraisalNarrative"] --> PROMPT["组装 Decision prompt"]
+    M["memoryRecallNarrative"] --> PROMPT
+    S["CharacterState"] --> PROMPT
+    S --> MOCK["ResponseDecision fallback"]
     PROMPT --> CLIENT["Cognitive Module Client"]
     MOCK --> CLIENT
     CLIENT --> RAW["LLM ResponseDecision"]
