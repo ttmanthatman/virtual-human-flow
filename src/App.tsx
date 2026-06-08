@@ -71,7 +71,8 @@ const motionStateLabels: Record<NonNullable<CharacterState["location"]>["motionS
 };
 
 type MonitorStepKey = keyof PipelineTrace | GenerationMonitorStep;
-type TraceDisplayState = Partial<Record<MonitorStepKey, PipelineStepProgress>>;
+type TraceDisplayProgress = Omit<PipelineStepProgress, "output"> & { output?: unknown };
+type TraceDisplayState = Partial<Record<MonitorStepKey, TraceDisplayProgress>>;
 type ConsistencyGate = {
   candidate: CharacterState;
   result: ProfileSceneConsistencyResult;
@@ -1911,10 +1912,25 @@ export function App() {
   );
 }
 
-function formatTraceDisplay(progress: PipelineStepProgress | undefined) {
+function formatTraceDisplay(progress: TraceDisplayProgress | undefined) {
   if (!progress) {
     return <pre>{JSON.stringify({ hint: "发送消息或触发档案、场景生成后，这里显示对应模块的输入、输出和状态。" }, null, 2)}</pre>;
   }
+
+  const outputNarrative =
+    progress.output &&
+    typeof progress.output === "object" &&
+    "narrative" in progress.output &&
+    typeof progress.output.narrative === "string" &&
+    progress.output.narrative.trim()
+      ? progress.output.narrative
+      : "";
+  const fallbackOutput =
+    typeof progress.output === "string"
+      ? progress.output
+      : progress.output
+        ? JSON.stringify(progress.output, null, 2)
+        : "等待输出...";
 
   return (
     <div className="trace-io">
@@ -1924,7 +1940,13 @@ function formatTraceDisplay(progress: PipelineStepProgress | undefined) {
       </section>
       <section>
         <h3>输出</h3>
-        <pre>{progress.error ? `错误：${progress.error}` : progress.output || "等待输出..."}</pre>
+        {progress.error ? (
+          <pre>{`错误：${progress.error}`}</pre>
+        ) : outputNarrative ? (
+          <div style={{ whiteSpace: "pre-wrap" }}>{outputNarrative}</div>
+        ) : (
+          <pre>{fallbackOutput}</pre>
+        )}
       </section>
       <section>
         <h3>状态</h3>
@@ -1991,7 +2013,7 @@ function isPipelineTraceStep(step: MonitorStepKey): step is keyof PipelineTrace 
   return traceSteps.some((item) => item.key === step);
 }
 
-function buildCompletedTraceProgress(step: keyof PipelineTrace, trace: PipelineTrace | undefined): PipelineStepProgress | undefined {
+function buildCompletedTraceProgress(step: keyof PipelineTrace, trace: PipelineTrace | undefined): TraceDisplayProgress | undefined {
   if (!trace) return undefined;
   const data = trace[step];
 
@@ -2040,7 +2062,7 @@ function buildCompletedTraceProgress(step: keyof PipelineTrace, trace: PipelineT
     step,
     status: "completed",
     input: [cognitiveTrace.request?.prompt, cognitiveTrace.request?.outputContract ? `\n\n输出契约：${cognitiveTrace.request.outputContract}` : ""].filter(Boolean).join(""),
-    output: JSON.stringify(cognitiveTrace.fallbackReason ? { fallbackReason: cognitiveTrace.fallbackReason, output: cognitiveTrace.output } : cognitiveTrace.output, null, 2),
+    output: cognitiveTrace.fallbackReason ? { fallbackReason: cognitiveTrace.fallbackReason, output: cognitiveTrace.output } : cognitiveTrace.output,
     transport: cognitiveTrace.transport,
   };
 }
@@ -2057,7 +2079,7 @@ function buildConversationModuleCalls(trace: PipelineTrace): ConversationModuleC
         status: String(progress.status),
         transport: progress.transport ?? "pending",
         input: progress.input ?? "",
-        output: progress.output ?? "",
+        output: typeof progress.output === "string" ? progress.output : progress.output ? JSON.stringify(progress.output, null, 2) : "",
         error: progress.error,
       };
     })
