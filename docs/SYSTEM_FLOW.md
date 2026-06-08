@@ -20,11 +20,11 @@
 
 重要约束：Reply LLM 只接收自然语言上下文，只生成角色说出口的话。不能把 JSON、字段名、输出契约、工程术语或类似编程语言的内容混进这一步。
 
-认知模块是另一类 LLM 调用。Appraisal、Memory Recall、Decision、State Update 都是独立的脑区式 LLM 模块；它们可以用结构化输入/输出约束，因为它们不是角色台词生成器，而是系统内部的判断模块。
+认知模块是另一类 LLM 调用。Appraisal、Memory Recall、Decision、State Update 都是独立的脑区式 LLM 模块；它们可以根据模块需要使用自然语言或结构化输出，因为它们不是角色台词生成器，而是系统内部的判断模块。
 
-真实 LLM 的结构化输出必须先经过确定性归一化，再交给下游模块。Appraisal、Memory Recall、Decision 和 State Update 都有模块出口归一化层，用来处理数组缺失、关系对象变成字符串、未知 concern id、枚举漂移等情况。如果外部结构化 JSON 被截断或无法解析，Cognitive Module Client 会记录 `fallbackReason` 并使用本地候选结果继续流程，不能让用户对话卡死。归一化层不能改变 Reply LLM 的自然语言边界，它只保护内部认知模块的数据契约。
+真实 LLM 的结构化输出必须先经过确定性归一化，再交给下游模块；自然语言输出则保留为 narrative，并用兼容字段承接旧下游。Memory Recall 和 State Update 等结构化模块有出口归一化层，用来处理数组缺失、关系对象变成字符串、未知 memory id 或枚举漂移等情况。如果外部结构化 JSON 被截断或无法解析，Cognitive Module Client 会记录 `fallbackReason` 并使用本地候选结果继续流程，不能让用户对话卡死。归一化层不能改变 Reply LLM 的自然语言边界，它只保护内部认知模块的数据契约。
 
-Memory Recall 不是敏感词召回。触发词可以作为线索，但记忆浮现必须同时参考自然语言相关度、当前关切、说话者关系、情绪显著、近期性和词面线索。当前同步路径先在本地构建混合召回候选，再交给 Memory Recall LLM 复判；Memory Recall LLM 只选择短期/长期记忆 ID 和简短理由，不输出完整短期记忆、长期记忆摘要或召回因子，完整内容由本地候选表回填。未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
+Memory Recall 不是敏感词召回。当前同步路径先在本地构建自然语言候选清单，包含短期上下文、长期记忆和关系记忆候选，再交给 Memory Recall LLM 复判；Memory Recall LLM 只选择短期/长期记忆 ID，不输出完整短期记忆、长期记忆摘要或召回因子，完整内容由本地候选表回填。未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
 
 左侧 UI 里的 DeepSeek 预览、性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由 DeepSeek 预览缓存、专门的 Runtime Signal Evaluation LLM 模块、种子档案或管理员维护字段提供，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `fullLifeStory`、`lifeEvents`、`socialPersonaPattern`、`personalitySummary`、`personalityFacets`、`relationships`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
 
@@ -438,11 +438,11 @@ flowchart TD
     S["CharacterState"] --> CTX
     CTX --> QUERY["naturalLanguageQuery"]
     S --> LTM["longTermMemory"]
-    QUERY --> RANK["rankLongTermMemoryCandidates"]
-    LTM --> RANK
-    RANK --> FACTORS["自然语言/关切/关系/情绪/近期/词面因子"]
-    FACTORS --> CAND["召回候选"]
-    CAND --> PROMPT["Memory Recall LLM 复判"]
+    QUERY --> LIST["buildNaturalCandidateList"]
+    LTM --> LIST
+    S --> REL["relationshipMemory 候选"]
+    REL --> LIST
+    LIST --> PROMPT["Memory Recall LLM 复判 ID"]
     S --> STM["shortTermMemory 最近几轮"]
     STM --> PROMPT
     PROMPT --> CLIENT["Cognitive Module Client"]

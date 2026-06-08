@@ -58,7 +58,7 @@ npm run start
 
 当前 LLM 入口固定为真实 DeepSeek 本地代理，不再在 UI 中提供模拟语言模型选项。每个认知步骤都必须调用 LLM：Appraisal、Memory Recall、Decision、State Update、Runtime Signal Evaluation 都是独立的 LLM 模块。
 
-Memory Recall 当前是混合召回，不是敏感词召回。触发词可以参与，但系统会先构建自然语言召回查询，并按自然语言相关度、当前关切、说话者关系、情绪显著、近期性和词面线索排序长期记忆候选，再交给 Memory Recall LLM 复判。长期记忆里包含独立的 `relationshipMemory` 关系记忆区，专门存自然语言的“对这个用户的印象”和“当前关系总结”，不使用数值展示。右侧 pipeline 下方会展示当前登录用户对应的印象、关系、最近互动和证据。这个入口也预留了未来异步生命路径使用的召回来源字段。
+Memory Recall 当前是混合召回，不是敏感词召回。系统会构建自然语言召回语境，把短期上下文、长期记忆和关系记忆转成候选清单交给 Memory Recall LLM 复判；LLM 只选择记忆 ID，完整记忆内容仍由本地按 ID 回填。长期记忆里包含独立的 `relationshipMemory` 关系记忆区，专门存自然语言的“对这个用户的印象”和“当前关系总结”，不使用数值展示。右侧 pipeline 下方会展示当前登录用户对应的印象、关系、最近互动和证据。这个入口也预留了未来异步生命路径使用的召回来源字段。
 
 角色回复这一步是例外中的硬规则：Reply LLM 只接收自然语言上下文，只生成角色说出口的话，不混入 JSON、字段名、输出约束或类似编程语言的内容。结构化状态更新由后续 State Update LLM 模块单独判断。
 

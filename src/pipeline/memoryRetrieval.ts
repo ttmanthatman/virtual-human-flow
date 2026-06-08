@@ -5,28 +5,25 @@ import {
   EventInput,
   LlmConfig,
   LongTermMemory,
-  MemoryRecallFactor,
   MemoryRecallResult,
   MemoryRecallSource,
 } from "../core/types";
-import { clamp, round } from "../core/utils";
 import { runCognitiveModule } from "./cognitiveModuleClient";
 
 interface MemoryRetrievalContext {
   source: MemoryRecallSource;
   naturalLanguageQuery: string;
-  activatedConcernScores: Map<string, number>;
   activatedConcernSummaries: string[];
   speakerNames: string[];
   speakerRelationshipSummary: string;
 }
 
-interface RankedMemoryCandidate {
+interface MemoryCandidate {
   memoryId: string;
   summary: string;
   score: number;
   reason: string;
-  factors: MemoryRecallFactor[];
+  factors: [];
 }
 
 interface MemoryRecallSelectionResult {
@@ -36,8 +33,6 @@ interface MemoryRecallSelectionResult {
   shortTermMemoryIds?: string[];
   longTermMemories?: {
     memoryId?: string;
-    score?: number;
-    reason?: string;
   }[];
 }
 
@@ -50,35 +45,35 @@ export async function retrieveMemory(
 ): Promise<CognitiveModuleTrace<MemoryRecallResult>> {
   const retrievalContext = createMemoryRetrievalContext(event, appraisal, state, "sync_response");
   const longTermMemoryCandidates = [...state.longTermMemory, ...buildRelationshipMemoryCandidates(state)];
-  const rankedCandidates = rankLongTermMemoryCandidates(longTermMemoryCandidates, retrievalContext);
-  const longTermMemories = selectRecallCandidates(rankedCandidates);
+  const memoryCandidates = createMemoryCandidates(longTermMemoryCandidates);
   const shortTermCandidates = state.shortTermMemory.slice(-4);
+  const fallbackLongTermMemories = memoryCandidates
+    .slice()
+    .sort((a, b) => Date.parse(b.lastAccessedAt ?? b.createdAt) - Date.parse(a.lastAccessedAt ?? a.createdAt))
+    .slice(0, 3);
 
   const mockOutput: MemoryRecallResult = {
     source: retrievalContext.source,
     retrievalMode: "hybrid_relevance",
     naturalLanguageQuery: retrievalContext.naturalLanguageQuery,
     shortTermContext: shortTermCandidates,
-    longTermMemories,
+    longTermMemories: fallbackLongTermMemories.map((memory) => ({
+      memoryId: memory.memoryId,
+      summary: memory.summary,
+      score: memory.score,
+      reason: memory.reason,
+      factors: memory.factors,
+    })),
   };
   const fallbackSelection: MemoryRecallSelectionResult = {
     source: mockOutput.source,
     retrievalMode: mockOutput.retrievalMode,
     naturalLanguageQuery: mockOutput.naturalLanguageQuery,
     shortTermMemoryIds: shortTermCandidates.map((memory) => memory.id),
-    longTermMemories: longTermMemories.map((memory) => ({
+    longTermMemories: fallbackLongTermMemories.map((memory) => ({
       memoryId: memory.memoryId,
-      score: memory.score,
-      reason: memory.reason,
     })),
   };
-
-  const compactLongTermCandidates = rankedCandidates.slice(0, 8).map((candidate) => ({
-    memoryId: candidate.memoryId,
-    summary: candidate.summary,
-    score: candidate.score,
-    factorScores: Object.fromEntries(candidate.factors.map((factor) => [factor.name, factor.score])),
-  }));
 
   const trace = await runCognitiveModule<MemoryRecallSelectionResult>(
     {
@@ -86,20 +81,23 @@ export async function retrieveMemory(
       inputMode: "structured_context",
       outputMode: "structured_json",
       prompt: [
-        "你是虚拟人大脑里的记忆召回区。你只负责判断此刻哪些短期和长期记忆会自然浮上来。",
-        "召回不是敏感词过滤。敏感词和触发词可以作为线索，但必须同时看自然语言语义相关度、当前关切、说话者关系、情绪显著性、时间远近。",
-        `刚发生的事：${event.speakerName ?? "对方"}说「${event.content}」`,
-        `事件评估：${appraisal.appraisalSummary}`,
-        `自然语言召回查询：${retrievalContext.naturalLanguageQuery}`,
-        `当前激活关切：${retrievalContext.activatedConcernSummaries.join("；") || "没有强激活关切"}`,
-        `说话者关系：${retrievalContext.speakerRelationshipSummary}`,
-        `短期记忆候选 ID：${shortTermCandidates.map((memory) => `${memory.id}=${memory.speakerName}：「${memory.content}」`).join("；") || "无"}`,
-        `长期记忆候选和本地混合评分：${JSON.stringify(compactLongTermCandidates, null, 2)}`,
-        "请复判这些候选。只选择会自然浮现的记忆 ID，不要复述短期记忆全文，不要复述长期记忆 summary，不要输出 factors。",
-        "输出要克制：shortTermMemoryIds 最多 4 个，longTermMemories 最多 5 条，每条只包含 memoryId、score、短 reason。",
-      ].join("\n\n"),
+        "你是虚拟人大脑里的记忆召回区。",
+        "",
+        "当前情境：",
+        appraisal.narrative || "",
+        "",
+        buildNaturalCandidateList(state, retrievalContext, event.speakerId),
+        "",
+        "请从上面的候选中选出此刻会自然浮现的记忆。",
+        "选短期记忆：最多4条，列出它们的序号（短期1、短期2）。",
+        "选长期记忆：最多5条，列出它们的序号（候选1、候选2）。",
+        "输出JSON格式：",
+        '{ "shortTermMemoryIds": ["stm_xxx"], "longTermMemories": [{ "memoryId": "ltm_xxx" }] }',
+        "每条长期记忆只需要 memoryId，不需要 score 或 reason。",
+        "选得少比选多好——只选真的会浮上来的。",
+      ].join("\n"),
       outputContract:
-        "Return JSON: { source, retrievalMode, naturalLanguageQuery, shortTermMemoryIds: string[] max 4, longTermMemories: [{ memoryId, score, reason }] max 5 }",
+        "Return JSON: { shortTermMemoryIds: string[] max 4, longTermMemories: [{ memoryId }] max 5 }",
     },
     llmConfig,
     fallbackSelection,
@@ -108,7 +106,7 @@ export async function retrieveMemory(
 
   return {
     ...trace,
-    output: normalizeMemoryRecallResult(trace.output, fallbackSelection, retrievalContext, shortTermCandidates, rankedCandidates, mockOutput),
+    output: normalizeMemoryRecallResult(trace.output, fallbackSelection, retrievalContext, shortTermCandidates, memoryCandidates, mockOutput),
   };
 }
 
@@ -118,7 +116,6 @@ function createMemoryRetrievalContext(
   state: CharacterState,
   source: MemoryRecallSource,
 ): MemoryRetrievalContext {
-  const activatedConcernScores = new Map(appraisal.activatedConcerns.map((concern) => [concern.concernId, concern.activationScore]));
   const activatedConcernSummaries = appraisal.activatedConcerns
     .map((item) => {
       const concern = state.concerns.find((candidate) => candidate.id === item.concernId);
@@ -150,7 +147,7 @@ function createMemoryRetrievalContext(
 
   const naturalLanguageQuery = [
     event.content,
-    appraisal.appraisalSummary,
+    appraisal.narrative,
     ...activatedConcernSummaries,
     speakerRelationshipSummary,
   ]
@@ -160,12 +157,61 @@ function createMemoryRetrievalContext(
   return {
     source,
     naturalLanguageQuery,
-    activatedConcernScores,
     activatedConcernSummaries,
     speakerNames,
     speakerRelationshipSummary,
   };
 }
+
+const buildNaturalCandidateList = (
+  state: CharacterState,
+  context: MemoryRetrievalContext,
+  speechSpeakerId?: string,
+): string => {
+  const stmLines = state.shortTermMemory
+    .slice(-4)
+    .map((memory, index) => "短期" + (index + 1) + "（ID=" + memory.id + "）：" + memory.speakerName + "说「" + memory.content + "」");
+
+  const ltmBase = state.longTermMemory.map((memory) => ({
+    ...memory,
+    _source: "长期记忆",
+    _score: String(memory.importance),
+  }));
+  const relBase = buildRelationshipMemoryCandidates(state).map((memory) => ({
+    ...memory,
+    _source: speechSpeakerId && memory.relatedPeople.includes(speechSpeakerId) ? "当前说话者关系记忆" : "关系记忆",
+    _score: String(memory.importance),
+  }));
+  const all = [...ltmBase, ...relBase];
+
+  const candidateLines = all.slice(0, 20).map(
+    (memory, index) =>
+      "候选" +
+      (index + 1) +
+      "（ID=" +
+      memory.id +
+      "） " +
+      memory._source +
+      "：" +
+      memory.summary +
+      "（重要性" +
+      memory._score +
+      "，情绪强度" +
+      memory.emotionalIntensity +
+      "）",
+  );
+
+  return [
+    "【短期上下文】",
+    ...stmLines,
+    "",
+    "【当前召回语境】",
+    context.naturalLanguageQuery,
+    "",
+    "【长期记忆候选】",
+    ...candidateLines,
+  ].join("\n");
+};
 
 function buildRelationshipMemoryCandidates(state: CharacterState): LongTermMemory[] {
   return (state.relationshipMemory ?? []).map((memory) => ({
@@ -194,7 +240,7 @@ function normalizeMemoryRecallResult(
   fallbackSelection: MemoryRecallSelectionResult,
   retrievalContext: MemoryRetrievalContext,
   shortTermCandidates: MemoryRecallResult["shortTermContext"],
-  rankedCandidates: RankedMemoryCandidate[],
+  memoryCandidates: MemoryCandidate[],
   fallback: MemoryRecallResult,
 ): MemoryRecallResult {
   if (!isRecord(result)) return fallback;
@@ -214,25 +260,25 @@ function normalizeMemoryRecallResult(
         ? result.naturalLanguageQuery
         : fallbackSelection.naturalLanguageQuery ?? retrievalContext.naturalLanguageQuery,
     shortTermContext,
-    longTermMemories: normalizeRecalledMemories(result.longTermMemories, rankedCandidates, fallback.longTermMemories),
+    longTermMemories: normalizeRecalledMemories(result.longTermMemories, memoryCandidates, fallback.longTermMemories),
   };
 }
 
-function normalizeRecalledMemories(value: unknown, rankedCandidates: RankedMemoryCandidate[], fallback: MemoryRecallResult["longTermMemories"]) {
+function normalizeRecalledMemories(value: unknown, memoryCandidates: MemoryCandidate[], fallback: MemoryRecallResult["longTermMemories"]) {
   if (!Array.isArray(value)) return fallback;
 
   const normalized: MemoryRecallResult["longTermMemories"] = [];
   for (const item of value) {
     if (!isRecord(item)) continue;
     const memoryId = typeof item.memoryId === "string" ? item.memoryId : "";
-    const candidate = rankedCandidates.find((memory) => memory.memoryId === memoryId);
+    const candidate = memoryCandidates.find((memory) => memory.memoryId === memoryId);
     if (!memoryId || !candidate) continue;
 
     normalized.push({
       memoryId,
       summary: candidate.summary,
-      score: round(clamp(typeof item.score === "number" ? item.score : candidate.score, 0, 1)),
-      reason: typeof item.reason === "string" && item.reason.trim() ? item.reason.slice(0, 80) : candidate.reason,
+      score: candidate.score,
+      reason: candidate.reason,
       factors: candidate.factors,
     });
   }
@@ -240,181 +286,16 @@ function normalizeRecalledMemories(value: unknown, rankedCandidates: RankedMemor
   return normalized.slice(0, 5);
 }
 
-function rankLongTermMemoryCandidates(memories: LongTermMemory[], context: MemoryRetrievalContext): RankedMemoryCandidate[] {
-  return memories
-    .map((memory) => scoreLongTermMemory(memory, context))
-    .sort((a, b) => b.score - a.score);
-}
-
-function scoreLongTermMemory(memory: LongTermMemory, context: MemoryRetrievalContext): RankedMemoryCandidate {
-  const naturalLanguageRelevance = calculateNaturalLanguageRelevance(context.naturalLanguageQuery, memory.summary);
-  const concernAffinity = calculateConcernAffinity(memory, context);
-  const relationshipAffinity = calculateRelationshipAffinity(memory, context);
-  const affectiveSalience = round(clamp(memory.emotionalIntensity * 0.58 + memory.importance * 0.42, 0, 1));
-  const recency = calculateRecencyWeight(memory);
-  const lexicalHint = calculateLexicalHint(context.naturalLanguageQuery, memory.summary);
-
-  const score = round(
-    clamp(
-      naturalLanguageRelevance * 0.34 +
-        concernAffinity * 0.22 +
-        relationshipAffinity * 0.14 +
-        affectiveSalience * 0.14 +
-        recency * 0.08 +
-        lexicalHint * 0.08,
-      0,
-      1,
-    ),
-  );
-
-  const factors: MemoryRecallFactor[] = [
-    {
-      name: "natural_language_relevance",
-      score: naturalLanguageRelevance,
-      reason: naturalLanguageRelevance >= 0.42 ? "事件与记忆摘要在语义片段上相近" : "事件与记忆摘要的语义片段重合较弱",
-    },
-    {
-      name: "concern_affinity",
-      score: concernAffinity,
-      reason: concernAffinity > 0 ? "记忆关联了当前被激活的关切" : "记忆没有直接绑定当前关切",
-    },
-    {
-      name: "relationship_affinity",
-      score: relationshipAffinity,
-      reason: relationshipAffinity > 0 ? "记忆关联当前说话者或关系对象" : "记忆与当前说话者关系较弱",
-    },
-    {
-      name: "affective_salience",
-      score: affectiveSalience,
-      reason: "由情绪强度和重要度共同决定",
-    },
-    {
-      name: "recency",
-      score: recency,
-      reason: "越近期或最近访问过，越容易自然浮现",
-    },
-    {
-      name: "lexical_hint",
-      score: lexicalHint,
-      reason: lexicalHint > 0 ? "存在词面线索，但它只作为辅助" : "没有明显词面线索",
-    },
-  ];
-
-  return {
+function createMemoryCandidates(memories: LongTermMemory[]): Array<MemoryCandidate & Pick<LongTermMemory, "createdAt" | "lastAccessedAt">> {
+  return memories.map((memory) => ({
     memoryId: memory.id,
     summary: memory.summary,
-    score,
-    reason: buildMemoryRecallReason(factors),
-    factors,
-  };
-}
-
-function selectRecallCandidates(candidates: RankedMemoryCandidate[]) {
-  const meaningfulCandidates = candidates.filter((candidate) => candidate.score >= 0.16).slice(0, 5);
-  if (meaningfulCandidates.length > 0) return meaningfulCandidates;
-  return candidates.slice(0, 2).filter((candidate) => candidate.score > 0);
-}
-
-function calculateConcernAffinity(memory: LongTermMemory, context: MemoryRetrievalContext) {
-  const scores = memory.relatedConcerns
-    .map((concernId) => context.activatedConcernScores.get(concernId) ?? 0)
-    .filter((score) => score > 0);
-  if (scores.length === 0) return 0;
-  return round(clamp(Math.max(...scores), 0, 1));
-}
-
-function calculateRelationshipAffinity(memory: LongTermMemory, context: MemoryRetrievalContext) {
-  const normalizedPeople = memory.relatedPeople.map(normalizeText).filter(Boolean);
-  const normalizedSpeakers = context.speakerNames.map(normalizeText).filter(Boolean);
-  const directMatch = normalizedPeople.some((person) => normalizedSpeakers.some((speaker) => person === speaker || person.includes(speaker) || speaker.includes(person)));
-  if (directMatch) return 1;
-
-  const summary = normalizeText(memory.summary);
-  const summaryMatch = normalizedSpeakers.some((speaker) => speaker.length >= 2 && summary.includes(speaker));
-  return summaryMatch ? 0.62 : 0;
-}
-
-function calculateRecencyWeight(memory: LongTermMemory) {
-  const timestamp = Date.parse(memory.lastAccessedAt ?? memory.createdAt);
-  if (!Number.isFinite(timestamp)) return 0.24;
-
-  const ageInDays = Math.max((Date.now() - timestamp) / 86_400_000, 0);
-  return round(clamp(Math.exp(-ageInDays / 30), 0.12, 1));
-}
-
-function calculateNaturalLanguageRelevance(query: string, summary: string) {
-  const queryUnits = tokenizeSemanticUnits(query);
-  const summaryUnits = tokenizeSemanticUnits(summary);
-  if (queryUnits.size === 0 || summaryUnits.size === 0) return 0;
-
-  const overlap = [...summaryUnits].filter((unit) => queryUnits.has(unit)).length;
-  const summaryCoverage = overlap / summaryUnits.size;
-  const queryCoverage = overlap / queryUnits.size;
-  const balancedCoverage = Math.sqrt(summaryCoverage * queryCoverage);
-
-  return round(clamp(balancedCoverage * 1.8, 0, 1));
-}
-
-function calculateLexicalHint(query: string, summary: string) {
-  const queryTokens = tokenizeWords(query);
-  if (queryTokens.size === 0) return 0;
-
-  const normalizedSummary = normalizeText(summary);
-  const matched = [...queryTokens].filter((token) => normalizedSummary.includes(token)).length;
-  return round(clamp(matched / Math.max(queryTokens.size, 1), 0, 1));
-}
-
-function tokenizeSemanticUnits(text: string) {
-  const normalized = normalizeText(text);
-  const units = new Set<string>();
-
-  for (const word of tokenizeWords(normalized)) {
-    units.add(word);
-  }
-
-  const cjkRuns = normalized.match(/[\u4e00-\u9fa5]+/g) ?? [];
-  for (const run of cjkRuns) {
-    for (const size of [2, 3, 4]) {
-      for (let index = 0; index <= run.length - size; index += 1) {
-        units.add(run.slice(index, index + size));
-      }
-    }
-  }
-
-  return units;
-}
-
-function tokenizeWords(text: string) {
-  const normalized = normalizeText(text);
-  return new Set((normalized.match(/[a-z0-9]+|[\u4e00-\u9fa5]{2,}/g) ?? []).filter((token) => token.length >= 2));
-}
-
-function normalizeText(text: string) {
-  return text.toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-function buildMemoryRecallReason(factors: MemoryRecallFactor[]) {
-  return factors
-    .filter((factor) => factor.score >= 0.35)
-    .map((factor) => `${describeRecallFactor(factor.name)} ${factor.score}`)
-    .join("、") || "低强度背景记忆，交给 LLM 判断是否真正浮现";
-}
-
-function describeRecallFactor(name: MemoryRecallFactor["name"]) {
-  switch (name) {
-    case "natural_language_relevance":
-      return "自然语言相关";
-    case "concern_affinity":
-      return "关切关联";
-    case "relationship_affinity":
-      return "关系关联";
-    case "affective_salience":
-      return "情绪显著";
-    case "recency":
-      return "近期性";
-    case "lexical_hint":
-      return "词面线索";
-  }
+    score: memory.importance,
+    reason: "LLM 从自然语言候选清单中选择，完整记忆由本地按 ID 回填。",
+    factors: [],
+    createdAt: memory.createdAt,
+    lastAccessedAt: memory.lastAccessedAt,
+  }));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
