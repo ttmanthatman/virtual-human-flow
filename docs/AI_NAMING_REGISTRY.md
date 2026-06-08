@@ -76,6 +76,7 @@
 | 应用版本同步 | `appVersionSync` | release workflow | 每个完成的 reviewable step 必须同步递增 `package.json` 和 `package-lock.json` 版本，防止 UI 版本滞后 | `manualVersionReminder`, `versionAfterthought` |
 | GitHub 默认同步 | `defaultGithubPush` | release workflow | 每个完成并提交的 reviewable step 默认推送当前分支到 GitHub，除非用户明确要求不推送 | `manualPushOnly`, `askBeforePush` |
 | GitHub 仓库链接 | `githubRepositoryUrl` | UI constant | 页面左上角版本链接指向的项目仓库 | `repoLink`, `sourceUrl` |
+| 错误精髓摘要 | `errorInspectionSummary` | development workflow | `docs/ERROR_INSPECTIONS.md` 顶部的压缩原则区，每轮优先阅读，用来替代通读全部历史勘验 | `errorLogDump`, `fullMistakeHistory` |
 
 ## 模块登记表
 
