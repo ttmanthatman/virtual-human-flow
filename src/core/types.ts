@@ -28,6 +28,7 @@ export interface RuntimeSignalProfile {
 }
 
 export interface RuntimeSignalEvaluationResult {
+  narrative?: string;
   energy: number;
   derivedMood: {
     valence: number;
@@ -233,6 +234,7 @@ export interface EventInput {
 }
 
 export interface AppraisalResult {
+  narrative?: string;
   eventId: string;
   speakerRelationship?: Relationship;
   activatedConcerns: {
@@ -262,6 +264,7 @@ export interface MemoryRecallFactor {
 }
 
 export interface MemoryRecallResult {
+  narrative?: string;
   source?: MemoryRecallSource;
   retrievalMode?: "hybrid_relevance";
   naturalLanguageQuery?: string;
@@ -276,6 +279,7 @@ export interface MemoryRecallResult {
 }
 
 export interface ResponseDecision {
+  narrative?: string;
   shouldRespond: boolean;
   responseMode: ResponseMode;
   delaySeconds?: number;
@@ -334,6 +338,7 @@ export interface ReplyOutput {
 }
 
 export interface StateUpdatePlan {
+  narrative?: string;
   concernUpdates: {
     concernId: string;
     intensityDelta?: number;

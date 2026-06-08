@@ -272,6 +272,11 @@
 | `pipelineTrace` | `ChatMessage` | `PipelineTrace` | 一轮对话所有中间结果 | conversationPipeline | Pipeline Debug Panel | implemented |
 | `prompt` | `ExpressionLlmRequest` | `string` | 交给 Reply LLM 的自然语言上下文 | promptGenerator | llmClient/UI | implemented |
 | `outputContract` | `CognitiveModuleRequest` | `string` | 认知模块结构化输出约束，不进入 Reply LLM prompt | cognitive modules | cognitiveModuleClient/backend | implemented |
+| `appraisal.narrative` | `AppraisalResult` | `string?` | Appraisal LLM 输出的可选自然语言叙事说明 | appraisal | Pipeline Debug Panel/downstream cognitive context | implemented |
+| `memoryRecall.narrative` | `MemoryRecallResult` | `string?` | Memory Recall LLM 输出的可选自然语言叙事说明 | memoryRetrieval | Pipeline Debug Panel/downstream cognitive context | implemented |
+| `responseDecision.narrative` | `ResponseDecision` | `string?` | Response Decision LLM 输出的可选自然语言叙事说明 | responseDecision | Pipeline Debug Panel/downstream cognitive context | implemented |
+| `stateUpdate.narrative` | `StateUpdatePlan` | `string?` | State Update LLM 输出的可选自然语言叙事说明 | stateUpdater | Pipeline Debug Panel/downstream cognitive context | implemented |
+| `runtimeSignalEvaluation.narrative` | `RuntimeSignalEvaluationResult` | `string?` | Runtime Signal Evaluation LLM 输出的可选自然语言叙事说明 | runtimeSignalEvaluator | Pipeline Debug Panel/downstream cognitive context | implemented |
 | `memoryRecall.source` | `MemoryRecallResult` | `MemoryRecallSource` | 说明本次召回来自同步响应路径或未来异步生命路径 | memoryRetrieval | Decision/Prompt Generator/Pipeline Debug Panel | implemented |
 | `memoryRecall.retrievalMode` | `MemoryRecallResult` | `"hybrid_relevance"` | 标识当前使用混合相关度召回，不是敏感词召回 | memoryRetrieval | Pipeline Debug Panel | implemented |
 | `memoryRecall.naturalLanguageQuery` | `MemoryRecallResult` | `string` | 召回时交给本地排序和 LLM 复判的自然语言语义查询 | memoryRetrieval | Pipeline Debug Panel | implemented |
