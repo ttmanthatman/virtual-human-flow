@@ -1,5 +1,4 @@
-import { AppraisalResult, CharacterState, CognitiveModuleTrace, EventInput, LlmConfig, Relationship } from "../core/types";
-import { clamp, round } from "../core/utils";
+import { AppraisalResult, CharacterState, CognitiveModuleTrace, EventInput, LlmConfig } from "../core/types";
 import { runCognitiveModule } from "./cognitiveModuleClient";
 
 export async function runAppraisal(
@@ -8,146 +7,81 @@ export async function runAppraisal(
   llmConfig: LlmConfig,
   onStream?: (output: string) => void,
 ): Promise<CognitiveModuleTrace<AppraisalResult>> {
-  const speakerRelationship = event.speakerId ? state.relationships[event.speakerId] : undefined;
+  const mockNarrative = [
+    state.profile.name + "听到了" + (event.speakerName || "对方") + "说的话。",
+    state.concerns.filter((concern) => concern.status === "active").length > 0
+      ? "她心里装着" +
+        state.concerns.filter((concern) => concern.status === "active").length +
+        "件在意的事，包括" +
+        state.concerns
+          .filter((concern) => concern.status === "active")
+          .slice(0, 3)
+          .map((concern) => "「" + concern.title + "」")
+          .join("、") +
+        "。但这句话没有直接戳中其中任何一个。"
+      : "她此刻没有什么特别放不下的心事。",
+    "说话者在她心里的位置：" +
+      (event.speakerId && state.relationships[event.speakerId]
+        ? "她对" +
+          (event.speakerName || "这个人") +
+          "有一定的熟悉度，最近的互动气氛是" +
+          (state.relationships[event.speakerId].recentTone || "平淡") +
+          "。"
+        : "还没有明确的关系档案，她保持礼貌的距离感。"),
+    "总的来说，这是需要她回应的一句普通对话。",
+  ].join("\n");
 
-  const activatedConcerns = state.concerns
-    .filter((concern) => concern.status === "active")
-    .map((concern) => {
-      const matchedTriggers = concern.triggers.filter((trigger) => event.content.includes(trigger));
-      const objectMatched = concern.object ? event.content.includes(concern.object) : false;
-      const relationshipBoost = speakerRelationship?.targetName === concern.object ? 0.18 : 0;
-      const activationScore = clamp(
-        matchedTriggers.length * 0.22 + (objectMatched ? 0.25 : 0) + relationshipBoost + concern.intensity * 0.18,
-        0,
-        1,
-      );
-
-      return {
-        concernId: concern.id,
-        activationScore: round(activationScore),
-        matchedTriggers,
-        reason:
-          matchedTriggers.length > 0
-            ? `命中触发词：${matchedTriggers.join("、")}。`
-            : "没有直接触发词，仅保留背景强度。",
-      };
-    })
-    .filter((item) => item.activationScore >= 0.18)
-    .sort((a, b) => b.activationScore - a.activationScore);
-
-  const strongest = activatedConcerns[0]?.activationScore ?? 0;
-  const relationshipWeight = speakerRelationship ? speakerRelationship.familiarity * 0.12 + speakerRelationship.tension * 0.18 : 0;
-  const eventSalience = round(clamp(strongest * 0.72 + relationshipWeight + event.content.length / 300, 0, 1));
-
-  const mockOutput = {
+  const fallbackOutput: AppraisalResult = {
+    narrative: mockNarrative,
     eventId: event.id,
-    speakerRelationship,
-    activatedConcerns,
-    eventSalience,
-    appraisalSummary:
-      activatedConcerns.length > 0
-        ? `这条事件触发了 ${activatedConcerns.length} 个关切，最高激活度 ${activatedConcerns[0].activationScore}。`
-        : "这条事件没有明显触发核心关切，按普通互动处理。",
+    activatedConcerns: [],
+    eventSalience: 0,
+    appraisalSummary: "",
   };
 
-  const trace = await runCognitiveModule<AppraisalResult>(
+  const prompt = [
+    "你是虚拟人大脑里的事件评估区。不输出JSON，不输出数字，不输出字段名。只输出一段自然语言。",
+    "",
+    "角色：" + state.profile.name + "。" + state.profile.background,
+    "她一直装在心里的事：",
+    ...state.concerns
+      .filter((concern) => concern.status === "active")
+      .map((concern) => "「" + concern.title + "」：" + concern.description),
+    "",
+    "说话者是" + (event.speakerName || "未知") + "，原话是：「" + event.content + "」",
+    "",
+    "请用一段连贯的自然语言描述：",
+    "- 这句话和她有没有关系？触到了她心里哪件事？",
+    "- 触到的深度：只是轻轻擦到，还是被顶了一下？",
+    "- 说话的人在她心里处在什么位置？",
+    "- 所有这些因素综合起来，这件事对她来说有多重要？",
+  ].join("\n");
+
+  const trace = await runCognitiveModule<string>(
     {
       moduleName: "appraisal",
       inputMode: "structured_context",
-      outputMode: "structured_json",
-      prompt: [
-        "你是虚拟人大脑里的事件评估区。你只负责判断这件事触到了角色什么在意的东西。",
-        `角色当前心事：${state.concerns.map((concern) => `「${concern.title}」：${concern.description}`).join("；")}`,
-        `说话者：${event.speakerName ?? "未知"}。内容：「${event.content}」`,
-        "请判断：这件事跟她有没有关系、触到了哪件心事、为什么、强度大概如何。",
-      ].join("\n\n"),
-      outputContract:
-        "Return JSON: { eventId, speakerRelationship, activatedConcerns: [{ concernId, activationScore, matchedTriggers, reason }], eventSalience, appraisalSummary }",
+      outputMode: "natural_language",
+      prompt,
     },
     llmConfig,
-    mockOutput,
+    mockNarrative,
     { onStream },
   );
 
   return {
     ...trace,
-    output: normalizeAppraisalResult(trace.output, mockOutput, event, state),
+    output: normalizeAppraisalResult(trace.output, fallbackOutput),
   };
 }
 
-function normalizeAppraisalResult(
-  result: unknown,
-  fallback: AppraisalResult,
-  event: EventInput,
-  state: CharacterState,
-): AppraisalResult {
-  const rawResult = isRecord(result) ? result : {};
-  const knownConcernIds = new Set(state.concerns.map((concern) => concern.id));
-  const rawActivatedConcerns = Array.isArray(rawResult.activatedConcerns) ? rawResult.activatedConcerns : [];
-  const activatedConcerns = rawActivatedConcerns
-    .map((item) => {
-      if (!isRecord(item)) return undefined;
-      const concernId = typeof item?.concernId === "string" ? item.concernId : "";
-      if (!knownConcernIds.has(concernId)) return undefined;
-      const matchedTriggers = normalizeStringList(item.matchedTriggers);
+function normalizeAppraisalResult(result: unknown, fallback: AppraisalResult): AppraisalResult {
+  if (typeof result === "string") {
+    return {
+      ...fallback,
+      narrative: result,
+    };
+  }
 
-      return {
-        concernId,
-        activationScore: round(clamp(typeof item.activationScore === "number" ? item.activationScore : 0, 0, 1)),
-        matchedTriggers,
-        reason: typeof item.reason === "string" && item.reason.trim() ? item.reason : "模型未给出明确原因，已保留为低强度触发。",
-      };
-    })
-    .filter((item): item is AppraisalResult["activatedConcerns"][number] => Boolean(item));
-
-  return {
-    eventId: event.id,
-    speakerRelationship: normalizeSpeakerRelationship(rawResult.speakerRelationship, fallback.speakerRelationship, event, state),
-    activatedConcerns: activatedConcerns.length > 0 ? activatedConcerns : fallback.activatedConcerns,
-    eventSalience: round(clamp(typeof rawResult.eventSalience === "number" ? rawResult.eventSalience : fallback.eventSalience, 0, 1)),
-    appraisalSummary:
-      typeof rawResult.appraisalSummary === "string" && rawResult.appraisalSummary.trim()
-        ? rawResult.appraisalSummary
-        : fallback.appraisalSummary,
-  };
-}
-
-function normalizeSpeakerRelationship(
-  value: unknown,
-  fallback: Relationship | undefined,
-  event: EventInput,
-  state: CharacterState,
-) {
-  const eventRelationship = event.speakerId ? state.relationships[event.speakerId] : undefined;
-  if (!isRecord(value)) return eventRelationship ?? fallback;
-
-  const targetId = typeof value.targetId === "string" && value.targetId.trim() ? value.targetId : event.speakerId;
-  if (!targetId) return eventRelationship ?? fallback;
-  const existing = state.relationships[targetId];
-
-  return {
-    targetId,
-    targetName:
-      typeof value.targetName === "string" && value.targetName.trim()
-        ? value.targetName
-        : existing?.targetName ?? event.speakerName ?? targetId,
-    familiarity: round(clamp(typeof value.familiarity === "number" ? value.familiarity : existing?.familiarity ?? 0.2, 0, 1)),
-    trust: round(clamp(typeof value.trust === "number" ? value.trust : existing?.trust ?? 0.2, 0, 1)),
-    affection: round(clamp(typeof value.affection === "number" ? value.affection : existing?.affection ?? 0, -1, 1)),
-    tension: round(clamp(typeof value.tension === "number" ? value.tension : existing?.tension ?? 0, 0, 1)),
-    lastInteractionAt: typeof value.lastInteractionAt === "string" ? value.lastInteractionAt : existing?.lastInteractionAt,
-    recentTone: typeof value.recentTone === "string" && value.recentTone.trim() ? value.recentTone : existing?.recentTone ?? "新关系",
-    unresolvedIssues: normalizeStringList(value.unresolvedIssues, existing?.unresolvedIssues ?? []),
-    notes: normalizeStringList(value.notes, existing?.notes ?? []),
-  };
-}
-
-function normalizeStringList(value: unknown, fallback: string[] = []) {
-  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
-  if (typeof value === "string") return value.split(/[；;、,\n]/).map((item) => item.trim()).filter(Boolean);
   return fallback;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
