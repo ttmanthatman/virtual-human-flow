@@ -38,13 +38,16 @@ export async function runCognitiveModule<TOutput>(
     let fallbackReason: string | undefined;
     try {
       output = response.headers.get("Content-Type")?.includes("text/event-stream")
-        ? ((await readEventStream(response, options.onStream)) as TOutput)
+        ? ((await readEventStream(response, request, options.onStream)) as TOutput)
         : ((await response.json()) as TOutput);
     } catch (caught) {
       if (!shouldUseStructuredFallback(request, caught)) {
         throw caught;
       }
-      fallbackReason = formatStructuredFallbackReason(caught);
+      fallbackReason =
+        request.outputMode === "natural_language"
+          ? formatNaturalLanguageFallbackReason(caught)
+          : formatStructuredFallbackReason(caught);
       output = mockOutput;
       options.onStream?.(JSON.stringify({ fallbackReason, output: mockOutput }, null, 2));
     }
@@ -67,7 +70,11 @@ export async function runCognitiveModule<TOutput>(
   };
 }
 
-async function readEventStream(response: Response, onStream?: (output: string) => void) {
+async function readEventStream(
+  response: Response,
+  request: CognitiveModuleRequest,
+  onStream?: (output: string) => void,
+) {
   if (!response.body) {
     throw new Error("外部接口没有返回可读取的流");
   }
@@ -98,6 +105,10 @@ async function readEventStream(response: Response, onStream?: (output: string) =
       if (parsed.error) throw new Error(parsed.error);
       if (typeof parsed.delta === "string") {
         accumulated += parsed.delta;
+        if (request.outputMode === "natural_language" && onStream) {
+          onStream(accumulated);
+          continue;
+        }
         onStream?.(accumulated);
       }
       if (parsed.final !== undefined) {
@@ -106,16 +117,31 @@ async function readEventStream(response: Response, onStream?: (output: string) =
     }
   }
 
+  if (request.outputMode === "natural_language") {
+    if (accumulated === "") {
+      throw new Error("外部接口流结束但没有返回自然语言内容");
+    }
+    return accumulated;
+  }
+
   if (finalJson) return JSON.parse(finalJson);
   if (accumulated.trim()) return JSON.parse(accumulated.trim());
   throw new Error("外部接口流结束但没有返回内容");
 }
 
 function shouldUseStructuredFallback(request: CognitiveModuleRequest, caught: unknown) {
+  if (request.outputMode === "natural_language") {
+    return caught instanceof Error && caught.message === "外部接口流结束但没有返回自然语言内容";
+  }
   if (request.outputMode !== "structured_json") return false;
   if (caught instanceof SyntaxError) return true;
   if (!(caught instanceof Error)) return false;
   return /JSON|Unterminated|string|流结束|结构化/.test(caught.message);
+}
+
+function formatNaturalLanguageFallbackReason(caught: unknown) {
+  const message = caught instanceof Error ? caught.message : String(caught);
+  return `外部自然语言输出为空，已使用本地候选结果继续流程：${message}`;
 }
 
 function formatStructuredFallbackReason(caught: unknown) {
