@@ -77,6 +77,7 @@
 | GitHub 默认同步 | `defaultGithubPush` | release workflow | 每个完成并提交的 reviewable step 默认推送当前分支到 GitHub，除非用户明确要求不推送 | `manualPushOnly`, `askBeforePush` |
 | GitHub 仓库链接 | `githubRepositoryUrl` | UI constant | 页面左上角版本链接指向的项目仓库 | `repoLink`, `sourceUrl` |
 | 错误精髓摘要 | `errorInspectionSummary` | development workflow | `docs/ERROR_INSPECTIONS.md` 顶部的压缩原则区，每轮优先阅读，用来替代通读全部历史勘验 | `errorLogDump`, `fullMistakeHistory` |
+| 模块参数审核 | `moduleParameterFlowReview` | review document | `docs/MODULE_PARAMETER_FLOW_REVIEW.md` 中面向人工审核的参数级模块说明和数据流说明 | `parameterDump`, `randomModuleNotes` |
 
 ## 模块登记表
 
@@ -106,6 +107,7 @@
 | Admin History And Module Audit Verification | `scripts/verify-admin-history-and-module-audit.mjs` | 验证管理员能按人物列出/读取用户历史，且审计会保存模块调用记录 | 无 | pass/fail | npm script | Server Support |
 | User Relationship Memory Verification | `scripts/verify-user-relationship-memory.mjs` | 验证 State Update 会按当前说话用户写入自然语言关系印象记忆，并回写关系备注 | 无 | pass/fail | npm script | State Updater |
 | Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录站内手动更新、VPS git 工作树配置、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | manualVpsUpdate |
+| Module Parameter Flow Review | `docs/MODULE_PARAMETER_FLOW_REVIEW.md` | 逐项说明共享数据对象、模块输入参数、内部派生参数、输出参数和模块间数据流，供人工审核 | 当前代码模块和系统流 | 可读审核说明 | 用户/AI | App Shell, Conversation Pipeline, Server Support |
 
 ## 函数登记表
 

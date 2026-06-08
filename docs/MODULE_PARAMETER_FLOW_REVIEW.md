@@ -1,0 +1,716 @@
+# Module Parameter And Data Flow Review
+
+本文档用于人工审核：逐项说明当前系统主要模块的输入参数、内部派生参数、输出参数，以及模块之间的数据如何流动。它不替代 `docs/SYSTEM_FLOW.md`；`SYSTEM_FLOW.md` 说明系统协作图，本文件说明参数级边界。
+
+## 审核总览
+
+当前系统有三条主要数据流：
+
+1. 对话同步响应流：`App Shell -> Conversation Pipeline -> Appraisal -> Memory Recall -> Response Decision -> Prompt Generator -> Reply LLM -> State Update -> Runtime Signal Evaluation -> App Shell -> Server Support 持久化`。
+2. 档案和场景生成流：`App Shell -> Generators -> Cognitive Module Client -> DeepSeek Proxy -> Generators 归一化 -> Profile Scene Consistency -> App Shell -> Server Support 共享档案持久化`。
+3. 登录、审计、历史和部署流：`App Shell -> Vite Dev Proxy 或 Production Server -> Server Support -> liao Chatroom / runtime JSON files / git working tree / DeepSeek API`。
+
+## 共享核心数据对象
+
+### `LlmConfig`
+
+| 参数 | 类型 | 来源 | 用途 | 流向 |
+| --- | --- | --- | --- | --- |
+| `provider` | `"external"` | `seedState.defaultLlmConfig` 或 DeepSeek 配置读取 | 标记当前只使用真实外部模型 | `runCognitiveModule`, `runLlm` |
+| `model` | `string` | 默认 `deepseek-v4-flash`；配置接口可返回 | DeepSeek 请求模型名；`deepseek-reasoner` 会被归一化 | DeepSeek proxy |
+| `endpoint` | `string` | `/api/deepseek-chat` | 前端 LLM 请求入口 | `fetch(config.endpoint)` |
+| `authToken` | `string?` | 登录后写入 | Bearer token，保护需要登录的 LLM/API 请求 | Server auth |
+
+### `CharacterState`
+
+| 参数 | 类型 | 来源 | 用途 | 流向 |
+| --- | --- | --- | --- | --- |
+| `profile` | `CharacterProfile` | 种子、内置档案、生成器、用户私有运行态 | 人物稳定身份和表达材料 | UI、Prompt Generator、生成器、一致性检测 |
+| `concerns` | `Concern[]` | 种子、内置档案、生成器、State Update | 当前关切清单 | Appraisal、Memory Recall、Prompt Generator、Runtime Signal Evaluation |
+| `relationships` | `Record<string, Relationship>` | 种子、内置档案、State Update、关系余波 | 人物对用户或其他人物的关系 | Appraisal、Prompt Generator、Server relationship propagation |
+| `shortTermMemory` | `ShortTermMemory[]` | State Update | 最近对话原文 | Memory Recall、Prompt Generator |
+| `longTermMemory` | `LongTermMemory[]` | 种子、生成器、State Update、关系余波 | 长期摘要记忆 | Memory Recall、Prompt Generator |
+| `relationshipMemory` | `RelationshipMemory[]` | 种子、内置档案、State Update | 当前用户专属印象和关系总结 | Memory Recall、Prompt Generator、右侧 UI |
+| `runtime` | `RuntimeState` | 种子、生成器、State Update、Runtime Signal Evaluation | 当前能量、情绪、注意力和活跃关切 | UI、Prompt Generator、Decision、Runtime Signal Evaluation |
+| `scene` | `SceneState?` | 种子、内置档案、场景生成器 | 当前场景语境 | UI、Prompt Generator、一致性检测 |
+| `location` | `CharacterLocation?` | 种子、内置档案、管理员手动字段 | 物理位置和地图语境 | UI、Prompt Generator |
+
+### `CharacterProfile`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `string` | 人物稳定 ID，用于人物关系和记忆引用。 |
+| `name` | `string` | 人物显示名，也是回复 speakerName。 |
+| `age` | `number?` | 年龄；生成器会限制到 1-120。 |
+| `displaySummary` | `string` | 左侧短摘要，不应整段照抄用户原文。 |
+| `background` | `string` | 稳定背景。 |
+| `socialPersonaPattern` | `string?` | 此人在人群性格分布中的位置。 |
+| `fullLifeStory` | `string?` | 从小到大的故事脉络。 |
+| `lifeEvents` | `LifeEvent[]` | 分阶段经历、心理变化和关系变化。 |
+| `personalityTraits` | `string[]` | UI 短标签。 |
+| `personalitySummary` | `string` | 性格综合叙述。 |
+| `personalityFacets` | `PersonalityFacet[]` | 性格面，包含证据、张力和表达方式。 |
+| `speakingStyle` | `string` | 平常说话质感。 |
+| `values` | `string[]` | 看重的东西。 |
+| `boundaries` | `string[]` | 关系边界。 |
+| `examples` | `{ situation, expectedReply }[]` | 类似情境表达样本，只作为自然语言材料。 |
+
+### `LifeEvent`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `string` | 经历 ID。 |
+| `lifeStage` | `"childhood" \| "adolescence" \| "early_adulthood" \| "adulthood" \| "recent"` | 人生阶段。 |
+| `ageRange` | `string` | 年龄范围。 |
+| `title` | `string` | 经历标题。 |
+| `summary` | `string` | 经历摘要。 |
+| `psychologicalChange` | `string` | 心理结构变化。 |
+| `relationshipChange` | `string` | 关系距离、信任或依附变化。 |
+| `relatedPeople` | `string[]` | 相关人物。 |
+| `emotionalValence` | `number` | 情绪方向，通常 -1 到 1。 |
+| `importance` | `number` | 重要度，通常 0 到 1。 |
+
+### `PersonalityFacet`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `label` | `string` | 性格面名称。 |
+| `summary` | `string` | 该性格面的摘要。 |
+| `evidence` | `string[]` | 来源证据。 |
+| `tension` | `string` | 内在张力。 |
+| `expression` | `string` | 外在表达方式。 |
+
+### `Concern`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `string` | 关切 ID。 |
+| `title` | `string` | 关切标题。 |
+| `object` | `string?` | 关切对象，如某人或某事。 |
+| `type` | `string` | 关切类型。 |
+| `description` | `string` | 关切描述。 |
+| `intensity` | `number` | 强度，归一化到 0-1。 |
+| `valence` | `number` | 情绪方向，归一化到 -1 到 1。 |
+| `arousal` | `number` | 唤醒度，归一化到 0-1。 |
+| `triggers` | `string[]` | 触发线索。 |
+| `possibleResolutions` | `string[]` | 可能缓解方式。 |
+| `lastActivatedAt` | `string?` | 最近激活时间。 |
+| `createdAt` | `string` | 创建时间。 |
+| `decayRate` | `number` | 衰减率。 |
+| `status` | `"active" \| "dormant" \| "resolved"` | 当前状态。 |
+
+### `Relationship`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `targetId` | `string` | 关系对象 ID。 |
+| `targetName` | `string` | 关系对象名称。 |
+| `familiarity` | `number` | 熟悉度，0-1。 |
+| `trust` | `number` | 信任，0-1。 |
+| `affection` | `number` | 情感倾向，-1 到 1。 |
+| `tension` | `number` | 张力，0-1。 |
+| `lastInteractionAt` | `string?` | 最近互动时间。 |
+| `recentTone` | `string` | 最近关系气氛。 |
+| `unresolvedIssues` | `string[]` | 未解决问题。 |
+| `notes` | `string[]` | 自然语言备注。 |
+
+### `ShortTermMemory`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `string` | 短期记忆 ID。 |
+| `timestamp` | `string` | 发生时间。 |
+| `speakerId` | `string` | 说话者 ID。 |
+| `speakerName` | `string` | 说话者名称。 |
+| `content` | `string` | 原文内容。 |
+| `eventId` | `string` | 所属事件 ID。 |
+
+### `LongTermMemory`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `string` | 长期记忆 ID。 |
+| `summary` | `string` | 摘要，不保存长原文。 |
+| `relatedPeople` | `string[]` | 相关人物。 |
+| `relatedConcerns` | `string[]` | 相关关切 ID。 |
+| `emotionalValence` | `number` | 情绪方向，-1 到 1。 |
+| `emotionalIntensity` | `number` | 情绪强度，0-1。 |
+| `createdAt` | `string` | 创建时间。 |
+| `lastAccessedAt` | `string?` | 最近访问时间。 |
+| `importance` | `number` | 重要度，0-1。 |
+
+### `RelationshipMemory`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `string` | 关系记忆 ID。 |
+| `targetUserId` | `string` | 当前登录用户对应的稳定说话者 ID。 |
+| `targetUserName` | `string` | 当前登录用户展示名。 |
+| `impressionSummary` | `string` | 人物对该用户的自然语言印象。 |
+| `relationshipSummary` | `string` | 人物与该用户当前关系总结。 |
+| `evidence` | `string[]` | 形成印象的证据。 |
+| `lastInteractionSummary` | `string` | 最近互动留下的关系余波。 |
+| `updatedAt` | `string` | 更新时间。 |
+| `history` | `{ id, summary, createdAt }[]` | 历史关系摘要，服务端和 State Update 会截断保留最近项。 |
+
+### `RuntimeState` 和 `RuntimeSignalProfile`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `runtime.attentionFocus` | `string?` | 当前注意力焦点。 |
+| `runtime.energy` | `number` | UI 能量值，0-1。 |
+| `runtime.derivedMood.valence` | `number` | 情绪倾向，-1 到 1。 |
+| `runtime.derivedMood.arousal` | `number` | 唤醒度，0-1。 |
+| `runtime.derivedMood.label` | `string` | UI 情绪标签。 |
+| `runtime.signalProfiles.energy/mood/valence/arousal` | `RuntimeSignalProfile` | 四项观察信号背后的自然语言考量。 |
+| `runtime.activeConcernIds` | `string[]` | 当前活跃关切 ID。 |
+| `runtime.lastActiveAt` | `string` | 最近运行时间。 |
+| `RuntimeSignalProfile.label` | `string` | 指标标签。 |
+| `RuntimeSignalProfile.summary` | `string` | 指标摘要。 |
+| `RuntimeSignalProfile.considerations` | `string[]` | 形成指标的因素。 |
+| `RuntimeSignalProfile.cognitiveNarrative` | `string` | 只描述内部状态，不写回复指令。 |
+
+### `SceneState`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `string` | 场景 ID。 |
+| `title` | `string` | 场景标题。 |
+| `description` | `string` | 场景短描述。 |
+| `atmosphere` | `string` | 氛围。 |
+| `visibleCues` | `string[]` | 可见线索。 |
+| `activeObjects` | `string[]` | 参与互动的物件。 |
+| `sensoryProfile` | `string` | 感官环境。 |
+| `interactionPressure` | `string` | 场景带来的互动压力。 |
+| `cognitiveNarrative` | `string` | 场景如何影响注意力、身体感和关系距离。 |
+
+### `CharacterLocation`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `label` | `string` | 位置名称。 |
+| `address` | `string` | 地址或范围描述。 |
+| `region` | `string` | 区域。 |
+| `coordinate.lng` | `number?` | 经度。 |
+| `coordinate.lat` | `number?` | 纬度。 |
+| `speedKmh` | `number` | 速度，km/h。 |
+| `headingDeg` | `number` | 方向角度。 |
+| `headingLabel` | `string` | 方向中文摘要。 |
+| `motionState` | `"stationary" \| "walking" \| "riding" \| "driving" \| "unknown"` | 运动状态。 |
+| `mapContext.nearbyRoads` | `string[]?` | 附近道路。 |
+| `mapContext.nearbyPlaces` | `string[]?` | 附近地点。 |
+| `mapContext.nearbyBuildings` | `string[]?` | 附近建筑。 |
+| `mapContext.environmentSummary` | `string?` | 环境摘要。 |
+| `mapContext.source` | `"seed" \| "manual" \| "map_service"` | 地图语境来源。 |
+| `mapContext.resolvedAt` | `string` | 地图语境解析时间。 |
+| `updatedAt` | `string` | 位置更新时间。 |
+| `source` | `"seed" \| "manual" \| "map_service"` | 位置字段来源。 |
+
+### `PersonaDossier`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `string` | 档案 ID。 |
+| `title` | `string` | 左栏显示标题。 |
+| `groupName` | `string` | 分组名。 |
+| `state` | `CharacterState` | 绑定的人物、场景、位置和状态。 |
+| `dossierDescription` | `string` | 管理员输入的人物素材。 |
+| `sceneDescription` | `string` | 管理员输入的场景素材。 |
+| `previewSummary` | `string?` | DeepSeek 生成的短预览。 |
+| `previewGeneratedAt` | `string?` | 短预览生成时间。 |
+| `previewStatus` | `"pending" \| "generating" \| "ready" \| "failed"` | 短预览状态。 |
+| `createdAt` | `string` | 创建时间。 |
+| `updatedAt` | `string` | 更新时间。 |
+| `isBuiltin` | `boolean?` | 是否为内置全局档案。 |
+
+### Pipeline 数据对象
+
+| 对象 | 参数 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `EventInput` | `id` | `string` | 事件 ID，由 pipeline 生成。 |
+| `EventInput` | `type` | enum | 事件类型；当前对话为 `user_message`。 |
+| `EventInput` | `timestamp` | `string` | 事件时间。 |
+| `EventInput` | `speakerId` | `string?` | 当前登录用户稳定 ID。 |
+| `EventInput` | `speakerName` | `string?` | 当前登录用户展示名。 |
+| `EventInput` | `roomId` | `string?` | 当前固定为 `main_room`。 |
+| `EventInput` | `content` | `string` | 用户输入内容。 |
+| `EventInput` | `metadata` | `Record<string, unknown>?` | 预留元数据。 |
+| `AppraisalResult` | `eventId` | `string` | 对应事件 ID。 |
+| `AppraisalResult` | `speakerRelationship` | `Relationship?` | 当前说话者关系。 |
+| `AppraisalResult` | `activatedConcerns` | array | 激活关切、强度、触发词和原因。 |
+| `AppraisalResult` | `eventSalience` | `number` | 事件显著性，0-1。 |
+| `AppraisalResult` | `appraisalSummary` | `string` | 评估摘要。 |
+| `MemoryRecallResult` | `source` | `"sync_response" \| "async_life"?` | 召回来源。 |
+| `MemoryRecallResult` | `retrievalMode` | `"hybrid_relevance"?` | 当前召回模式。 |
+| `MemoryRecallResult` | `naturalLanguageQuery` | `string?` | 合成的自然语言召回查询。 |
+| `MemoryRecallResult` | `shortTermContext` | `ShortTermMemory[]` | 被选中的短期记忆。 |
+| `MemoryRecallResult` | `longTermMemories` | array | 被选中的长期记忆及评分、理由、召回因子。 |
+| `MemoryRecallFactor` | `name` | enum | 因子名：自然语言相关、关切关联、关系关联、情绪显著、近期性、词面线索。 |
+| `MemoryRecallFactor` | `score` | `number` | 因子分数。 |
+| `MemoryRecallFactor` | `reason` | `string` | 因子理由。 |
+| `ResponseDecision` | `shouldRespond` | `boolean` | 是否回应。 |
+| `ResponseDecision` | `responseMode` | `ResponseMode` | 回应姿态。 |
+| `ResponseDecision` | `delaySeconds` | `number?` | 延迟秒数，归一化到 0-30。 |
+| `ResponseDecision` | `rationale` | `string` | 决策理由。 |
+| `ExpressionLlmRequest` | `provider` | `"external"` | 回复 LLM 提供方。 |
+| `ExpressionLlmRequest` | `model` | `string` | 回复模型。 |
+| `ExpressionLlmRequest` | `prompt` | `string` | 只含自然语言的回复上下文。 |
+| `ReplyOutput` | `reply` | `string` | 角色最终说出口的话。 |
+| `StateUpdatePlan` | `concernUpdates` | array | 关切变化计划。 |
+| `StateUpdatePlan` | `relationshipUpdates` | array | 关系变化计划。 |
+| `StateUpdatePlan` | `newConcerns` | array | 新关切计划；当前归一化后主要保留结构。 |
+| `StateUpdatePlan` | `userRelationshipMemory` | object? | 对当前用户的印象和关系总结。 |
+| `StateUpdatePlan` | `internalStateNote` | `string` | 没说出口但进入长期记忆的内心余波。 |
+| `RuntimeSignalEvaluationResult` | `energy` | `number` | 评估后的能量。 |
+| `RuntimeSignalEvaluationResult` | `derivedMood` | object | 评估后的情绪方向、唤醒度和标签。 |
+| `RuntimeSignalEvaluationResult` | `signalProfiles` | record | 四项指标的自然语言说明。 |
+| `RuntimeSignalEvaluationResult` | `rationale` | `string` | 信号评估理由。 |
+| `StateDelta` | `concernChanges` | `string[]` | 已写回的关切变化摘要。 |
+| `StateDelta` | `relationshipChanges` | `string[]` | 已写回的关系变化摘要。 |
+| `StateDelta` | `memoryWrites` | `string[]` | 已写入的记忆摘要。 |
+| `StateDelta` | `runtimeChanges` | `string[]` | 已写回的运行态变化摘要。 |
+| `PipelineTrace` | `event/appraisal/memoryRecall/decision/llmRequest/llmOutput/stateUpdate/runtimeSignalEvaluation/stateDelta` | mixed | 一轮对话完整审计链。 |
+| `PipelineStepProgress` | `step/status/input/output/error/transport` | mixed | 右侧流程追踪实时显示参数。 |
+
+## 模块参数说明
+
+### App Shell: `src/App.tsx`
+
+责任：三栏工作台、登录态、档案选择、对话发送、生成预览、审计展示、站内更新 UI。
+
+| 函数或状态 | 参数 | 说明 | 输出或副作用 |
+| --- | --- | --- | --- |
+| `createConversationHistoryKey` | `user`, `dossierId` | 将当前用户和当前档案合成前端历史桶 key。未登录时使用 `guest`。 | `user-*::dossier-*` 字符串。 |
+| `createConversationSpeaker` | `user` | 将登录用户归一化为 pipeline 说话者。 | `{ id: "user:<id-or-name>", name }`。 |
+| `createAdminConversationHistoryKey` | `historyKey` | 管理员查看他人历史时创建本地只读桶。 | `admin-history::<historyKey>`。 |
+| `readStoredConversationHistory` | `historyKey` | 从 localStorage 读取前端缓存。 | `ChatMessage[]` 或 `undefined`。 |
+| `writeStoredConversationHistory` | `historyKey`, `messages` | 把消息截断到 `maxConversationHistoryMessages` 后写入 localStorage。 | localStorage 副作用。 |
+| `createPersonaDossier` | `state`, `dossierDescription`, `sceneDescription`, `title?` | 创建本地档案对象。 | `PersonaDossier`。 |
+| `authHeaders` | `token`, `extra` | 组装 API headers。 | 包含 Bearer token 的 headers。 |
+| `setMessagesForHistory` | `historyKey`, `updater` | 更新指定历史桶。 | React state + localStorage。 |
+| `requireLogin` | `action` | 操作前登录检查。 | 未登录打开登录浮窗并写错误。 |
+| `requireAdmin` | `action` | 操作前管理员检查。 | 非管理员写错误。 |
+| `loadSharedDossiers` | `token` | GET `/api/persona-dossiers` 读取共享档案，并叠加当前用户私有运行态。 | 更新 `dossiers/state/description`。 |
+| `persistPersonaDossier` | `dossier` | POST `/api/persona-dossiers` 保存共享档案。 | 后台写 `.persona-dossiers.local.json`。 |
+| `ensureDossierPreview` | `dossier` | 生成缺失的短预览。 | 调 `/api/deepseek-chat` 流式生成，再 POST `/preview` 全局保存。 |
+| `syncConversationState` | `nextState`, `interaction` | 对话后保存当前用户私有人物运行态。 | POST `/conversation-state`，服务端写 `.conversation-states.local.json`。 |
+| `loadConversationHistory` | `dossierId`, `historyKey`, `cachedMessages?` | 切换人物或登录后读取消息历史。 | GET `/conversation-history`，必要时回填缓存。 |
+| `loadAdminConversationHistorySummaries` | `dossierId` | 管理员读取当前人物下所有用户历史摘要。 | GET `/api/admin/conversation-histories?dossierId=...`。生产服务已实现；开发代理需复核是否同步。 |
+| `handleSelectAdminHistoryKey` | `historyKey` | 管理员选择某个用户历史。 | GET `dossierId + key`，写只读历史桶。生产服务已实现；开发代理需复核是否同步。 |
+| `persistConversationHistoryMessages` | `dossierId`, `messagesToSave` | 对话后保存中间栏消息。 | POST `/conversation-history`。 |
+| `handleLogin` | form event | POST `/api/auth/login`，保存 token 和用户。 | localStorage + React auth state。 |
+| `handleLogout` | 无 | POST `/api/auth/logout` 并清理本地登录态。 | 清空 auth state。 |
+| `recordConversationAudit` | `entry` | 保存一轮对话最终输入、输出和模块调用。 | POST `/api/conversation-audits`。 |
+| `loadConversationAudits` | 无 | 管理员读取审计。 | GET `/api/conversation-audits`。 |
+| `deleteConversationAuditEntry` | `auditId` | 管理员删除单条审计。 | DELETE `/api/conversation-audits/:auditId`。 |
+| `clearConversationAuditEntries` | 无 | 管理员清空审计。 | DELETE `/api/conversation-audits`。 |
+| `checkAppUpdate` | 无 | 检查站内更新状态。 | GET `/api/app-update/status`。 |
+| `handleRunAppUpdate` | 无 | 管理员触发站内更新。 | POST `/api/app-update/run` 并消费 SSE。 |
+| `consumeUpdateEvent` | SSE event text | 解析更新 SSE。 | 更新进度和日志。 |
+| `appendUpdateLog` | `entry` | 追加更新日志并截断。 | React state。 |
+| `updateMonitorProgress` | `PipelineStepProgress` | 写入右侧流程追踪或生成监视。 | 更新 `activeStep/liveTrace`。 |
+| `updateActiveDossier` | `patch` | 更新当前档案局部字段。 | React state。 |
+| `handleSelectDossier` | `dossier` | 切换当前档案。 | 同步人物、素材、预览和错误状态。 |
+| `handleCreateDossier` | 无 | 管理员新建空档案。 | 本地追加并保存后台。 |
+| `handleDeleteDossier` | `id` | 管理员删除档案。 | DELETE 后更新本地列表。 |
+| `handleDossierDescriptionChange` | `value` | 管理员修改人物素材。 | 更新素材和当前档案。 |
+| `handleSceneDescriptionChange` | `value` | 管理员修改场景素材。 | 更新素材和当前档案。 |
+| `handleDossierGroupChange` | `value` | 管理员修改分组。 | 更新当前档案 `groupName`。 |
+| `handleSaveDeepseekConfig` | 无 | 管理员保存 DeepSeek key。 | POST `/api/deepseek-config`，服务端写 `.deepseek.local.json`。 |
+| `handleTestDeepseekConfig` | 无 | 测试 DeepSeek。 | POST `/api/deepseek-chat`。 |
+| `handleSend` | form event | 对话发送主入口。 | 运行 pipeline、保存历史、同步状态、记录审计。 |
+| `handleGenerateDossier` | 无 | 管理员生成档案预览。 | 调 `generateDossierFromDescription`。 |
+| `handleApplyDossier` | 无 | 应用人物预览。 | 调 `applyCandidateState`。 |
+| `handleGenerateScene` | 无 | 管理员生成场景预览。 | 调 `generateSceneFromDescription`。 |
+| `handleApplyScene` | 无 | 应用场景预览。 | 调 `applyCandidateState`。 |
+| `applyCandidateState` | `candidate`, `target`, `bypassDistortionPassword?` | 应用前运行人物场景一致性检测。 | 可能打开扭曲时空门禁，或提交候选状态。 |
+| `commitCandidateState` | `candidate`, `target`, `consistency?` | 真正写入候选状态。 | 更新当前档案并异步保存。 |
+| `handleConfirmDistortionPassword` | 无 | 校验扭曲时空密码后继续应用。 | 调 `commitCandidateState`。 |
+| `handleReset` | 无 | 重置工作台到 seed。 | 重建本地档案，登录时再读后台共享档案。 |
+| `readNaturalLanguageEventStream` | `response`, `onStream?` | 读取自然语言 SSE。 | 返回最终文本。 |
+| `buildConversationModuleCalls` | `trace` | 把 `PipelineTrace` 转为持久审计模块调用。 | `ConversationModuleCall[]`。 |
+
+### Conversation Pipeline: `src/pipeline/conversationPipeline.ts`
+
+| 参数 | 类型 | 来源 | 说明 |
+| --- | --- | --- | --- |
+| `content` | `string` | `handleSend` 的输入框 | 用户本轮消息。 |
+| `state` | `CharacterState` | 当前档案叠加用户私有运行态后的状态 | 所有认知模块的基础上下文。 |
+| `llmConfig` | `LlmConfig` | App Shell | LLM 入口、模型和 token。 |
+| `speaker.id` | `string` | `createConversationSpeaker` | 当前登录用户稳定 ID。 |
+| `speaker.name` | `string` | `createConversationSpeaker` | 当前登录用户展示名。 |
+| `onProgress` | callback? | App Shell | 将每步输入、输出和状态推送到右侧面板。 |
+
+输出：`{ nextState, trace }`。`nextState` 回到 App Shell 并保存到用户私有运行态；`trace` 显示在右侧并保存到审计。
+
+数据流顺序：`content -> event -> appraisal -> memoryRecall -> decision -> llmRequest -> llmOutput -> stateUpdate -> runtimeSignalEvaluation -> stateDelta -> nextState/trace`。
+
+### Cognitive Module Client: `src/pipeline/cognitiveModuleClient.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `request.moduleName` | `CognitiveModuleName` | 当前认知模块名。 |
+| `request.inputMode` | `"natural_language" \| "structured_context"` | 模型输入模式。 |
+| `request.outputMode` | `"natural_language" \| "structured_json"` | 模型输出模式。结构化模式可 fallback。 |
+| `request.prompt` | `string` | 发给 DeepSeek proxy 的用户 prompt。 |
+| `request.outputContract` | `string?` | 结构化输出契约。 |
+| `config` | `LlmConfig` | 外部 endpoint、模型和认证 token。 |
+| `mockOutput` | generic | 本地兜底输出。 |
+| `options.onStream` | callback? | 流式输出回调。 |
+
+输出：`CognitiveModuleTrace<TOutput>`，包含 `request/output/transport/fallbackReason`。如果外部结构化 JSON 截断或无法解析，使用 `mockOutput` 并记录 `fallbackReason`。
+
+### Appraisal: `src/pipeline/appraisal.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `event` | `EventInput` | 本轮用户事件。 |
+| `state` | `CharacterState` | 提供 `concerns` 和 `relationships`。 |
+| `llmConfig` | `LlmConfig` | LLM 配置。 |
+| `onStream` | callback? | 评估模块流式输出。 |
+
+内部派生：`speakerRelationship` 来自 `state.relationships[event.speakerId]`；`activatedConcerns` 先由触发词、对象匹配、关系和关切强度本地估算；`eventSalience` 由最高激活度、关系权重和文本长度估算。
+
+输出：`CognitiveModuleTrace<AppraisalResult>`。归一化会过滤未知 `concernId`、clamp 分数、修复关系对象形状。
+
+### Memory Retrieval: `src/pipeline/memoryRetrieval.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `event` | `EventInput` | 本轮事件。 |
+| `appraisal` | `AppraisalResult` | 激活关切和说话者关系。 |
+| `state` | `CharacterState` | 短期记忆、长期记忆、关系记忆。 |
+| `llmConfig` | `LlmConfig` | LLM 配置。 |
+| `onStream` | callback? | 记忆召回流式输出。 |
+
+内部派生参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `retrievalContext.source` | 当前同步响应固定为 `sync_response`，未来异步生命路径可用 `async_life`。 |
+| `naturalLanguageQuery` | 由事件内容、评估摘要、激活关切、说话者关系总结合成。 |
+| `activatedConcernScores` | `concernId -> activationScore` map。 |
+| `speakerNames` | 说话者 ID、说话者名、关系 target ID/name。 |
+| `speakerRelationshipSummary` | 关系气氛、用户印象、关系总结、最近互动和备注。 |
+| `longTermMemoryCandidates` | `state.longTermMemory + relationshipMemory 转换候选`。 |
+| `rankedCandidates` | 按自然语言相关、关切、关系、情绪显著、近期性、词面线索排序。 |
+| `shortTermCandidates` | 最近 4 条短期记忆。 |
+
+输出：`CognitiveModuleTrace<MemoryRecallResult>`。LLM 只选择 ID；完整短期记忆、长期摘要和召回因子由本地候选表回填。
+
+### Response Decision: `src/pipeline/responseDecision.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `appraisal` | `AppraisalResult` | 事件显著性、激活关切、说话者关系。 |
+| `memoryRecall` | `MemoryRecallResult` | 浮现记忆。 |
+| `state` | `CharacterState` | runtime、关切和关系背景。 |
+| `llmConfig` | `LlmConfig` | LLM 配置。 |
+| `onStream` | callback? | 决策流式输出。 |
+
+内部派生：根据 `eventSalience`、负面关切强度、关系熟悉度先构建 `mockOutput`，再交给 LLM 复判。
+
+输出：`CognitiveModuleTrace<ResponseDecision>`。归一化保证 `responseMode` 属于枚举、`delaySeconds` 在 0-30。
+
+### Prompt Generator: `src/pipeline/promptBuilder.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `event` | `EventInput` | 当前用户消息和说话者。 |
+| `state` | `CharacterState` | 人物、场景、位置、记忆、关系和 runtime。 |
+| `appraisal` | `AppraisalResult` | 关切评估。 |
+| `memoryRecall` | `MemoryRecallResult` | 被召回记忆。 |
+| `decision` | `ResponseDecision` | 回应姿态和理由。 |
+| `provider` | `"external"` | 固定外部模型。 |
+| `model` | `string` | 模型名。 |
+
+输出：`ExpressionLlmRequest`。关键约束：`prompt` 是自然语言上下文，只给 Reply LLM；不能混入 JSON、字段名、工程术语或结构化输出契约。
+
+### Reply LLM Client: `src/pipeline/llmClient.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `request` | `ExpressionLlmRequest` | Prompt Generator 生成的自然语言请求。 |
+| `config` | `LlmConfig` | endpoint、model、authToken。 |
+| `simulateInput` | `{ event, state, decision }` | 非外部模式兜底输入；当前正式配置走外部。 |
+| `onStream` | callback? | 回复流式输出。 |
+
+输出：`ReplyOutput`。外部请求 body 固定包含 `moduleName: "reply_generation"`、`inputMode: "natural_language"`、`outputMode: "natural_language"`、`stream: true`。
+
+### State Updater: `src/pipeline/stateUpdater.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `state` | `CharacterState` | 更新前状态。 |
+| `event` | `EventInput` | 当前事件。 |
+| `replyOutput` | `ReplyOutput` | 角色回复或沉默。 |
+| `context.appraisal` | `AppraisalResult` | 评估结果。 |
+| `context.memoryRecall` | `MemoryRecallResult` | 召回结果。 |
+| `context.decision` | `ResponseDecision` | 回应决策。 |
+| `llmConfig` | `LlmConfig` | LLM 配置。 |
+| `onStream` | callback? | 状态更新流式输出。 |
+
+输出：`{ nextState, stateDelta, stateUpdate }`。`stateUpdate` 是 LLM 计划；`nextState` 是确定性写回后的状态；`stateDelta` 是写回摘要。
+
+确定性写回包括：更新关切数值、更新关系数值和备注、追加短期记忆、必要时追加长期记忆、写入或更新 `relationshipMemory`、重算活跃关切和基础 mood，再由 Runtime Signal Evaluator 做最终观察信号评估。
+
+### Runtime Signal Evaluator: `src/pipeline/runtimeSignalEvaluator.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `state` | `CharacterState` | State Update 后的状态。 |
+| `event` | `EventInput` | 当前事件。 |
+| `replyOutput` | `ReplyOutput` | 角色回复。 |
+| `context.appraisal` | `AppraisalResult` | 评估结果。 |
+| `context.memoryRecall` | `MemoryRecallResult` | 召回结果。 |
+| `context.decision` | `ResponseDecision` | 决策结果。 |
+| `context.stateUpdatePlan` | `StateUpdatePlan` | 状态更新计划。 |
+| `llmConfig` | `LlmConfig` | LLM 配置。 |
+| `onStream` | callback? | 信号评估流式输出。 |
+
+输出：`CognitiveModuleTrace<RuntimeSignalEvaluationResult>`。随后 `applyRuntimeSignalEvaluation(state, stateDelta, evaluation)` 将能量、情绪、情绪倾向、唤醒度和自然语言 `signalProfiles` 写回 `runtime`。
+
+### Generators: `src/pipeline/generators.ts`
+
+#### `generateDossierFromDescription`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `description` | `string` | 管理员输入的人物素材。 |
+| `current` | `CharacterState` | 当前人物状态，用于背景和 fallback。 |
+| `llmConfig` | `LlmConfig` | LLM 配置。 |
+| `onProgress` | callback? | 生成监视进度。 |
+
+输出：`CharacterState` 预览。内部要求 Dossier Interpretation LLM 输出 `name/age/displaySummary/stableBackground/socialPersonaPattern/fullLifeStory/lifeEvents/personalityTraits/personalitySummary/personalityFacets/speakingStyle/values/boundaries/examples/concerns/longTermMemories/attentionFocus/derivedMood/signalProfiles`。
+
+#### `generateSceneFromDescription`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `description` | `string` | 管理员输入的场景素材。 |
+| `current` | `CharacterState` | 当前人物状态。 |
+| `llmConfig` | `LlmConfig` | LLM 配置。 |
+| `onProgress` | callback? | 生成监视进度。 |
+
+输出：`CharacterState` 预览。内部要求 Scene Interpretation LLM 输出 `scene/newConcerns/longTermMemories/personalityTraitTags/personalityFacetUpdates/attentionFocus/derivedMood/signalProfiles`。
+
+归一化规则：生成器会限长、补 ID、clamp 数值、去重列表、避免展示字段整段照抄原文，并把新关切和长期记忆写入预览状态。
+
+### Profile Scene Consistency: `src/pipeline/profileSceneConsistency.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `state` | `CharacterState` | 候选人物与场景组合。 |
+| `llmConfig` | `LlmConfig` | LLM 配置。 |
+
+输出：`ProfileSceneConsistencyResult`，包含 `compatible/confidence/severity/summary/mismatchReasons/requiresDistortionPassword`。如果 `severity` 是 `hard_mismatch`，必须要求扭曲时空密码。
+
+### Seed State: `src/data/seedState.ts`
+
+| 导出 | 参数 | 说明 | 流向 |
+| --- | --- | --- | --- |
+| `seedState` | `CharacterState` | 默认林安人物、关切、关系、记忆、runtime、场景和位置。 | App 初始档案、重置、新建档案模板。 |
+| `seedMessages` | `ChatMessage[]` | 初始系统消息。 | 中间栏消息初始值。 |
+| `defaultLlmConfig` | `LlmConfig` | 默认 DeepSeek flash 代理配置。 | App Shell。 |
+
+### Builtin Persona Dossiers: `builtinPersonaDossiers.mjs`
+
+| 函数 | 参数 | 说明 | 输出 |
+| --- | --- | --- | --- |
+| `createDossier` | `spec` | 将内置规格转换成 `PersonaDossier`。 | 内置档案条目。 |
+| `createConcern` | `specId`, concern tuple, `index` | 生成关切。 | `Concern`。 |
+| `createLifeEvents` | `specId`, `items` | 生成生平经历。 | `LifeEvent[]`。 |
+| `createPersonaRelationships` | `items` | 生成熟人关系 map。 | `Record<string, Relationship>`。 |
+| `createLocation` | location tuple | 生成位置和地图上下文。 | `CharacterLocation`。 |
+| `buildSignalProfiles` | `spec` | 生成四项 runtime 信号说明。 | `Record<RuntimeSignalKey, RuntimeSignalProfile>`。 |
+
+输出常量 `builtinPersonaDossiers` 被 `serverSupport.readBasePersonaDossiers` 合并到共享档案底稿。
+
+### Server Support: `serverSupport.mjs`
+
+| 函数 | 参数 | 说明 | 输出或副作用 |
+| --- | --- | --- | --- |
+| `createLocalSession` | `liaoUser` | 将 liao 登录返回转换成本项目本地会话。 | `{ token, user, expiresAt }`，写内存 `authSessions`。 |
+| `destroyLocalSession` | `token` | 删除本地会话。 | 内存副作用。 |
+| `getRequestSession` | `request` | 从 Authorization Bearer token 读会话。 | session 或 `undefined`。 |
+| `requireSession` | `request`, `response` | 登录保护。 | session 或 401。 |
+| `requireAdminSession` | `request`, `response` | 管理员保护。 | session 或 401/403。 |
+| `loginWithLiaoChatroom` | `username`, `password` | 调 liao `/api/login`。不保存密码。 | liao user payload。 |
+| `readPersonaDossiers` | `user?` | 读取内置 + 共享档案，可叠加用户私有运行态。 | `PersonaDossier[]`。 |
+| `upsertPersonaDossier` | `dossier`, `user` | 管理员保存共享档案。 | 写 `.persona-dossiers.local.json`。 |
+| `deletePersonaDossier` | `dossierId` | 删除共享档案；内置档案用 tombstone。 | 写 `.persona-dossiers.local.json`。 |
+| `updatePersonaDossierPreview` | `dossierId`, `previewSummary`, `user` | 保存全局短预览。 | 写 `.persona-dossiers.local.json`。 |
+| `updatePersonaDossierConversationState` | `dossierId`, `nextState`, `interaction`, `user` | 保存当前用户私有运行态，并传播关系余波。 | 写 `.conversation-states.local.json`。 |
+| `readConversationHistoryMessages` | `dossierId`, `user` | 读取当前用户当前人物消息历史。 | `ChatMessage[]`。 |
+| `readConversationHistorySummaries` | `dossierId` | 管理员列出某人物下所有用户历史摘要。 | summary list。 |
+| `readConversationHistoryMessagesByKey` | `dossierId`, `key` | 管理员按 key 读取某用户某人物消息。 | `ChatMessage[]`。 |
+| `appendConversationHistoryMessages` | `dossierId`, `messages`, `user` | 追加保存消息历史。 | 写 `.conversation-histories.local.json`。 |
+| `appendConversationAudit` | `entry`, `user` | 保存输入、输出、状态和模块调用。 | 写 `.conversation-audits.local.json`。 |
+| `readConversationAudits` | `limit=200` | 读取最近审计。 | 审计列表。 |
+| `deleteConversationAudit` | `auditId` | 删除单条审计。 | 写审计文件。 |
+| `clearConversationAudits` | 无 | 清空审计。 | 写审计文件。 |
+| `readAppUpdateStatus` | 无 | 读取 git 当前提交、远端提交和版本。 | `AppUpdateStatus`。 |
+| `streamAppUpdate` | `response` | SSE 执行 fetch/pull/npm ci/build/restart。 | 更新日志 SSE。 |
+| `sendJson` | `response`, `statusCode`, `data` | JSON 响应工具。 | HTTP response。 |
+| `readJsonBody` | `request` | 读取 JSON body。 | parsed object。 |
+| `isSameToken` | `a`, `b` | 安全比较 token。 | boolean。 |
+
+运行时文件参数：
+
+| 文件 | 数据 | 说明 |
+| --- | --- | --- |
+| `.persona-dossiers.local.json` | `{ dossiers, deletedBuiltinDossierIds }` | 管理员共享档案和内置档案 tombstone。 |
+| `.conversation-states.local.json` | `{ entries }` | 当前用户 + 当前档案的私有人物运行态。 |
+| `.conversation-histories.local.json` | `{ entries }` | 当前用户 + 当前档案的中间栏消息。 |
+| `.conversation-audits.local.json` | `{ entries }` | 输入输出审计和模块调用。 |
+| `.deepseek.local.json` | `{ apiKey, endpoint, model, savedAt }` | DeepSeek 本地密钥文件，必须保持 git ignored。 |
+
+### Production Server: `server.mjs`
+
+生产服务参数来自 HTTP request、环境变量、运行时 JSON 文件和 `dist/`。
+
+| 路由 | 方法 | 入参 | 权限 | 输出 |
+| --- | --- | --- | --- | --- |
+| `/health` | GET/HEAD | 无 | 无 | `OK`。 |
+| `/api/auth/session` | GET | Bearer token? | 无 | `{ authenticated, user }`。 |
+| `/api/auth/login` | POST | `{ username, password }` | 无 | `{ success, token, user, expiresAt }`。 |
+| `/api/auth/logout` | POST | Bearer token? | 无 | `{ success: true }`。 |
+| `/api/persona-dossiers` | GET | Bearer token | 登录 | `{ dossiers }`。 |
+| `/api/persona-dossiers` | POST | `{ dossier }` | 管理员 | `{ dossier }`。 |
+| `/api/persona-dossiers/:id/preview` | POST | `{ previewSummary }` | 登录 | `{ dossier }` 或 error。 |
+| `/api/persona-dossiers/:id/conversation-state` | POST | `{ state, interaction }` | 登录 | `{ dossier, dossiers }` 或 error。 |
+| `/api/persona-dossiers/:id/conversation-history` | GET | path `id` | 登录 | `{ messages }`。 |
+| `/api/persona-dossiers/:id/conversation-history` | POST | `{ messages }` | 登录 | `{ messages }`。 |
+| `/api/admin/conversation-histories` | GET | query `dossierId`, optional `key` | 管理员 | `{ summaries }` 或 `{ messages }`。 |
+| `/api/persona-dossiers/:id` | DELETE | path `id` | 管理员 | `{ deleted }`。 |
+| `/api/conversation-audits` | POST | audit entry | 登录 | `{ entry }`。 |
+| `/api/conversation-audits` | GET | 无 | 管理员 | `{ entries }`。 |
+| `/api/conversation-audits` | DELETE | 无 | 管理员 | `{ deleted }`。 |
+| `/api/conversation-audits/:auditId` | DELETE | path `auditId` | 管理员 | `{ deleted }`。 |
+| `/api/deepseek-config` | GET | 无 | 无 | `{ apiKeySaved, endpoint, model }`。 |
+| `/api/deepseek-config` | POST | `{ apiKey, model }` | 管理员 | 保存 key。 |
+| `/api/app-update/status` | GET | 无 | 无 | `AppUpdateStatus`。 |
+| `/api/app-update/run` | POST | Bearer token | 管理员 | SSE 更新日志。 |
+| `/api/deepseek-chat` | POST | `model/moduleName/inputMode/outputMode/prompt/outputContract?/stream?` | 登录 | JSON 或 SSE。 |
+| static fallback | GET/HEAD | pathname | 无 | `dist/` 静态文件或 `index.html`。 |
+
+环境变量参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `PORT` | 生产服务端口，默认 `4174`。 |
+| `HOST` | 生产监听地址，默认 `127.0.0.1`。 |
+| `DEEPSEEK_API_KEY` | 可作为 `.deepseek.local.json` 外的运行时密钥来源。 |
+| `LIAO_CHATROOM_ORIGIN` | liao 聊天室登录源。 |
+| `APP_UPDATE_WORKDIR` | VPS git 工作目录。 |
+| `APP_UPDATE_BRANCH` | 更新分支，默认 `main`。 |
+| `APP_UPDATE_RESTART_COMMAND` | 自定义重启命令。 |
+| `APP_UPDATE_PM2_NAME` / `PRODUCTION_PM2_NAME` | PM2 进程名。 |
+
+### Vite Dev Proxy: `vite.config.ts`
+
+开发代理复用大部分生产 API 和 DeepSeek proxy 参数。当前文件包含 auth、persona dossiers、conversation state/history、conversation audits、DeepSeek config、app update、DeepSeek chat 等路由。需要人工复核的一点：生产服务有 `/api/admin/conversation-histories`，当前开发代理文件中未检索到同名路由；如果本地开发也需要管理员历史查看，应补齐或确认由其他层处理。
+
+DeepSeek proxy 参数：
+
+| 参数 | 来源 | 说明 |
+| --- | --- | --- |
+| `body.model` | 前端请求 | 请求模型；`deepseek-reasoner` 被改成 `deepseek-v4-flash`。 |
+| `body.moduleName` | 前端请求 | 模块名，用来决定非结构化回复是否包装成 `{ reply }`。 |
+| `body.inputMode` | 前端请求 | 透传记录，目前 proxy 主要使用 `prompt`。 |
+| `body.outputMode` | 前端请求 | `structured_json` 或 `natural_language`。 |
+| `body.prompt` | 前端请求 | 发给 DeepSeek 的用户消息。 |
+| `body.outputContract` | 前端请求 | 结构化 JSON 模块的系统约束补充。 |
+| `body.stream` | 前端请求 | 是否流式。 |
+| `apiKey` | `.deepseek.local.json` 或环境变量 | Authorization Bearer。 |
+| `thinking` | proxy 固定 | `{ type: "disabled" }`，关闭思考模式。 |
+| `response_format` | proxy 派生 | 结构化模块为 `json_object`，自然语言为 `text`。 |
+| `temperature` | proxy 固定 | `0.4`。 |
+| `max_tokens` | proxy 派生 | 结构化 `2600`，自然语言 `700`。 |
+
+### Core Utils: `src/core/utils.ts`
+
+| 函数 | 参数 | 说明 | 输出 |
+| --- | --- | --- | --- |
+| `clamp` | `value`, `min`, `max` | 数值夹紧。 | number。 |
+| `makeId` | `prefix` | 生成随机 ID。 | `${prefix}_...`。 |
+| `nowIso` | 无 | 当前 ISO 时间。 | string。 |
+| `round` | `value` | 保留两位小数。 | number。 |
+
+### Verification Scripts
+
+| 脚本 | 入参 | 验证边界 |
+| --- | --- | --- |
+| `scripts/verify-cognitive-module-fallback.mjs` | 无 | 结构化 SSE JSON 截断时认知模块 fallback。 |
+| `scripts/verify-conversation-history-isolation.mjs` | 无 | 用户 A 的运行态不会进入用户 B 或共享档案。 |
+| `scripts/verify-conversation-message-history.mjs` | 无 | 消息历史按用户和档案保存读取。 |
+| `scripts/verify-admin-history-and-module-audit.mjs` | 无 | 管理员历史查看和模块审计记录。 |
+| `scripts/verify-user-relationship-memory.mjs` | 无 | 当前用户关系印象记忆写入和回填关系备注。 |
+
+## 参数级数据流
+
+### 对话发送到状态保存
+
+1. 用户输入框 `input` 进入 `handleSend`。
+2. `handleSend` 用 `activeConversationSpeaker` 生成 `speaker.id/name`，把用户消息写入本地历史桶。
+3. `runConversationPipeline` 接收 `content/state/llmConfig/speaker/onProgress`，生成 `EventInput`。
+4. Appraisal 接收 `event/state`，输出 `AppraisalResult`。
+5. Memory Retrieval 接收 `event/appraisal/state`，合成 `naturalLanguageQuery`，输出 `MemoryRecallResult`。
+6. Response Decision 接收 `appraisal/memoryRecall/state`，输出 `ResponseDecision`。
+7. Prompt Generator 接收 `event/state/appraisal/memoryRecall/decision/provider/model`，输出自然语言 `ExpressionLlmRequest.prompt`。
+8. Reply LLM Client 接收 `ExpressionLlmRequest/LlmConfig`，通过 `/api/deepseek-chat` 输出 `ReplyOutput.reply`。
+9. State Updater 接收 `state/event/replyOutput/context/llmConfig`，输出 `StateUpdatePlan`，确定性写回 `nextState` 和 `StateDelta`。
+10. Runtime Signal Evaluator 接收 `stateAfterUpdate/event/replyOutput/context/llmConfig`，输出四项观察信号，再写回 `nextState.runtime`。
+11. `handleSend` 把回复消息写入本地历史桶。
+12. `persistConversationHistoryMessages` POST 当前用户和当前档案消息到 `.conversation-histories.local.json`。
+13. `syncConversationState` POST `nextState + interaction` 到 `.conversation-states.local.json`，并在当前用户范围内传播关系余波。
+14. `recordConversationAudit` POST `PipelineTrace` 派生的 `moduleCalls` 到 `.conversation-audits.local.json`。
+
+### 人物档案生成到共享保存
+
+1. 管理员编辑 `dossierDescription`。
+2. `handleGenerateDossier` 调 `generateDossierFromDescription(description,current,llmConfig,onProgress)`。
+3. Dossier Interpretation LLM 输出结构化档案解释。
+4. 生成器归一化字段，产生 `dossierPreview: CharacterState`。
+5. 管理员点击应用，`applyCandidateState` 调 `evaluateProfileSceneConsistency(candidate,llmConfig)`。
+6. 如果硬冲突，`consistencyGate` 等待 `distortionPassword`。
+7. 通过后 `commitCandidateState` 更新当前 `PersonaDossier.state/title/updatedAt`。
+8. `persistPersonaDossier` POST `{ dossier }` 到 `.persona-dossiers.local.json`。
+
+### 场景生成到共享保存
+
+1. 管理员编辑 `sceneDescription`。
+2. `handleGenerateScene` 调 `generateSceneFromDescription(description,current,llmConfig,onProgress)`。
+3. Scene Interpretation LLM 输出结构化场景解释。
+4. 生成器把 `scene/newConcerns/longTermMemories/personalityTraitTags/personalityFacetUpdates/runtime` 合入预览状态。
+5. 应用路径与人物档案相同：一致性检测、可能门禁、提交当前档案、保存共享档案。
+
+### 登录和权限
+
+1. `handleLogin` POST `{ username, password }` 到 `/api/auth/login`。
+2. Server Support 调 `LIAO_CHATROOM_ORIGIN/api/login` 校验。
+3. `createLocalSession` 生成本地 token、`AuthUser` 和过期时间。
+4. 前端把 token 存入 localStorage，并写入 `llmConfig.authToken`。
+5. 后续需要登录或管理员的接口通过 `requireSession` / `requireAdminSession` 检查 Bearer token。
+
+### DeepSeek 调用
+
+1. 认知模块或 Reply LLM 通过 `config.endpoint` POST `/api/deepseek-chat`。
+2. 请求 body 包含 `model/moduleName/inputMode/outputMode/prompt/outputContract?/stream?`。
+3. proxy 读取 `.deepseek.local.json` 或 `DEEPSEEK_API_KEY`。
+4. proxy 组装 DeepSeek Chat Completions：system message、user prompt、`response_format`、`thinking: disabled`、`stream`。
+5. 非流式时返回 JSON 或 `{ reply }`；流式时发送 `{ delta }`，结束时发送 `{ final }`。
+6. 结构化输出解析失败时，proxy 发送 error；`runCognitiveModule` 对结构化模块使用 fallback。
+
+## 人工审核重点
+
+| 审核点 | 应看参数 |
+| --- | --- |
+| Reply LLM 是否纯自然语言 | `ExpressionLlmRequest.prompt`、`runLlm` 请求体。 |
+| 用户隔离是否正确 | `speaker.id`、`createConversationHistoryKey`、`createConversationHistoryEntryKey`、`.conversation-states.local.json` entries。 |
+| 关系印象是否按当前用户保存 | `StateUpdatePlan.userRelationshipMemory.targetUserId`、`RelationshipMemory.targetUserId`。 |
+| 记忆召回是否不是敏感词过滤 | `naturalLanguageQuery`、`MemoryRecallFactor`、`rankedCandidates`。 |
+| 生成档案是否照抄原文 | `compactText/isRawCopy`、`displaySummary/background/fullLifeStory`。 |
+| 场景和人物是否同世界观 | `ProfileSceneConsistencyResult.severity/requiresDistortionPassword`。 |
+| 审计是否能复盘模块链 | `PipelineTrace`、`ConversationModuleCall.input/output/status/transport`。 |
+| 开发和生产 API 是否同步 | `server.mjs` 与 `vite.config.ts` 路由表，尤其管理员历史接口。 |

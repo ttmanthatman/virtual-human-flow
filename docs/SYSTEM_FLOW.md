@@ -69,10 +69,12 @@ flowchart LR
     DM[DEVELOPMENT_METHOD.md] --> WORK[每轮开发动作]
     NR[AI_NAMING_REGISTRY.md] --> WORK
     SF[SYSTEM_FLOW.md] --> WORK
+    MPR[MODULE_PARAMETER_FLOW_REVIEW.md] --> WORK
     EI[ERROR_INSPECTIONS.md 顶部摘要] --> WORK
     WORK --> CODE[代码和配置]
     CODE --> NR
     CODE --> SF
+    CODE --> MPR
     CODE --> EI
     CODE --> VER[package.json/package-lock.json 版本同步]
     VER --> GIT[Git 提交]
@@ -80,6 +82,8 @@ flowchart LR
     GH --> WAIT[等待站内管理员更新]
     WAIT --> VPS[<production-domain> 部署]
 ```
+
+`docs/MODULE_PARAMETER_FLOW_REVIEW.md` 是参数级人工审核清单：它逐项列出共享数据对象字段、模块入参/输出、内部派生参数和跨模块流向。`docs/SYSTEM_FLOW.md` 继续负责系统协作图和架构叙述；当模块参数或模块间数据流变化时，两个文件应同步更新。
 
 ## 生产部署路径
 
