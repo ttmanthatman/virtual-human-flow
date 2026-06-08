@@ -542,8 +542,8 @@ flowchart TD
     S["State after State Update"] --> EVAL["evaluateRuntimeSignals"]
     E["EventInput"] --> EVAL
     R["ReplyOutput"] --> EVAL
-    C["Appraisal/Memory/Decision/StateUpdatePlan"] --> EVAL
-    EVAL --> CLIENT["Runtime Signal Evaluation LLM"]
+    C["Appraisal/Memory/Decision/StateUpdate narrative"] --> EVAL
+    EVAL --> CLIENT["Runtime Signal Evaluation LLM JSON 出口"]
     CLIENT --> RAW["RuntimeSignalEvaluationResult raw"]
     RAW --> NORM["normalizeRuntimeSignalEvaluation"]
     NORM --> APPLY["applyRuntimeSignalEvaluation"]
