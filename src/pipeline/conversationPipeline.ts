@@ -67,10 +67,10 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
   });
 
   emit({ step: "decision", status: "running", input: "回应决策模块输入\n\n" + summarizeText([appraisalNarrative, memoryNarrative].filter(Boolean).join("\n")), output: "等待模型输出..." });
-  const decision = await decideResponse(appraisalNarrative, memoryNarrative, state, llmConfig, (output) =>
+  const decision = await decideResponse(appraisal.output, memoryNarrative, state, llmConfig, (output) =>
     emit({ step: "decision", status: "streaming", output: summarizeText(output) }),
   );
-  const decisionNarrative = decision.output.narrative || decision.output.rationale;
+  const decisionNarrative = formatDecisionNarrative(decision.output);
   emit({
     step: "decision",
     status: "completed",
@@ -175,6 +175,21 @@ function summarizeText(value: string, maxLength = 300) {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) return normalized;
   return normalized.slice(0, maxLength - 1) + "…";
+}
+
+function formatDecisionNarrative(decision: PipelineTrace["decision"]["output"]) {
+  const rhythmNarrative =
+    decision.replyRhythm === "none"
+      ? "她倾向于不回应。"
+      : decision.replyRhythm === "single"
+        ? "如果开口，适合单条、相对完整而克制地回应。"
+        : decision.replyRhythm === "multi_turn"
+          ? "如果开口，她可能会连续发出几条话，像是解释、追问或补充压不住。"
+          : "如果开口，她更像是短句爆发，话会先冲出来。";
+  const composureNarrative = decision.shouldLoseComposure ? "她这次可能会失态，语气和节奏会偏离平常的稳定外壳。" : "她大体还能维持平常的表达外壳。";
+  const personaNarrative = decision.shouldBreakPersona ? "她可能短暂突破平常维持的人设外壳，露出更底层、更真实、更失控的反应。" : "不需要突破平常人设外壳。";
+
+  return [decision.narrative || decision.rationale, rhythmNarrative, composureNarrative, personaNarrative].filter(Boolean).join("\n");
 }
 
 function formatStateDelta(stateDelta: PipelineTrace["stateDelta"]) {

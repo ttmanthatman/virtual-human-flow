@@ -93,9 +93,9 @@
 | Builtin Persona Dossiers | `builtinPersonaDossiers.mjs` | 提供“马可福音10”和“郑州市”全局初始人物/场景/位置档案，并登记生平事件、社会人格位置和熟人关系 | 无 | `PersonaDossier[]` | Server Support | 无 |
 | Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport/fallbackReason | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Appraisal/Memory/Decision/State Update | 外部 LLM endpoint |
 | Cognitive Module Fallback Verification | `scripts/verify-cognitive-module-fallback.mjs` | 伪造未闭合 SSE JSON，验证认知模块会 fallback 而不是抛错卡住 | 无 | pass/fail | npm script | TypeScript compiler |
-| Appraisal | `src/pipeline/appraisal.ts` | 通过 LLM 判断事件触发了哪些关切 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | Conversation Pipeline | Cognitive Module Client |
+| Appraisal | `src/pipeline/appraisal.ts` | 通过 LLM 判断事件触发的关切、危险状态、清醒程度、回应必要性、回复节奏、触动强度、失态风险和突破人设外壳风险 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | Conversation Pipeline | Cognitive Module Client |
 | Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 用自然语言候选清单和 LLM 复判判断哪些记忆会浮现；LLM 只选择 ID，完整记忆由本地回填；召回不能退化为敏感词过滤 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` | Conversation Pipeline | Cognitive Module Client |
-| Response Decision | `src/pipeline/responseDecision.ts` | 通过 LLM 决定是否回应和回应姿态 | appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | Conversation Pipeline | Cognitive Module Client |
+| Response Decision | `src/pipeline/responseDecision.ts` | 通过 LLM 消费结构化评估和记忆，决定是否回应、回应模式、单条/连续/爆发节奏、是否失态和是否突破人设外壳 | appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | Conversation Pipeline | Cognitive Module Client |
 | Prompt Generator | `src/pipeline/promptBuilder.ts` | 将认知模块输出转成只给 Reply LLM 的自然语言 prompt | event, state, appraisal, recall, decision | `ExpressionLlmRequest` | Conversation Pipeline | Core Types |
 | LLM Client | `src/pipeline/llmClient.ts` | 调用 Reply LLM；正式模式只传自然语言 prompt | `ExpressionLlmRequest`, `LlmConfig` | `ReplyOutput` | Conversation Pipeline | 外部 LLM endpoint |
 | State Updater | `src/pipeline/stateUpdater.ts` | 通过 State Update LLM 生成状态更新计划，再确定性写回 | state, event, replyOutput, context, llmConfig | next state, `StateDelta`, `stateUpdate` | Conversation Pipeline | Cognitive Module Client |
@@ -128,7 +128,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `runConversationPipeline` | `src/pipeline/conversationPipeline.ts` | 运行完整对话 pipeline，并把当前登录用户作为事件说话者 | content, state, llmConfig, speaker | nextState, trace | 写入状态 | implemented |
 | `runCognitiveModule` | `src/pipeline/cognitiveModuleClient.ts` | 执行一个认知脑区式 LLM 模块；结构化输出不可解析时用 mockOutput 继续并记录原因 | request, config, mockOutput | CognitiveModuleTrace | 可调用外部 endpoint | implemented |
-| `runAppraisal` | `src/pipeline/appraisal.ts` | 通过 LLM 做事件到关切评估 | event, state, llmConfig | CognitiveModuleTrace<AppraisalResult> | 可调用外部 endpoint | implemented |
+| `runAppraisal` | `src/pipeline/appraisal.ts` | 通过 LLM 做事件到角色状态评估，输出危险、清醒、回应必要性、节奏、触动、失态和突破外壳风险 | event, state, llmConfig | CognitiveModuleTrace<AppraisalResult> | 可调用外部 endpoint | implemented |
 | `normalizeAppraisalResult` | `src/pipeline/appraisal.ts` | 将 Appraisal LLM 输出归一化，防止关系、关切数组和事件 ID 形状漂移传入下游 | result, fallback, event, state | AppraisalResult | 无 | implemented |
 | `retrieveMemory` | `src/pipeline/memoryRetrieval.ts` | 通过 LLM 召回相关记忆 | event, appraisalNarrative, state, llmConfig | CognitiveModuleTrace<MemoryRecallResult> | 可调用外部 endpoint | implemented |
 | `createMemoryRetrievalContext` | `src/pipeline/memoryRetrieval.ts` | 将事件、自然语言评估和说话者关系合成召回上下文，供同步和未来异步路径复用 | event, appraisalNarrative, state, source | MemoryRetrievalContext | 无 | implemented |
@@ -136,8 +136,8 @@
 | `buildRelationshipMemoryCandidates` | `src/pipeline/memoryRetrieval.ts` | 将 `relationshipMemory` 关系印象转换为长期记忆候选，参与混合召回 | state | LongTermMemory[] | 无 | implemented |
 | `createMemoryCandidates` | `src/pipeline/memoryRetrieval.ts` | 将长期记忆候选转成本地按 ID 回填摘要、参考重要性和空 factors 的候选表 | memories | MemoryCandidate[] | 无 | implemented |
 | `normalizeMemoryRecallResult` | `src/pipeline/memoryRetrieval.ts` | 将 Memory Recall LLM 的 ID 选择结果归一化，并从本地候选表回填完整短期/长期记忆内容 | result, fallbackSelection, retrievalContext, candidates, fallback | MemoryRecallResult | 无 | implemented |
-| `decideResponse` | `src/pipeline/responseDecision.ts` | 通过 LLM 决定回应姿态 | appraisalNarrative, memoryRecallNarrative, state, llmConfig | CognitiveModuleTrace<ResponseDecision> | 可调用外部 endpoint | implemented |
-| `normalizeResponseDecision` | `src/pipeline/responseDecision.ts` | 将 Response Decision LLM 输出归一化，保证回应模式枚举和是否回应字段稳定 | result, fallback | ResponseDecision | 无 | implemented |
+| `decideResponse` | `src/pipeline/responseDecision.ts` | 通过 LLM 根据完整 AppraisalResult 和记忆决定回应路由 | appraisal, memoryRecallNarrative, state, llmConfig | CognitiveModuleTrace<ResponseDecision> | 可调用外部 endpoint | implemented |
+| `normalizeResponseDecision` | `src/pipeline/responseDecision.ts` | 将 Response Decision LLM 输出归一化，保证回应模式、回应节奏、是否回应、失态和突破外壳字段稳定 | result, fallback | ResponseDecision | 无 | implemented |
 | `generateNaturalPromptRequest` | `src/pipeline/promptBuilder.ts` | 生成只含自然语言的 Reply LLM 输入 | event, state, appraisalNarrative, memoryRecallNarrative, decisionNarrative, provider, model | ExpressionLlmRequest | 无 | implemented |
 | `runLlm` | `src/pipeline/llmClient.ts` | 调用 Reply LLM | request, config, simulateInput | ReplyOutput | 可调用外部 endpoint | implemented |
 | `readReplyEventStream` | `src/pipeline/llmClient.ts` | 读取 Reply LLM 的 SSE 输出并累积为回复文本 | response, onStream | ReplyOutput-like object | 调用 onStream 更新 live trace | implemented |
@@ -278,8 +278,19 @@
 | `prompt` | `ExpressionLlmRequest` | `string` | 交给 Reply LLM 的自然语言上下文 | promptGenerator | llmClient/UI | implemented |
 | `outputContract` | `CognitiveModuleRequest` | `string` | 认知模块结构化输出约束，不进入 Reply LLM prompt | cognitive modules | cognitiveModuleClient/backend | implemented |
 | `appraisal.narrative` | `AppraisalResult` | `string?` | Appraisal LLM 输出的可选自然语言叙事说明 | appraisal | Pipeline Debug Panel/downstream cognitive context | implemented |
+| `appraisal.dangerState` | `AppraisalResult` | object | 判断角色是否处于心理、关系、现实处境、身份或边界暴露危险，并给出 0~1 强度、来源和理由 | appraisal | Response Decision/Pipeline Debug Panel | implemented |
+| `appraisal.awarenessState` | `AppraisalResult` | object | 判断角色是否清醒以及还能否控制判断和表达，包含 `isClearHeaded`、`controlLevel` 和理由 | appraisal | Response Decision/Pipeline Debug Panel | implemented |
+| `appraisal.responseNeed` | `AppraisalResult` | object | 判断当前事件是否需要角色回应及原因 | appraisal | Response Decision/Pipeline Debug Panel | implemented |
+| `appraisal.replyRhythm` | `AppraisalResult` | `ReplyRhythm` | 初步判断回复节奏：`none/single/multi_turn/burst` | appraisal | Response Decision/Prompt Generator | implemented |
+| `appraisal.emotionalImpact` | `AppraisalResult` | object | 判断对当事人的触动强度、击中的核心内容和原因 | appraisal | Response Decision/State Update | implemented |
+| `appraisal.composureRisk` | `AppraisalResult` | object | 判断角色是否会失态、失态强度和原因 | appraisal | Response Decision/Prompt Generator | implemented |
+| `appraisal.personaBreakRisk` | `AppraisalResult` | object | 判断是否短暂突破平常人设外壳进行失控式反应、强度和原因 | appraisal | Response Decision/Prompt Generator | implemented |
+| `replyRhythm` | Core Types | `ReplyRhythm` | 回复节奏枚举：`none` 不回应、`single` 单条回应、`multi_turn` 连续多条、`burst` 短句爆发 | Appraisal/Response Decision | Prompt Generator/Reply LLM context | implemented |
 | `memoryRecall.narrative` | `MemoryRecallResult` | `string?` | Memory Recall LLM 输出的可选自然语言叙事说明 | memoryRetrieval | Pipeline Debug Panel/downstream cognitive context | implemented |
 | `responseDecision.narrative` | `ResponseDecision` | `string?` | Response Decision LLM 输出的可选自然语言叙事说明 | responseDecision | Pipeline Debug Panel/downstream cognitive context | implemented |
+| `responseDecision.replyRhythm` | `ResponseDecision` | `ReplyRhythm` | 最终回复节奏路由，决定 Reply Prompt 中描述为沉默、单条、连续多条或短句爆发 | responseDecision | Prompt Generator/LLM Client | implemented |
+| `responseDecision.shouldLoseComposure` | `ResponseDecision` | `boolean` | 最终判断本轮是否应表现为失态 | responseDecision | Prompt Generator/LLM Client | implemented |
+| `responseDecision.shouldBreakPersona` | `ResponseDecision` | `boolean` | 最终判断本轮是否应短暂突破平常人设外壳进入失控式回应 | responseDecision | Prompt Generator/LLM Client | implemented |
 | `stateUpdate.narrative` | `StateUpdatePlan` | `string?` | State Update LLM 输出的可选自然语言叙事说明 | stateUpdater | Pipeline Debug Panel/downstream cognitive context | implemented |
 | `runtimeSignalEvaluation.narrative` | `RuntimeSignalEvaluationResult` | `string?` | Runtime Signal Evaluation LLM 输出的可选自然语言叙事说明 | runtimeSignalEvaluator | Pipeline Debug Panel/downstream cognitive context | implemented |
 | `memoryRecall.source` | `MemoryRecallResult` | `MemoryRecallSource` | 说明本次召回来自同步响应路径或未来异步生命路径 | memoryRetrieval | Decision/Prompt Generator/Pipeline Debug Panel | implemented |

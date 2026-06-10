@@ -95,6 +95,18 @@ function simulateLlmOutput({ decision }: SimulateInput): ReplyOutput {
     };
   }
 
+  if (decision.shouldBreakPersona || decision.replyRhythm === "burst") {
+    return {
+      reply: "你别这样说。别逼我现在还要装作没事。",
+    };
+  }
+
+  if (decision.replyRhythm === "multi_turn") {
+    return {
+      reply: "等一下。\n我不是不想回答你。\n只是你这句话让我有点不知道该怎么接。",
+    };
+  }
+
   const replyByMode: Record<string, string> = {
     short_avoidance: "这周末可能有点事，下次吧。你们玩得开心。",
     topic_shift: "周末我可能不太方便。你最近那个项目怎么样了？",

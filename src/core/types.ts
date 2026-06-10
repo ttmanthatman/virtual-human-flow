@@ -10,6 +10,8 @@ export type ResponseMode =
   | "delayed_reply"
   | "emotional_outburst";
 
+export type ReplyRhythm = "none" | "single" | "multi_turn" | "burst";
+
 export type RuntimeSignalKey = "energy" | "mood" | "valence" | "arousal";
 
 export interface PersonalityFacet {
@@ -237,6 +239,37 @@ export interface AppraisalResult {
   narrative?: string;
   eventId: string;
   speakerRelationship?: Relationship;
+  dangerState: {
+    isInDanger: boolean;
+    level: number;
+    sources: string[];
+    rationale: string;
+  };
+  awarenessState: {
+    isClearHeaded: boolean;
+    controlLevel: number;
+    rationale: string;
+  };
+  responseNeed: {
+    shouldRespond: boolean;
+    rationale: string;
+  };
+  replyRhythm: ReplyRhythm;
+  emotionalImpact: {
+    level: number;
+    touchedCore: string[];
+    rationale: string;
+  };
+  composureRisk: {
+    shouldLoseComposure: boolean;
+    level: number;
+    rationale: string;
+  };
+  personaBreakRisk: {
+    shouldBreakPersona: boolean;
+    level: number;
+    rationale: string;
+  };
   activatedConcerns: {
     concernId: string;
     activationScore: number;
@@ -282,6 +315,9 @@ export interface ResponseDecision {
   narrative?: string;
   shouldRespond: boolean;
   responseMode: ResponseMode;
+  replyRhythm: ReplyRhythm;
+  shouldLoseComposure: boolean;
+  shouldBreakPersona: boolean;
   delaySeconds?: number;
   rationale: string;
 }

@@ -101,6 +101,9 @@ const result = await applyStateUpdates(
     decision: {
       shouldRespond: true,
       responseMode: "neutral_reply",
+      replyRhythm: "single",
+      shouldLoseComposure: false,
+      shouldBreakPersona: false,
       rationale: "她愿意回应，但会保持一点余地。",
     },
   },

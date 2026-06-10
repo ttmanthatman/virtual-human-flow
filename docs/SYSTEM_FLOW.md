@@ -419,19 +419,22 @@ flowchart TD
 
 ### Appraisal
 
+Appraisal 是回复前的状态裁判，不负责写回复。它输出结构化 `AppraisalResult`，同时保留自然语言 `narrative` 给记忆召回、右侧追踪和后续上下文阅读。评估重点包括：角色是否危险、是否清醒、是否需要回应、适合单条还是连续/爆发节奏、这句话对当事人的触动强度、是否失态、是否短暂突破平常人设外壳进入失控式反应。
+
 ```mermaid
 flowchart TD
-    E["EventInput"] --> LOCAL["本地候选: 触发词/对象/关系/强度"]
+    E["EventInput"] --> LOCAL["本地候选: 触发词/对象/关系/强度/默认状态"]
     S["CharacterState"] --> LOCAL
     LOCAL --> MOCK["本地 fallback AppraisalResult"]
-    E --> PROMPT["组装 Appraisal LLM prompt"]
+    E --> PROMPT["组装结构化 Appraisal LLM prompt"]
     S --> PROMPT
     PROMPT --> CLIENT["Cognitive Module Client"]
     MOCK --> CLIENT
     CLIENT --> RAW["LLM AppraisalResult"]
     RAW --> NORM["normalizeAppraisalResult"]
-    NORM --> OUT["稳定 AppraisalResult"]
+    NORM --> OUT["稳定 AppraisalResult: danger/awareness/need/rhythm/impact/composure/personaBreak"]
     OUT --> MEM["Memory Retrieval"]
+    OUT --> DECISION["Response Decision"]
     OUT --> TRACE["流程追踪"]
 ```
 
@@ -461,9 +464,11 @@ flowchart TD
 
 ### Response Decision
 
+Response Decision 消费完整 `AppraisalResult`，把状态评估翻译为回复路由：是否回应、回应模式、单条/连续多条/短句爆发、是否失态、是否突破平常人设外壳。它仍不写角色台词；Prompt Generator 会把路由转成自然语言语境交给 Reply LLM。
+
 ```mermaid
 flowchart TD
-    A["appraisalNarrative"] --> PROMPT["组装 Decision prompt"]
+    A["AppraisalResult"] --> PROMPT["组装结构化 Decision prompt"]
     M["memoryRecallNarrative"] --> PROMPT
     S["CharacterState"] --> PROMPT
     S --> MOCK["ResponseDecision fallback"]
@@ -471,7 +476,7 @@ flowchart TD
     MOCK --> CLIENT
     CLIENT --> RAW["LLM ResponseDecision"]
     RAW --> NORM["normalizeResponseDecision"]
-    NORM --> OUT["shouldRespond / responseMode / delaySeconds / rationale"]
+    NORM --> OUT["shouldRespond / responseMode / replyRhythm / shouldLoseComposure / shouldBreakPersona / delaySeconds / rationale"]
     OUT --> PROMPTGEN["Prompt Generator"]
     OUT --> TRACE["流程追踪"]
 ```
