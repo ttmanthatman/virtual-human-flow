@@ -17,8 +17,8 @@ Persona Dossiers 负责多人档案、分组、内置档案、共享档案、人
 
 ## 输入输出
 
-- 输入：管理员人物素材、场景素材、内置档案规格、共享档案 JSON、当前用户私有运行态。
-- 输出：`PersonaDossier[]`、`CharacterState` 预览、`previewSummary`、一致性检测结果、共享档案写入；对话时的实时 `scene/location` 可由 Conversation Pipeline 的 `temporalSceneProgression` 在用户私有运行态里推进，不改共享底稿。
+- 输入：管理员人物素材、场景素材、内置档案规格、共享档案 JSON、角色全局对话运行态。
+- 输出：`PersonaDossier[]`、`CharacterState` 预览、`previewSummary`、一致性检测结果、共享档案写入；对话时的实时 `scene/location` 可由 Conversation Pipeline 的 `temporalSceneProgression` 在角色全局运行态里推进，不改共享底稿。
 
 ## 不变量
 
@@ -37,5 +37,5 @@ Persona Dossiers 负责多人档案、分组、内置档案、共享档案、人
 ## 验证
 
 - 档案、生成或一致性改动：`npm run build`
-- 共享/私有档案叠加相关：`npm run verify:conversation-history-isolation`
+- 全局角色运行态相关：`npm run verify:global-conversation-state`
 - 历史加载或管理员查看相关：`npm run verify:conversation-message-history`

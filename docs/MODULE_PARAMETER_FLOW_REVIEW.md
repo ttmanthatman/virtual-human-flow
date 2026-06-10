@@ -25,7 +25,7 @@
 
 | 参数 | 类型 | 来源 | 用途 | 流向 |
 | --- | --- | --- | --- | --- |
-| `profile` | `CharacterProfile` | 种子、内置档案、生成器、用户私有运行态 | 人物稳定身份和表达材料 | UI、Prompt Generator、生成器、一致性检测 |
+| `profile` | `CharacterProfile` | 种子、内置档案、生成器、角色全局运行态 | 人物稳定身份和表达材料 | UI、Prompt Generator、生成器、一致性检测 |
 | `concerns` | `Concern[]` | 种子、内置档案、生成器、State Update | 当前关切清单 | Appraisal、Memory Recall、Prompt Generator、Runtime Signal Evaluation |
 | `relationships` | `Record<string, Relationship>` | 种子、内置档案、State Update、关系余波 | 人物对用户或其他人物的关系 | Appraisal、Prompt Generator、Server relationship propagation |
 | `shortTermMemory` | `ShortTermMemory[]` | State Update | 最近对话原文 | Memory Recall、Prompt Generator |
@@ -290,10 +290,10 @@
 | `setMessagesForHistory` | `historyKey`, `updater` | 更新指定历史桶。 | React state + localStorage。 |
 | `requireLogin` | `action` | 操作前登录检查。 | 未登录打开登录浮窗并写错误。 |
 | `requireAdmin` | `action` | 操作前管理员检查。 | 非管理员写错误。 |
-| `loadSharedDossiers` | `token` | GET `/api/persona-dossiers` 读取共享档案，并叠加当前用户私有运行态。 | 更新 `dossiers/state/description`。 |
+| `loadSharedDossiers` | `token` | GET `/api/persona-dossiers` 读取共享档案，并叠加角色全局运行态。 | 更新 `dossiers/state/description`。 |
 | `persistPersonaDossier` | `dossier` | POST `/api/persona-dossiers` 保存共享档案。 | 后台写 `.persona-dossiers.local.json`。 |
 | `ensureDossierPreview` | `dossier` | 生成缺失的短预览。 | 调 `/api/deepseek-chat` 流式生成，再 POST `/preview` 全局保存。 |
-| `syncConversationState` | `nextState`, `interaction` | 对话后保存当前用户私有人物运行态。 | POST `/conversation-state`，服务端写 `.conversation-states.local.json`。 |
+| `syncConversationState` | `nextState`, `interaction` | 对话后保存当前人物的全局运行态。 | POST `/conversation-state`，服务端写 `.conversation-states.local.json`。 |
 | `loadConversationHistory` | `dossierId`, `historyKey`, `cachedMessages?` | 切换人物或登录后读取消息历史。 | GET `/conversation-history`，必要时回填缓存。 |
 | `loadAdminConversationHistorySummaries` | `dossierId` | 管理员读取当前人物下所有用户历史摘要。 | GET `/api/admin/conversation-histories?dossierId=...`。生产服务已实现；开发代理需复核是否同步。 |
 | `handleSelectAdminHistoryKey` | `historyKey` | 管理员选择某个用户历史。 | GET `dossierId + key`，写只读历史桶。生产服务已实现；开发代理需复核是否同步。 |
@@ -335,13 +335,13 @@
 | 参数 | 类型 | 来源 | 说明 |
 | --- | --- | --- | --- |
 | `content` | `string` | `handleSend` 的输入框 | 用户本轮消息。 |
-| `state` | `CharacterState` | 当前档案叠加用户私有运行态后的状态 | 所有认知模块的基础上下文。 |
+| `state` | `CharacterState` | 当前档案叠加角色全局运行态后的状态 | 所有认知模块的基础上下文。 |
 | `llmConfig` | `LlmConfig` | App Shell | LLM 入口、模型和 token。 |
 | `speaker.id` | `string` | `createConversationSpeaker` | 当前登录用户稳定 ID。 |
 | `speaker.name` | `string` | `createConversationSpeaker` | 当前登录用户展示名。 |
 | `onProgress` | callback? | App Shell | 将每步输入、输出和状态推送到右侧面板。 |
 
-输出：`{ nextState, trace }`。`nextState` 回到 App Shell 并保存到用户私有运行态；`trace` 显示在右侧并保存到审计。
+输出：`{ nextState, trace }`。`nextState` 回到 App Shell 并保存到角色全局运行态；`trace` 显示在右侧并保存到审计。
 
 数据流顺序：`content -> event -> appraisal -> memoryRecall -> decision -> llmRequest -> llmOutput -> stateUpdate -> runtimeSignalEvaluation -> stateDelta -> nextState/trace`。
 
@@ -536,11 +536,11 @@
 | `requireSession` | `request`, `response` | 登录保护。 | session 或 401。 |
 | `requireAdminSession` | `request`, `response` | 管理员保护。 | session 或 401/403。 |
 | `loginWithLiaoChatroom` | `username`, `password` | 调 liao `/api/login`。不保存密码。 | liao user payload。 |
-| `readPersonaDossiers` | `user?` | 读取内置 + 共享档案，可叠加用户私有运行态。 | `PersonaDossier[]`。 |
+| `readPersonaDossiers` | `user?` | 读取内置 + 共享档案，可叠加角色全局运行态。 | `PersonaDossier[]`。 |
 | `upsertPersonaDossier` | `dossier`, `user` | 管理员保存共享档案。 | 写 `.persona-dossiers.local.json`。 |
 | `deletePersonaDossier` | `dossierId` | 删除共享档案；内置档案用 tombstone。 | 写 `.persona-dossiers.local.json`。 |
 | `updatePersonaDossierPreview` | `dossierId`, `previewSummary`, `user` | 保存全局短预览。 | 写 `.persona-dossiers.local.json`。 |
-| `updatePersonaDossierConversationState` | `dossierId`, `nextState`, `interaction`, `user` | 保存当前用户私有运行态，并传播关系余波。 | 写 `.conversation-states.local.json`。 |
+| `updatePersonaDossierConversationState` | `dossierId`, `nextState`, `interaction`, `user` | 保存当前角色全局运行态，并传播关系余波。 | 写 `.conversation-states.local.json`。 |
 | `readConversationHistoryMessages` | `dossierId`, `user` | 读取当前用户当前人物消息历史。 | `ChatMessage[]`。 |
 | `readConversationHistorySummaries` | `dossierId` | 管理员列出某人物下所有用户历史摘要。 | summary list。 |
 | `readConversationHistoryMessagesByKey` | `dossierId`, `key` | 管理员按 key 读取某用户某人物消息。 | `ChatMessage[]`。 |
@@ -642,7 +642,7 @@ DeepSeek proxy 参数：
 | 脚本 | 入参 | 验证边界 |
 | --- | --- | --- |
 | `scripts/verify-cognitive-module-fallback.mjs` | 无 | 结构化 SSE JSON 截断时认知模块 fallback。 |
-| `scripts/verify-conversation-history-isolation.mjs` | 无 | 用户 A 的运行态不会进入用户 B 或共享档案。 |
+| `scripts/verify-global-conversation-state.mjs` | 无 | 用户 A 写入角色运行态后，用户 B 和全局读取都能承接；中间栏消息仍按用户隔离。 |
 | `scripts/verify-conversation-message-history.mjs` | 无 | 消息历史按用户和档案保存读取。 |
 | `scripts/verify-admin-history-and-module-audit.mjs` | 无 | 管理员历史查看和模块审计记录。 |
 | `scripts/verify-user-relationship-memory.mjs` | 无 | 当前用户关系印象记忆写入和回填关系备注。 |

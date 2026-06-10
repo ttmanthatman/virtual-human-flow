@@ -830,16 +830,37 @@ textarea {
 }
 
 .scene-strip {
-  align-items: center;
   background: #f8fbfb;
-  display: flex;
+  display: grid;
   gap: 10px;
-  justify-content: space-between;
+  grid-template-columns: minmax(0, 1fr) auto;
   padding: 10px 12px;
+}
+
+.scene-strip-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
 .scene-strip strong {
   font-size: 13px;
+}
+
+.scene-strip-status {
+  align-items: center;
+  color: #0f766e;
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+  min-width: 180px;
+}
+
+.scene-strip-status span {
+  color: #2f3f47;
+  font-size: 11px;
+  font-weight: 720;
+  text-align: right;
 }
 
 .active-context {
@@ -1595,5 +1616,18 @@ pre {
   .trace-panel,
   .chat-panel {
     min-height: 640px;
+  }
+
+  .scene-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .scene-strip-status {
+    justify-content: flex-start;
+    min-width: 0;
+  }
+
+  .scene-strip-status span {
+    text-align: left;
   }
 }

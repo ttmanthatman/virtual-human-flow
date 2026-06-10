@@ -1,5 +1,5 @@
 import { CharacterLocation, CharacterState, EventInput, SceneState, TemporalSceneProgression } from "../core/types";
-import { makeId, nowIso } from "../core/utils";
+import { makeId } from "../core/utils";
 
 type SchedulePhase = TemporalSceneProgression["schedulePhase"];
 type PersonaArchetype =
@@ -41,7 +41,11 @@ interface SceneTarget {
   reason: string;
   plausibility: string;
   blocked?: boolean;
+  preserveLocationUpdatedAt?: boolean;
 }
+
+const movingConversationSceneHoldMs = 90 * 60 * 1000;
+const settledConversationSceneHoldMs = 3 * 60 * 60 * 1000;
 
 export function advanceSceneForCurrentTime(
   state: CharacterState,
@@ -53,10 +57,11 @@ export function advanceSceneForCurrentTime(
   const archetype = inferArchetype(state);
   const triggerTarget = detectTriggeredSceneTarget(state, event, localClock);
   const scheduledPhase = chooseScheduledPhase(archetype, localClock.hour);
-  const target = triggerTarget ?? buildScheduledSceneTarget(state, archetype, scheduledPhase, localClock);
+  const persistentTarget = triggerTarget ? undefined : buildPersistentConversationSceneTarget(state, scheduledPhase, localClock, now);
+  const target = triggerTarget ?? persistentTarget ?? buildScheduledSceneTarget(state, archetype, scheduledPhase, localClock);
   const previousSceneTitle = state.scene?.title;
   const nextScene = buildScene(state, target, localClock);
-  const nextLocation = buildLocation(state, target);
+  const nextLocation = buildLocation(state, target, now);
   const changed =
     target.blocked ||
     previousSceneTitle !== nextScene.title ||
@@ -276,6 +281,61 @@ function buildTriggeredTarget(
   };
 }
 
+function buildPersistentConversationSceneTarget(
+  state: CharacterState,
+  scheduledPhase: SchedulePhase,
+  localClock: LocalClock,
+  now: Date,
+): SceneTarget | undefined {
+  const updatedAt = Date.parse(state.location?.updatedAt ?? "");
+  if (!Number.isFinite(updatedAt)) return undefined;
+  if (state.location?.source !== "temporal_progression" || !isConversationTriggeredScene(state)) return undefined;
+
+  const ageMs = now.getTime() - updatedAt;
+  const isMoving = state.location.motionState !== "stationary" && state.location.motionState !== "unknown";
+  const maxAgeMs = isMoving ? movingConversationSceneHoldMs : settledConversationSceneHoldMs;
+  if (ageMs < 0 || ageMs > maxAgeMs) return undefined;
+
+  const phase = inferPersistentScenePhase(state, scheduledPhase);
+  return {
+    phase,
+    title: state.scene?.title || state.location.label,
+    description: state.scene?.description || `${localClock.label}，她还在承接上一轮对话触发的现实动线。`,
+    atmosphere: state.scene?.atmosphere || "上一轮决定还没有落地，现实动线仍在继续",
+    visibleCues: state.scene?.visibleCues?.length ? state.scene.visibleCues : ["手机", "路口", "随身物品"],
+    activeObjects: state.scene?.activeObjects?.length ? state.scene.activeObjects : ["手机", "随身物品"],
+    sensoryProfile: state.scene?.sensoryProfile || "路上的声音、距离和时间压力仍在影响她。",
+    interactionPressure: state.scene?.interactionPressure || "她不会因为刷新或下一句普通消息就回到旧场景。",
+    cognitiveNarrative:
+      state.scene?.cognitiveNarrative ||
+      `${state.profile.name}仍在上一轮对话触发的${state.location.label}，除非时间明显跨过这段行动，否则会先承接当前场景。`,
+    locationLabel: state.location.label,
+    address: state.location.address,
+    motionState: state.location.motionState,
+    speedKmh: state.location.speedKmh,
+    headingLabel: state.location.headingLabel,
+    headingDeg: state.location.headingDeg,
+    reason: `上一轮对话触发的场景变化仍在持续；${localClock.label} 的例行阶段是 ${scheduledPhase}，但还没到把人物拉回日程模板的时刻。`,
+    plausibility: `保留在${state.location.region || "原有区域"}，承接已持久化的全局场景。`,
+    preserveLocationUpdatedAt: true,
+  };
+}
+
+function isConversationTriggeredScene(state: CharacterState) {
+  const text = [state.scene?.description, state.scene?.interactionPressure, state.scene?.cognitiveNarrative].filter(Boolean).join(" ");
+  return /对话触发|根据这句对话|上一轮对话|对方提出|对方的话|临时事项/.test(text);
+}
+
+function inferPersistentScenePhase(state: CharacterState, scheduledPhase: SchedulePhase): SchedulePhase {
+  const text = [state.scene?.title, state.scene?.description, state.location?.label, state.location?.address].filter(Boolean).join(" ");
+  if (/不可能|拒绝瞬移|白宫|远距离/.test(text)) return "blocked";
+  if (/医院|急诊|诊所|见面|吃饭|咖啡|商场|公园|办事|附近/.test(text)) return "errand";
+  if (/回家|住处|睡觉|休息/.test(text)) return state.location?.motionState === "stationary" ? "home" : "commute";
+  if (/上班|开店|店里|办公室|工位|摊位|接单|出车|安检口|机房|现场/.test(text)) return "work";
+  if (state.location?.motionState && state.location.motionState !== "stationary" && state.location.motionState !== "unknown") return "commute";
+  return scheduledPhase;
+}
+
 function buildScheduledSceneTarget(
   state: CharacterState,
   archetype: PersonaArchetype,
@@ -395,8 +455,11 @@ function buildScene(state: CharacterState, target: SceneTarget, localClock: Loca
   };
 }
 
-function buildLocation(state: CharacterState, target: SceneTarget): CharacterLocation {
+function buildLocation(state: CharacterState, target: SceneTarget, now: Date): CharacterLocation {
   const fallbackContext = state.location?.mapContext;
+  const timestamp = now.toISOString();
+  const updatedAt = target.preserveLocationUpdatedAt && state.location?.updatedAt ? state.location.updatedAt : timestamp;
+  const resolvedAt = target.preserveLocationUpdatedAt && fallbackContext?.resolvedAt ? fallbackContext.resolvedAt : timestamp;
   return {
     label: target.locationLabel,
     address: target.address,
@@ -412,9 +475,9 @@ function buildLocation(state: CharacterState, target: SceneTarget): CharacterLoc
       nearbyBuildings: fallbackContext?.nearbyBuildings ?? [],
       environmentSummary: target.plausibility,
       source: "temporal_progression",
-      resolvedAt: nowIso(),
+      resolvedAt,
     },
-    updatedAt: nowIso(),
+    updatedAt,
     source: "temporal_progression",
   };
 }

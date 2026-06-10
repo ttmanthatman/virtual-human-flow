@@ -115,6 +115,23 @@ if (!blockedResult.progression.locationPlausibility.includes("郑州市金水区
   throw new Error("Expected blocked scene to preserve original Zhengzhou geography.");
 }
 
+const goingHomeResult = advanceSceneForCurrentTime(
+  zhengzhouCleanerState,
+  { ...ordinaryEvent, content: "你现在先回家休息吧。" },
+  new Date("2026-06-10T02:30:00.000Z"),
+);
+const heldHomeResult = advanceSceneForCurrentTime(
+  goingHomeResult.nextState,
+  { ...ordinaryEvent, content: "到了吗？" },
+  new Date("2026-06-10T02:35:00.000Z"),
+);
+if (heldHomeResult.nextState.location.label !== goingHomeResult.nextState.location.label) {
+  throw new Error("Expected recently triggered homeward scene to persist instead of snapping back to routine work.");
+}
+if (!heldHomeResult.progression.reason.includes("上一轮对话触发")) {
+  throw new Error("Expected persistence reason to explain the held conversation-triggered scene.");
+}
+
 const decisionBase = {
   shouldRespond: true,
   responseMode: "neutral_reply",

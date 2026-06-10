@@ -104,7 +104,7 @@ export async function loginWithLiaoChatroom(username, password) {
 
 export function readPersonaDossiers(user) {
   const dossiers = readBasePersonaDossiers();
-  return user ? applyUserConversationStates(dossiers, user) : dossiers;
+  return applyGlobalConversationStates(dossiers);
 }
 
 function readBasePersonaDossiers() {
@@ -187,8 +187,8 @@ export function updatePersonaDossierConversationState(dossierId, nextState, inte
   if (index < 0) return { error: "找不到档案" };
 
   const now = new Date().toISOString();
-  const userDossiers = applyUserConversationStates(baseDossiers, user);
-  const sourceDossier = userDossiers[index];
+  const globalDossiers = applyGlobalConversationStates(baseDossiers);
+  const sourceDossier = globalDossiers[index];
   const updatedSource = {
     ...sourceDossier,
     title: nextState.profile.name,
@@ -198,13 +198,13 @@ export function updatePersonaDossierConversationState(dossierId, nextState, inte
     lastInteractedByUserId: user.userId,
     lastInteractedByUsername: user.username,
   };
-  const withSource = userDossiers.map((item, itemIndex) => (itemIndex === index ? updatedSource : item));
+  const withSource = globalDossiers.map((item, itemIndex) => (itemIndex === index ? updatedSource : item));
   const propagated = propagateRelationshipInfluence(withSource, index, interaction, user, now);
   const changedIds = new Set([dossierId]);
   propagated.forEach((dossier, itemIndex) => {
     if (dossier !== withSource[itemIndex]) changedIds.add(dossier.id);
   });
-  writeUserConversationStates(user, propagated.filter((dossier) => changedIds.has(dossier.id)));
+  writeGlobalConversationStates(propagated.filter((dossier) => changedIds.has(dossier.id)), user);
   return { dossier: propagated[index], dossiers: propagated };
 }
 
@@ -624,16 +624,9 @@ function sanitizeConversationModuleCalls(moduleCalls) {
     .slice(0, maxModuleCallsPerAudit);
 }
 
-function applyUserConversationStates(dossiers, user) {
+function applyGlobalConversationStates(dossiers) {
   const store = readConversationStateStore();
-  const userId = normalizeUserId(user);
-  if (!userId) return dossiers;
-
-  const entriesByDossierId = new Map(
-    store.entries
-      .filter((entry) => normalizeUserId(entry) === userId && typeof entry.dossierId === "string")
-      .map((entry) => [entry.dossierId, entry]),
-  );
+  const entriesByDossierId = buildGlobalConversationStateEntries(store.entries, dossiers);
 
   return dossiers.map((dossier) => {
     const entry = entriesByDossierId.get(dossier.id);
@@ -644,24 +637,106 @@ function applyUserConversationStates(dossiers, user) {
       state: entry.state,
       updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : dossier.updatedAt,
       lastInteractedAt: typeof entry.lastInteractedAt === "string" ? entry.lastInteractedAt : undefined,
-      lastInteractedByUserId: user.userId,
-      lastInteractedByUsername: user.username,
+      lastInteractedByUserId: entry.lastInteractedByUserId,
+      lastInteractedByUsername: entry.lastInteractedByUsername,
     };
   });
 }
 
-function writeUserConversationStates(user, changedDossiers) {
-  const store = readConversationStateStore();
-  const userId = normalizeUserId(user);
-  if (!userId) return;
+function buildGlobalConversationStateEntries(entries, dossiers) {
+  const byDossierId = new Map();
+  for (const entry of entries) {
+    if (!isGlobalConversationStateEntry(entry)) continue;
+    if (isUsableConversationStateEntry(entry)) byDossierId.set(entry.dossierId, entry);
+  }
 
+  for (const dossier of dossiers) {
+    if (byDossierId.has(dossier.id)) continue;
+    const legacyEntries = entries
+      .filter((entry) => isLegacyUserConversationStateEntry(entry, dossier.id))
+      .sort(compareConversationStateEntries);
+    if (legacyEntries.length === 0) continue;
+    byDossierId.set(dossier.id, mergeLegacyConversationStateEntries(dossier, legacyEntries));
+  }
+
+  return byDossierId;
+}
+
+function isGlobalConversationStateEntry(entry) {
+  return (
+    entry &&
+    typeof entry === "object" &&
+    typeof entry.dossierId === "string" &&
+    (entry.scope === "global" || entry.key === createGlobalConversationStateEntryKey(entry.dossierId) || (!entry.userId && !entry.username))
+  );
+}
+
+function isLegacyUserConversationStateEntry(entry, dossierId) {
+  return entry && typeof entry === "object" && entry.dossierId === dossierId && Boolean(normalizeUserId(entry)) && isUsableConversationStateEntry(entry);
+}
+
+function isUsableConversationStateEntry(entry) {
+  return entry && entry.state && typeof entry.state === "object" && entry.state.profile;
+}
+
+function compareConversationStateEntries(a, b) {
+  return Date.parse(a.updatedAt || a.lastInteractedAt || "0") - Date.parse(b.updatedAt || b.lastInteractedAt || "0");
+}
+
+function mergeLegacyConversationStateEntries(dossier, entries) {
+  const latest = entries[entries.length - 1];
+  const mergedState = entries.reduce((state, entry) => mergeCharacterStateForGlobalConversation(state, entry.state), dossier.state);
+  return {
+    ...latest,
+    scope: "global",
+    key: createGlobalConversationStateEntryKey(dossier.id),
+    userId: undefined,
+    username: undefined,
+    dossierId: dossier.id,
+    title: typeof latest.title === "string" && latest.title ? latest.title : dossier.title,
+    state: mergedState,
+  };
+}
+
+function mergeCharacterStateForGlobalConversation(baseState, incomingState) {
+  if (!incomingState || typeof incomingState !== "object" || !incomingState.profile) return baseState;
+  return {
+    ...baseState,
+    ...incomingState,
+    relationships: {
+      ...(baseState.relationships ?? {}),
+      ...(incomingState.relationships ?? {}),
+    },
+    shortTermMemory: mergeMemoryItems(baseState.shortTermMemory, incomingState.shortTermMemory, "id").slice(-80),
+    longTermMemory: mergeMemoryItems(baseState.longTermMemory, incomingState.longTermMemory, "id").slice(-120),
+    relationshipMemory: mergeMemoryItems(baseState.relationshipMemory, incomingState.relationshipMemory, "targetUserId").slice(-80),
+  };
+}
+
+function mergeMemoryItems(baseItems, incomingItems, identityKey) {
+  const byId = new Map();
+  for (const item of [...(Array.isArray(baseItems) ? baseItems : []), ...(Array.isArray(incomingItems) ? incomingItems : [])]) {
+    if (!item || typeof item !== "object") continue;
+    const rawId = item[identityKey] || item.id;
+    const id = typeof rawId === "string" && rawId ? rawId : randomBytes(8).toString("base64url");
+    byId.set(id, item);
+  }
+  return Array.from(byId.values());
+}
+
+function createGlobalConversationStateEntryKey(dossierId) {
+  return `global::dossier:${dossierId}`;
+}
+
+function writeGlobalConversationStates(changedDossiers, user) {
+  const store = readConversationStateStore();
   const changedIds = new Set(changedDossiers.map((dossier) => dossier.id));
-  const retainedEntries = store.entries.filter((entry) => normalizeUserId(entry) !== userId || !changedIds.has(entry.dossierId));
+  const retainedEntries = store.entries.filter((entry) => !changedIds.has(entry.dossierId));
   const nextEntries = [
     ...retainedEntries,
     ...changedDossiers.map((dossier) => ({
-      userId: user.userId,
-      username: user.username,
+      scope: "global",
+      key: createGlobalConversationStateEntryKey(dossier.id),
       dossierId: dossier.id,
       title: dossier.title,
       state: dossier.state,

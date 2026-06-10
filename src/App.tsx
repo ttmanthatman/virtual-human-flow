@@ -310,6 +310,7 @@ export function App() {
   const isViewingAdminUserHistory = Boolean(selectedAdminHistoryKey);
   const messages = conversationHistories[displayedConversationHistoryKey] ?? (isViewingAdminUserHistory ? [] : seedMessages);
   const selectedAdminHistorySummary = adminHistorySummaries.find((summary) => summary.key === selectedAdminHistoryKey);
+  const globalSceneStatus = useMemo(() => formatGlobalSceneStatus(state), [state]);
   const groupedDossiers = useMemo(() => {
     const groups = new Map<string, PersonaDossier[]>();
     for (const dossier of dossiers) {
@@ -1667,8 +1668,14 @@ export function App() {
         <section className="panel chat-panel">
           <PanelTitle icon={MessageSquare} title="对话" />
           <div className="scene-strip">
-            <strong>{state.scene?.title}</strong>
-            <span>{state.scene?.atmosphere}</span>
+            <div className="scene-strip-main">
+              <strong>{state.scene?.title}</strong>
+              <span>{state.scene?.atmosphere}</span>
+            </div>
+            <div className="scene-strip-status">
+              <MapPin size={14} />
+              <span>{globalSceneStatus}</span>
+            </div>
           </div>
           <div className="active-context">
             {activeConcernTitles.map((title) => (
@@ -2265,6 +2272,13 @@ function shortCommit(commit: string | undefined) {
 
 function normalizeDeepseekModel(model: string) {
   return model.trim() === "deepseek-reasoner" ? "deepseek-v4-flash" : model;
+}
+
+function formatGlobalSceneStatus(state: CharacterState) {
+  const location = state.location;
+  const locationLabel = location ? `${location.label} · ${motionStateLabels[location.motionState]}` : "位置未设定";
+  const mood = state.runtime.derivedMood.label ? ` · ${state.runtime.derivedMood.label}` : "";
+  return `全局记忆 · ${locationLabel}${mood}`;
 }
 
 function PanelTitle({ icon: Icon, title }: { icon: typeof Activity; title: string }) {
