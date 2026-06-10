@@ -702,7 +702,8 @@ flowchart TD
     UI["左上角版本区域"] --> STATUS["GET /api/app-update/status"]
     STATUS --> DIFF{"currentCommit != remoteCommit?"}
     DIFF -- "否" --> OK["显示已是最新"]
-    DIFF -- "是" --> BADGE["显示有新版本"]
+    DIFF -- "是" --> CHANGES["读取 current..remote 提交摘要"]
+    CHANGES --> BADGE["显示有新版本和本次更新"]
     BADGE --> ADMIN{"当前用户是管理员?"}
     ADMIN -- "否" --> READONLY["只显示状态"]
     ADMIN -- "是" --> RUN["POST /api/app-update/run"]
@@ -751,7 +752,7 @@ flowchart LR
     GEN2 --> FIT
 ```
 
-左上角版本信息由 App Shell 读取 `package.json` 的 `version` 生成 `appVersionLabel`，并链接到 GitHub 仓库 `<owner>/<repo>`。`package.json` 和 `package-lock.json` 的版本号是提交前硬性同步项；每个完成的 reviewable step 都必须递增，避免 Git 提交已经变化但 UI 仍显示旧版本。每个完成并提交的 reviewable step 默认推送当前分支到 GitHub，除非用户明确要求不推送。同一区域会定期调用 `/api/app-update/status` 检查 VPS 当前提交与远端提交是否一致；如果发现新版本，普通用户只看到提示，管理员可以打开更新浮窗触发 `/api/app-update/run`。更新浮窗显示进度条和服务端命令日志。
+左上角版本信息由 App Shell 读取 `package.json` 的 `version` 生成 `appVersionLabel`，并链接到 GitHub 仓库 `<owner>/<repo>`。`package.json` 和 `package-lock.json` 的版本号是提交前硬性同步项；每个完成的 reviewable step 都必须递增，避免 Git 提交已经变化但 UI 仍显示旧版本。每个完成并提交的 reviewable step 默认推送当前分支到 GitHub，除非用户明确要求不推送。同一区域会定期调用 `/api/app-update/status` 检查 VPS 当前提交与远端提交是否一致；如果发现新版本，状态接口还会读取 `current..remote` 的待更新提交数量、标题和正文摘要。普通用户只看到提示，管理员可以在更新浮窗看到“本次更新”说明并触发 `/api/app-update/run`。更新浮窗显示提交摘要、进度条和服务端命令日志。提交信息必须写清楚修改内容和改进点，因为它会直接成为站内更新说明。
 
 ## 待确认 MVP 架构问题
 

@@ -138,8 +138,17 @@ type AppUpdateStatus = {
   currentVersion: string;
   currentCommit: string;
   remoteCommit: string;
+  pendingCommitCount: number;
+  pendingCommits: AppUpdateCommit[];
+  changesSummary: string;
   checkedAt: string;
   message: string;
+};
+type AppUpdateCommit = {
+  commit: string;
+  shortCommit: string;
+  title: string;
+  body?: string;
 };
 type AppUpdateLogEntry = {
   id: string;
@@ -805,6 +814,9 @@ export function App() {
         currentVersion: packageInfo.version,
         currentCommit: "",
         remoteCommit: "",
+        pendingCommitCount: 0,
+        pendingCommits: [],
+        changesSummary: "",
         checkedAt: nowIso(),
         message: "无法检查服务器版本",
       });
@@ -1403,7 +1415,7 @@ export function App() {
                   setUpdatePanelOpen(true);
                   void checkAppUpdate();
                 }}
-                title="检查服务器更新"
+                title={appUpdateStatus?.changesSummary || appUpdateStatus?.message || "检查服务器更新"}
               >
                 <RefreshCcw size={12} />
                 {updateStatusLabel}
@@ -1899,6 +1911,33 @@ export function App() {
                 <strong>{appUpdateStatus?.branch || "main"}</strong>
               </div>
             </div>
+
+            {appUpdateStatus?.available ? (
+              <section className="update-change-panel">
+                <div className="update-change-head">
+                  <strong>本次更新</strong>
+                  <span>{appUpdateStatus.changesSummary || "远端有新提交，正在等待提交说明。"}</span>
+                </div>
+                {appUpdateStatus.pendingCommits.length ? (
+                  <ul className="update-change-list">
+                    {appUpdateStatus.pendingCommits.map((commit) => (
+                      <li key={commit.commit || commit.shortCommit || commit.title}>
+                        <span>{commit.shortCommit || shortCommit(commit.commit)}</span>
+                        <div>
+                          <strong>{commit.title}</strong>
+                          {commit.body ? <p>{commit.body}</p> : null}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="update-note">没有读取到可展示的提交说明；请确认提交信息写明修改内容和改进点。</p>
+                )}
+                {appUpdateStatus.pendingCommitCount > appUpdateStatus.pendingCommits.length ? (
+                  <p className="update-note">仅显示最近 {appUpdateStatus.pendingCommits.length} 个提交。</p>
+                ) : null}
+              </section>
+            ) : null}
 
             <div className="update-progress">
               <span style={{ width: `${Math.max(0, Math.min(100, updateProgress))}%` }} />

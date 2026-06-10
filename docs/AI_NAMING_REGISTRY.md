@@ -72,6 +72,7 @@
 | 召回来源 | `memoryRecallSource` | runtime field | 标识召回来自同步响应路径还是未来异步生命路径 | `triggerType` |
 | 生产手动更新 | `manualVpsUpdate` | deployment workflow | 管理员在站内触发 VPS 从 git 工作树拉取、安装、构建并重启 | `productionAutoDeploy`, `vpsSyncBot` |
 | 应用更新状态 | `appUpdateStatus` | UI/API state | 左上角检查服务器当前提交与远端提交是否一致 | `deployStatus`, `versionPoll` |
+| 应用更新变更摘要 | `appUpdateChangeSummary` | UI/API state | 左上角更新窗口展示远端待更新提交的数量、标题和正文摘要 | `releaseNotes`, `updateDiffText` |
 | 应用更新日志 | `appUpdateLogEntry` | UI state | 站内更新窗口中显示的服务端步骤、stdout/stderr 和结果 | `deployLogLine`, `terminalDump` |
 | 应用版本标识 | `appVersionLabel` | UI constant | 页面左上角展示的应用版本号，来源于 `package.json` version | `buildLabel`, `releaseText` |
 | 应用版本同步 | `appVersionSync` | release workflow | 每个完成的 reviewable step 必须同步递增 `package.json` 和 `package-lock.json` 版本，防止 UI 版本滞后 | `manualVersionReminder`, `versionAfterthought` |
@@ -218,7 +219,8 @@
 | `readConversationHistoryMessagesByKey` | `serverSupport.mjs` | 管理员按内部历史 key 读取某用户某人物消息 | dossierId, key | ChatMessage[] | 读取 `.conversation-histories.local.json` | implemented |
 | `deleteConversationAudit` | `serverSupport.mjs` | 管理员删除单条用户输入输出审计记录 | auditId | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
 | `clearConversationAudits` | `serverSupport.mjs` | 管理员清空用户输入输出审计记录 | 无 | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
-| `readAppUpdateStatus` | `serverSupport.mjs` | 检查本机 git 工作树当前提交和远端分支提交是否一致 | 无 | appUpdateStatus | 调用 git 命令读取本机和远端状态 | implemented |
+| `readAppUpdateStatus` | `serverSupport.mjs` | 检查本机 git 工作树当前提交和远端分支提交是否一致，并读取待更新提交摘要 | 无 | appUpdateStatus | 调用 git 命令读取本机、远端状态和提交说明 | implemented |
+| `readPendingUpdateChanges` | `serverSupport.mjs` | 读取服务器当前提交到远端提交之间的提交数量、标题和正文摘要 | workdir, branch, currentCommit, remoteCommit | appUpdateChangeSummary | 调用 git fetch/rev-list/log | implemented |
 | `streamAppUpdate` | `serverSupport.mjs` | 管理员触发 git pull、npm ci、npm run build 和重启命令，并通过 SSE 返回进度 | HTTP response | text/event-stream | 在 `APP_UPDATE_WORKDIR` 执行更新命令 | implemented |
 | `createDossier` | `builtinPersonaDossiers.mjs` | 将内置规格转换为全局 `PersonaDossier` | spec | PersonaDossier | 无 | implemented |
 | `createLifeEvents` | `builtinPersonaDossiers.mjs` | 将内置生平规格转换为 `LifeEvent[]` | specId, items | LifeEvent[] | 无 | implemented |
@@ -319,6 +321,9 @@
 | `appUpdateStatus.available` | AppUpdateStatus | `boolean` | 服务器当前提交是否落后于远端分支 | `/api/app-update/status` | 左上角更新提示 | implemented |
 | `appUpdateStatus.currentCommit` | AppUpdateStatus | `string` | VPS 当前 git 提交 SHA | serverSupport git command | 更新窗口 | implemented |
 | `appUpdateStatus.remoteCommit` | AppUpdateStatus | `string` | GitHub 远端分支 SHA | serverSupport git command | 更新窗口 | implemented |
+| `appUpdateStatus.pendingCommitCount` | AppUpdateStatus | `number` | 当前服务器提交到远端提交之间的待更新提交数 | serverSupport git command | 更新窗口“本次更新” | implemented |
+| `appUpdateStatus.pendingCommits` | AppUpdateStatus | `AppUpdateCommit[]` | 待更新提交的短 SHA、标题和正文摘要列表 | serverSupport git command | 更新窗口“本次更新” | implemented |
+| `appUpdateStatus.changesSummary` | AppUpdateStatus | `string` | 可读的更新摘要，用于按钮提示和更新窗口说明 | serverSupport git command | 左上角更新提示 | implemented |
 | `appUpdateLogEntry.text` | AppUpdateLogEntry | `string` | 更新过程中一行步骤或命令输出 | `/api/app-update/run` SSE | 更新窗口代码区 | implemented |
 
 ## API 路由登记表

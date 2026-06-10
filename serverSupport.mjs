@@ -17,6 +17,8 @@ const maxModuleCallsPerAudit = 12;
 const maxModuleCallTextLength = 20000;
 const appUpdateDefaultBranch = "main";
 const appUpdateCommandTimeoutMs = 180000;
+const appUpdateMaxPendingCommits = 8;
+const appUpdateMaxCommitBodyLength = 520;
 const authSessions = new Map();
 
 export function createLocalSession(liaoUser) {
@@ -332,6 +334,9 @@ export async function readAppUpdateStatus() {
     currentVersion,
     currentCommit: "",
     remoteCommit: "",
+    pendingCommitCount: 0,
+    pendingCommits: [],
+    changesSummary: "",
     checkedAt: new Date().toISOString(),
     message: "",
   };
@@ -371,19 +376,67 @@ export async function readAppUpdateStatus() {
       };
     }
 
+    const available = currentCommit !== remoteCommit;
+    const updateChanges = available
+      ? await readPendingUpdateChanges(config.workdir, config.branch, currentCommit, remoteCommit)
+      : { pendingCommitCount: 0, pendingCommits: [], changesSummary: "" };
+
     return {
       ...baseStatus,
       configured: true,
-      available: currentCommit !== remoteCommit,
+      available,
       currentCommit,
       remoteCommit,
-      message: currentCommit === remoteCommit ? "当前服务器已是最新版本" : "发现 GitHub 新版本",
+      ...updateChanges,
+      message: available ? updateChanges.changesSummary || "发现 GitHub 新版本" : "当前服务器已是最新版本",
     };
   } catch (error) {
     return {
       ...baseStatus,
       configured: false,
       message: error instanceof Error ? error.message : "检查更新失败",
+    };
+  }
+}
+
+async function readPendingUpdateChanges(workdir, branch, currentCommit, remoteCommit) {
+  try {
+    await runCommandText("git", ["fetch", "--quiet", "origin", branch], workdir, 20000);
+    const countText = (await runCommandText("git", ["rev-list", "--count", `${currentCommit}..${remoteCommit}`], workdir, 15000)).trim();
+    const pendingCommitCount = Number.parseInt(countText, 10) || 0;
+    const logText = await runCommandText(
+      "git",
+      ["log", `--max-count=${appUpdateMaxPendingCommits}`, "--format=%H%x1f%s%x1f%b%x1e", `${currentCommit}..${remoteCommit}`],
+      workdir,
+      15000,
+    );
+    const pendingCommits = logText
+      .split("\x1e")
+      .map((record) => record.trim())
+      .filter(Boolean)
+      .map((record) => {
+        const fields = record.split("\x1f");
+        const commit = fields[0] || "";
+        const title = compactStoredText(fields[1] || "未填写提交标题", 160);
+        const body = compactStoredText(fields.slice(2).join("\x1f"), appUpdateMaxCommitBodyLength);
+        return {
+          commit,
+          shortCommit: commit.slice(0, 7),
+          title,
+          body,
+        };
+      });
+
+    return {
+      pendingCommitCount,
+      pendingCommits,
+      changesSummary: pendingCommitCount > 0 ? `发现 GitHub 新版本，包含 ${pendingCommitCount} 个提交。` : "发现 GitHub 新版本。",
+    };
+  } catch {
+    return {
+      pendingCommitCount: 0,
+      pendingCommits: [],
+      changesSummary: "发现 GitHub 新版本，但暂时无法读取提交说明。",
     };
   }
 }

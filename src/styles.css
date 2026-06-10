@@ -1249,7 +1249,7 @@ pre {
 
 .update-modal {
   max-height: min(720px, calc(100vh - 36px));
-  overflow: hidden;
+  overflow: auto;
   padding: 18px;
   width: min(680px, 100%);
 }
@@ -1344,6 +1344,84 @@ pre {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.update-change-panel {
+  background: #f8fbfb;
+  border: 1px solid #dbe4e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  max-height: 220px;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.update-change-head {
+  align-items: baseline;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.update-change-head strong {
+  color: #172026;
+  font-size: 13px;
+}
+
+.update-change-head span {
+  color: #66757d;
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: right;
+}
+
+.update-change-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.update-change-list li {
+  align-items: flex-start;
+  background: #fff;
+  border: 1px solid #dbe4e7;
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 58px minmax(0, 1fr);
+  padding: 9px;
+}
+
+.update-change-list li > span {
+  color: #0f766e;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1.5;
+}
+
+.update-change-list div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.update-change-list strong {
+  color: #172026;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.update-change-list p {
+  color: #596971;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  white-space: pre-wrap;
 }
 
 .update-progress {
