@@ -17,7 +17,7 @@ Server Support 负责 Node/Vite/生产服务共享的后端能力：登录会话
 ## 输入输出
 
 - 输入：HTTP request、本地 runtime JSON、`builtinPersonaDossiers`、liao 登录响应、git 工作树状态。
-- 输出：auth session、persona dossiers、conversation histories、conversation states、conversation audits、conversation audit export、update status/SSE。
+- 输出：auth session、persona dossiers、conversation histories、conversation states、conversation audits、conversation audit export、审计删除级联清理结果、update status/SSE。
 
 ## 不变量
 
@@ -25,12 +25,13 @@ Server Support 负责 Node/Vite/生产服务共享的后端能力：登录会话
 - 共享档案底稿和角色全局运行态必须分开。
 - 普通用户只能读写自己的中间栏消息历史；角色记忆、runtime、scene 和 location 是同一人物的全局运行态。
 - 管理员入口可以观察和维护共享数据，但查看他人历史时必须保持只读语义。
+- 删除单条或清空审计记录时，不能只删 `.conversation-audits.local.json`；需要按 `conversationEventId`、`conversationHistoryMessageIds` 或旧记录内容兜底，清理同轮中间栏历史和角色全局运行态里的短期/长期/关系记忆。
 - 生产和本地代理都必须关闭 DeepSeek thinking，并避免 `deepseek-reasoner`。
 
 ## 查询线索
 
 - `rg -n "Server Support|authSession|sharedPersonaDossier|globalConversationState|conversationAuditEntry|conversationAuditExport|manualVpsUpdate|DeepSeek" docs/AI_NAMING_REGISTRY.md docs/SYSTEM_FLOW.md`
-- `rg -n "requireSession|requireAdminSession|readPersonaDossiers|conversation-history|conversation-state|conversation-audits|exportConversationAudits|app-update" serverSupport.mjs server.mjs vite.config.ts`
+- `rg -n "requireSession|requireAdminSession|readPersonaDossiers|conversation-history|conversation-state|conversation-audits|exportConversationAudits|deleteConversationArtifactsForAudit|app-update" serverSupport.mjs server.mjs vite.config.ts`
 
 ## 验证
 

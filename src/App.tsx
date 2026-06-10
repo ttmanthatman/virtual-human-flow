@@ -98,6 +98,8 @@ type ConversationAuditEntry = {
   nickname: string;
   dossierId?: string;
   dossierTitle: string;
+  conversationEventId?: string;
+  conversationHistoryMessageIds?: string[];
   userInput: string;
   personaOutput: string;
   status: "completed" | "failed";
@@ -709,7 +711,10 @@ export function App() {
   }
 
   async function recordConversationAudit(
-    entry: Pick<ConversationAuditEntry, "dossierTitle" | "userInput" | "personaOutput" | "status" | "error" | "moduleCalls"> & { dossierId: string },
+    entry: Pick<
+      ConversationAuditEntry,
+      "dossierTitle" | "conversationEventId" | "conversationHistoryMessageIds" | "userInput" | "personaOutput" | "status" | "error" | "moduleCalls"
+    > & { dossierId: string },
   ) {
     if (!authToken) return;
     await fetch("/api/conversation-audits", {
@@ -785,9 +790,12 @@ export function App() {
       setAuditStatus(`审计删除失败：${detail.slice(0, 80)}`);
       return;
     }
+    const data = (await response.json()) as { artifacts?: { historyMessagesRemoved?: number; shortTermMemoriesRemoved?: number; longTermMemoriesRemoved?: number } };
     setAuditEntries((items) => items.filter((entry) => entry.id !== auditId));
     setSelectedAuditIds((items) => items.filter((id) => id !== auditId));
-    setAuditStatus("已删除一条用户输入输出记录");
+    const removedCount =
+      (data.artifacts?.historyMessagesRemoved ?? 0) + (data.artifacts?.shortTermMemoriesRemoved ?? 0) + (data.artifacts?.longTermMemoriesRemoved ?? 0);
+    setAuditStatus(removedCount ? `已删除一条记录，并清理 ${removedCount} 条关联历史/记忆` : "已删除一条用户输入输出记录");
   }
 
   async function clearConversationAuditEntries() {
@@ -1202,6 +1210,8 @@ export function App() {
       await recordConversationAudit({
         dossierId: activeDossierId,
         dossierTitle: result.nextState.profile.name,
+        conversationEventId: result.trace.event.id,
+        conversationHistoryMessageIds: [userMessage.id, ...replyMessages.map((message) => message.id)],
         userInput: userMessage.content,
         personaOutput: reply,
         status: "completed",
@@ -1215,6 +1225,7 @@ export function App() {
       await recordConversationAudit({
         dossierId: activeDossierId,
         dossierTitle: activeDossier?.title ?? state.profile.name,
+        conversationHistoryMessageIds: [userMessage.id],
         userInput: userMessage.content,
         personaOutput: "",
         status: "failed",

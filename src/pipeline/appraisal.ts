@@ -1,5 +1,6 @@
 import { AppraisalResult, CharacterState, CognitiveModuleTrace, EventInput, LlmConfig } from "../core/types";
 import { runCognitiveModule } from "./cognitiveModuleClient";
+import { shouldApplyChildSafetyClarification } from "./safetyContinuity";
 
 export async function runAppraisal(
   event: EventInput,
@@ -124,6 +125,7 @@ export async function runAppraisal(
     "- 是否会失态：表情、语气、节奏、逻辑或距离感从平常模式里滑出去。",
     "- 是否需要突破人设外壳式失控：不是乱写 OOC，而是自我控制被击穿，露出更底层、更真实、更危险的反应。",
     "- 如果她已经处在极低能量、强烈负面、震惊、麻木、崩溃边缘或高压余波里，新的普通闲聊/邀约也要按“和当前状态错位”评估；不能只按新话题表面是否危险来降权。",
+    "- 如果原话是在澄清孩子或女儿已经安全，要区分事实层的直接危险缓解，和被戏弄、失信造成的关系愤怒；不要继续判成孩子仍在眼前直接危险。",
     "",
     "Return JSON only: { narrative, eventId, dangerState: { isInDanger, level, sources, rationale }, awarenessState: { isClearHeaded, controlLevel, rationale }, responseNeed: { shouldRespond, rationale }, replyRhythm, emotionalImpact: { level, touchedCore, rationale }, composureRisk: { shouldLoseComposure, level, rationale }, personaBreakRisk: { shouldBreakPersona, level, rationale }, activatedConcerns: [{ concernId, activationScore, matchedTriggers, reason }], eventSalience, appraisalSummary }",
   ].join("\n");
@@ -144,7 +146,54 @@ export async function runAppraisal(
 
   return {
     ...trace,
-    output: normalizeAppraisalResult(trace.output, fallbackOutput),
+    output: stabilizeAppraisalForChildSafetyClarification(normalizeAppraisalResult(trace.output, fallbackOutput), event, state),
+  };
+}
+
+function stabilizeAppraisalForChildSafetyClarification(result: AppraisalResult, event: EventInput, state: CharacterState): AppraisalResult {
+  if (!shouldApplyChildSafetyClarification(event, state)) return result;
+
+  const clarification =
+    "确定性承接：这句话是在澄清孩子已经在家或安全，直接现实危险应先下降；留下的是被戏弄后的愤怒、不信任和需要亲眼确认。";
+  const dangerSources = result.dangerState.sources.filter((source) => !/现实|女儿.*控制|孩子.*控制|直接威胁/.test(source));
+
+  return {
+    ...result,
+    narrative: [result.narrative, clarification].filter(Boolean).join("\n"),
+    dangerState: {
+      ...result.dangerState,
+      isInDanger: result.dangerState.level > 0.35,
+      level: Math.min(result.dangerState.level, 0.45),
+      sources: dangerSources.length ? dangerSources : ["关系危险：对方刚才的说法破坏信任", "心理危险：惊吓后的余波仍在"],
+      rationale: [result.dangerState.rationale, clarification].filter(Boolean).join(" "),
+    },
+    awarenessState: {
+      ...result.awarenessState,
+      controlLevel: Math.max(result.awarenessState.controlLevel, 0.35),
+      rationale: [result.awarenessState.rationale, "她仍激动，但事实澄清给了她一点重新判断的空间。"].join(" "),
+    },
+    responseNeed: {
+      shouldRespond: true,
+      rationale: [result.responseNeed.rationale, "她需要回应澄清，确认事实并处理被戏弄后的边界。"].join(" "),
+    },
+    replyRhythm: result.replyRhythm === "burst" ? "multi_turn" : result.replyRhythm,
+    emotionalImpact: {
+      ...result.emotionalImpact,
+      level: Math.min(Math.max(result.emotionalImpact.level, 0.45), 0.68),
+      rationale: [result.emotionalImpact.rationale, "触动来自惊吓后的失信，不是新的直接伤害。"].join(" "),
+    },
+    composureRisk: {
+      shouldLoseComposure: true,
+      level: Math.min(Math.max(result.composureRisk.level, 0.45), 0.68),
+      rationale: [result.composureRisk.rationale, "她可以愤怒失态，但不应回到直接危险爆发。"].join(" "),
+    },
+    personaBreakRisk: {
+      shouldBreakPersona: false,
+      level: Math.min(result.personaBreakRisk.level, 0.35),
+      rationale: [result.personaBreakRisk.rationale, "事实澄清后不需要继续突破外壳式失控。"].join(" "),
+    },
+    eventSalience: Math.min(Math.max(result.eventSalience, 0.5), 0.68),
+    appraisalSummary: [result.appraisalSummary, clarification].filter(Boolean).join(" "),
   };
 }
 

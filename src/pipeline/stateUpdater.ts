@@ -13,6 +13,7 @@ import {
 } from "../core/types";
 import { clamp, makeId, nowIso, round } from "../core/utils";
 import { runCognitiveModule } from "./cognitiveModuleClient";
+import { shouldApplyChildSafetyClarification, isChildSafetyClarification } from "./safetyContinuity";
 
 export async function applyStateUpdates(
   state: CharacterState,
@@ -98,6 +99,7 @@ async function planStateUpdates(
         "- 如果没有明显变化，填 0 或不包含该项",
         "- 关系印象(userRelationshipMemory)必须用自然语言写，不要数字",
         "- userRelationshipMemory 必须合并本轮真实事件，不得只复述旧印象；如果本轮是噩耗、威胁、羞辱、伤害或足以让她崩溃的信息，印象、关系总结、证据和最近互动都必须写出这次冲击。",
+        "- 如果本轮是在澄清孩子或女儿已经安全，状态写回要降低直接安全警报，但保留被戏弄后的愤怒、不信任和确认需求。",
       ].join("\n"),
       outputContract:
         "Return JSON: { concernUpdates: [{ concernId, intensityDelta, valenceDelta, arousalDelta, status, note }], relationshipUpdates: [{ targetId, familiarityDelta, trustDelta, affectionDelta, tensionDelta, note }], newConcerns: [], userRelationshipMemory: { targetUserId, targetUserName, impressionSummary, relationshipSummary, evidence: string[], lastInteractionSummary }, internalStateNote }",
@@ -109,7 +111,79 @@ async function planStateUpdates(
 
   return {
     ...trace,
-    output: normalizeStateUpdatePlan(trace.output, mockOutput, state, event),
+    output: stabilizeStateUpdateForChildSafetyClarification(normalizeStateUpdatePlan(trace.output, mockOutput, state, event), state, event, context),
+  };
+}
+
+function stabilizeStateUpdateForChildSafetyClarification(
+  plan: StateUpdatePlan,
+  state: CharacterState,
+  event: EventInput,
+  context: {
+    appraisal: AppraisalResult;
+    memoryRecall: MemoryRecallResult;
+    decision: ResponseDecision;
+  },
+): StateUpdatePlan {
+  if (!shouldApplyChildSafetyClarification(event, state)) return plan;
+
+  const targetName = event.speakerName ?? "对方";
+  const safetyNote = `${targetName}澄清孩子已经在家或安全，直接危险警报下降；她仍然愤怒、不信任，需要亲眼确认，也会记住对方刚才造成的惊吓。`;
+  const childConcernIds = state.concerns
+    .filter((concern) => /女儿|孩子|小孩|娃|闺女|儿子/.test([concern.title, concern.object, concern.description, concern.triggers.join("、")].filter(Boolean).join(" ")))
+    .map((concern) => concern.id);
+  const concernUpdates = mergeSafetyConcernUpdates(plan.concernUpdates, childConcernIds, safetyNote);
+
+  return {
+    ...plan,
+    concernUpdates,
+    userRelationshipMemory: stabilizeRelationshipMemoryForSafetyClarification(plan.userRelationshipMemory, event, safetyNote),
+    internalStateNote: [plan.internalStateNote, safetyNote].filter(Boolean).join(" "),
+    narrative: [plan.narrative, context.appraisal.narrative, safetyNote].filter(Boolean).join("\n"),
+  };
+}
+
+function mergeSafetyConcernUpdates(updates: StateUpdatePlan["concernUpdates"], childConcernIds: string[], note: string) {
+  if (childConcernIds.length === 0) return updates;
+  const byId = new Map(updates.map((update) => [update.concernId, { ...update }]));
+  for (const concernId of childConcernIds) {
+    const existing = byId.get(concernId);
+    byId.set(concernId, {
+      concernId,
+      intensityDelta: Math.min(existing?.intensityDelta ?? 0, -0.22),
+      valenceDelta: Math.max(existing?.valenceDelta ?? 0, 0.22),
+      arousalDelta: Math.min(existing?.arousalDelta ?? 0, -0.28),
+      status: existing?.status ?? "active",
+      note: [existing?.note, note].filter(Boolean).join(" "),
+    });
+  }
+  return Array.from(byId.values());
+}
+
+function stabilizeRelationshipMemoryForSafetyClarification(
+  memory: StateUpdatePlan["userRelationshipMemory"],
+  event: EventInput,
+  note: string,
+): StateUpdatePlan["userRelationshipMemory"] {
+  const targetUserId = event.speakerId ?? memory?.targetUserId ?? "unknown";
+  const targetUserName = event.speakerName ?? memory?.targetUserName ?? "对方";
+  const evidence = [`${targetUserName}本轮说：「${event.content}」`, ...(memory?.evidence ?? [])].filter(Boolean).slice(-6);
+
+  return {
+    targetUserId,
+    targetUserName,
+    impressionSummary: ensureMentionsCurrentEvent(
+      memory?.impressionSummary ?? "",
+      event.content,
+      `${targetUserName}刚澄清孩子安全，直接危险暂时缓解，但她会把对方和惊吓、戏弄、不可靠联系在一起。`,
+    ),
+    relationshipSummary: ensureMentionsCurrentEvent(
+      memory?.relationshipSummary ?? "",
+      event.content,
+      "安全事实被澄清后，关系没有恢复轻松；她仍然戒备、愤怒，需要确认对方没有继续耍她。",
+    ),
+    evidence,
+    lastInteractionSummary: note,
   };
 }
 
@@ -209,6 +283,7 @@ function commitStateUpdates(
       emotionalValence: impact >= 0.7 ? -0.75 : stateUpdatePlan.concernUpdates.length > 0 ? -0.35 : 0,
       emotionalIntensity: impact >= 0.7 ? round(Math.max(0.72, impact)) : stateUpdatePlan.concernUpdates.length > 0 ? 0.55 : 0.2,
       createdAt: nowIso(),
+      sourceEventId: event.id,
       importance: impact >= 0.7 ? round(Math.max(0.82, impact)) : stateUpdatePlan.concernUpdates.length > 0 ? 0.62 : 0.25,
     });
     memoryWrites.push("写入 internal_state_note 到长期记忆");
@@ -224,6 +299,7 @@ function commitStateUpdates(
       id: makeId("relationship_history"),
       summary: userRelationshipMemory.lastInteractionSummary,
       createdAt: nowIso(),
+      sourceEventId: event.id,
     };
     const nextMemory = {
       id: existingMemory?.id ?? makeId("relationship_memory"),
@@ -268,7 +344,7 @@ function commitStateUpdates(
   const activeConcernIds = nextConcerns.filter((concern) => concern.status === "active" && concern.intensity > 0.15).map((concern) => concern.id);
   const moodFromConcerns = nextConcerns.reduce((sum, concern) => sum + concern.valence * concern.intensity, 0) / Math.max(nextConcerns.length, 1);
   const arousalFromConcerns = nextConcerns.reduce((sum, concern) => sum + concern.arousal * concern.intensity, 0) / Math.max(nextConcerns.length, 1);
-  const impact = computeInteractionImpact(context);
+  const impact = computeInteractionImpact(context, event);
   const moodValence = round(clamp(impact >= 0.7 ? Math.min(moodFromConcerns, -0.65) : moodFromConcerns, -1, 1));
   const moodArousal = round(clamp(impact >= 0.7 ? Math.max(arousalFromConcerns, 0.62) : arousalFromConcerns, 0, 1));
 
@@ -399,6 +475,13 @@ function strengthenUserRelationshipMemoryForSevereEvent(
     decision: ResponseDecision;
   },
 ): StateUpdatePlan["userRelationshipMemory"] {
+  if (memory && isChildSafetyClarification(event.content)) {
+    return stabilizeRelationshipMemoryForSafetyClarification(
+      memory,
+      event,
+      `${memory.targetUserName || event.speakerName || "对方"}澄清孩子已经在家或安全，直接危险暂时缓解，但惊吓和信任破裂仍留下余波。`,
+    );
+  }
   if (!memory || !isSevereInteraction(context)) return memory;
 
   const targetName = memory.targetUserName || event.speakerName || "这个用户";
@@ -441,8 +524,8 @@ function computeInteractionImpact(context: {
   appraisal: AppraisalResult;
   memoryRecall: MemoryRecallResult;
   decision: ResponseDecision;
-}) {
-  return Math.max(
+}, event?: EventInput) {
+  const rawImpact = Math.max(
     context.appraisal.dangerState?.level ?? 0,
     context.appraisal.emotionalImpact?.level ?? 0,
     context.appraisal.composureRisk?.level ?? 0,
@@ -451,6 +534,7 @@ function computeInteractionImpact(context: {
     context.decision.shouldLoseComposure ? 0.75 : 0,
     context.decision.shouldBreakPersona ? 0.86 : 0,
   );
+  return event && isChildSafetyClarification(event.content) ? Math.min(rawImpact, 0.58) : rawImpact;
 }
 
 function normalizeConcernUpdates(value: unknown, fallback: StateUpdatePlan["concernUpdates"], knownConcernIds: Set<string>) {

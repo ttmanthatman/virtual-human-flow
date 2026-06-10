@@ -1,4 +1,5 @@
 import { CharacterState, EventInput, ExpressionLlmRequest } from "../core/types";
+import { buildChildSafetyContinuityNarrative } from "./safetyContinuity";
 
 export function generateNaturalPromptRequest(
   event: EventInput,
@@ -34,6 +35,7 @@ export function generateNaturalPromptRequest(
       : "刚才没有太多直接上下文。";
 
   const responseModeNarrative = "这一轮她的反应倾向：" + decisionNarrative;
+  const childSafetyContinuityNarrative = buildChildSafetyContinuityNarrative(event, state);
   const personalityNarrative = [
     state.profile.personalitySummary,
     ...state.profile.personalityFacets.map((facet) => `她的「${facet.label}」表现为：${facet.summary}${facet.tension ? ` ${facet.tension}` : ""} ${facet.expression}`),
@@ -81,6 +83,7 @@ export function generateNaturalPromptRequest(
     `此刻的物理位置语境是：${locationNarrative}`,
     `界面上的能量、情绪、情绪倾向和唤醒度只是给人看的观察摘要。她内部真正参与反应的是这些自然语言状态：${runtimeNarrative}`,
     `${event.speakerName ?? "对方"}刚刚对她说：「${event.content}」`,
+    childSafetyContinuityNarrative ? `这轮对话的事实承接是：${childSafetyContinuityNarrative}` : "",
     concernNarrative,
     relationshipNarrative,
     memoryNarrative,

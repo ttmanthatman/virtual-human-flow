@@ -1,5 +1,6 @@
 import { AppraisalResult, CharacterState, CognitiveModuleTrace, EventInput, LlmConfig, ReplyRhythm, ResponseDecision, ResponseMode } from "../core/types";
 import { runCognitiveModule } from "./cognitiveModuleClient";
+import { isChildSafetyClarification, isCasualSocialDiscontinuity, shouldAvoidChildSafetyDangerLoop } from "./safetyContinuity";
 
 export async function decideResponse(
   event: EventInput,
@@ -65,6 +66,7 @@ function runDecisionModule(
     "- shouldBreakPersona：是否突破平常人设外壳进行失控式回应。只有评估强度足够时才为 true。",
     "- narrative/rationale 用自然语言解释为什么这样路由，但不要写具体台词。",
     "- 如果她上一刻已经处在强烈负面、低能量、震惊、麻木或崩溃边缘，普通邀约、周末计划、工作安排也可能因为时机错位而让她失态、沉默或碎裂回应；不能只用“邀约本身无威胁”来维持礼貌工作状态。",
+    "- 如果刚刚原话是在澄清女儿或孩子安全，或者最近已经有过安全澄清，保留不信任和愤怒，但事实层不再是孩子仍在眼前直接危险；回复路由不要回到旧的直接危险爆发。",
     "",
     "Return JSON only: { shouldRespond, responseMode, replyRhythm, shouldLoseComposure, shouldBreakPersona, delaySeconds, narrative, rationale }",
   ].join("\n");
@@ -157,6 +159,7 @@ function stabilizeDecisionForCurrentState(
   appraisal: AppraisalResult,
   state: CharacterState,
 ): ResponseDecision {
+  if (shouldAvoidChildSafetyDangerLoop(event, state)) return stabilizeDecisionForChildSafetyContinuity(decision, event);
   if (!isSevereRuntimeState(state) || !isCasualDiscontinuity(event.content)) return decision;
   if (!decision.shouldRespond || decision.responseMode === "silence") return decision;
   if (decision.shouldLoseComposure || decision.shouldBreakPersona || decision.replyRhythm === "burst") return decision;
@@ -175,6 +178,25 @@ function stabilizeDecisionForCurrentState(
     replyRhythm: state.runtime.energy <= 0.15 || state.runtime.derivedMood.valence <= -0.8 ? "burst" : "multi_turn",
     shouldLoseComposure: true,
     shouldBreakPersona: state.runtime.energy <= 0.15 || state.runtime.derivedMood.valence <= -0.85,
+    delaySeconds: 0,
+    narrative: [decision.narrative, rationale].filter(Boolean).join("\n"),
+    rationale: [decision.rationale, rationale].filter(Boolean).join("\n"),
+  };
+}
+
+function stabilizeDecisionForChildSafetyContinuity(decision: ResponseDecision, event: EventInput): ResponseDecision {
+  const isClarification = isChildSafetyClarification(event.content);
+  const rationale = isClarification
+    ? "确定性承接：对方正在澄清孩子安全，事实层不再按眼前直接危险处理；她仍会愤怒、追问、要求确认，但不继续走旧的爆发式寻找路线。"
+    : "确定性承接：最近已经有过孩子安全澄清，新的普通话题会刺痛她的信任和边界，但不应把她拉回孩子仍在眼前直接危险的旧循环。";
+
+  return {
+    ...decision,
+    shouldRespond: true,
+    responseMode: isClarification ? "question_back" : isCasualSocialDiscontinuity(event.content) ? "short_avoidance" : decision.responseMode,
+    replyRhythm: isClarification ? "multi_turn" : "single",
+    shouldLoseComposure: true,
+    shouldBreakPersona: false,
     delaySeconds: 0,
     narrative: [decision.narrative, rationale].filter(Boolean).join("\n"),
     rationale: [decision.rationale, rationale].filter(Boolean).join("\n"),

@@ -10,8 +10,10 @@ rmSync(outDir, { recursive: true, force: true });
 execFileSync(
   "node_modules/.bin/tsc",
   [
+    "src/pipeline/appraisal.ts",
     "src/pipeline/stateUpdater.ts",
     "src/pipeline/responseDecision.ts",
+    "src/pipeline/promptBuilder.ts",
     "src/pipeline/cognitiveModuleClient.ts",
     "src/data/seedState.ts",
     "src/core/types.ts",
@@ -35,8 +37,10 @@ execFileSync(
 );
 
 const require = createRequire(import.meta.url);
+const { runAppraisal } = require(join(outDir, "pipeline/appraisal.js"));
 const { applyStateUpdates } = require(join(outDir, "pipeline/stateUpdater.js"));
 const { decideResponse } = require(join(outDir, "pipeline/responseDecision.js"));
+const { generateNaturalPromptRequest } = require(join(outDir, "pipeline/promptBuilder.js"));
 const { seedState } = require(join(outDir, "data/seedState.js"));
 
 const severeAppraisal = {
@@ -116,7 +120,8 @@ const neutralInviteDecision = {
 
 globalThis.fetch = async (_url, init) => {
   const body = JSON.parse(String(init.body));
-  const final = body.moduleName === "state_update" ? staleRelationshipPlan : neutralInviteDecision;
+  const injectedFinal = globalThis.__finalByModule?.[body.moduleName];
+  const final = injectedFinal ?? (body.moduleName === "state_update" ? staleRelationshipPlan : neutralInviteDecision);
   const sse = `data: ${JSON.stringify({ final })}\n\n`;
   return new Response(
     new ReadableStream({
@@ -231,6 +236,154 @@ if (!decisionTrace.output.shouldLoseComposure || decisionTrace.output.responseMo
 }
 if (decisionTrace.output.replyRhythm === "single") {
   throw new Error("Expected severe aftermath to avoid ordinary single polite response rhythm.");
+}
+
+const sunSevereState = {
+  ...severeRuntimeState,
+  profile: {
+    ...severeRuntimeState.profile,
+    id: "zz_sun_xiaoya",
+    name: "孙小雅",
+    background: "她离婚后带着女儿租房，白班夜班轮换，最怕孩子学校突然打电话。",
+  },
+  concerns: [
+    ...severeRuntimeState.concerns,
+    {
+      id: "concern_child_safety",
+      title: "女儿安全",
+      object: "女儿",
+      type: "family_safety",
+      description: "她最怕女儿放学后没人接或安全出事。",
+      intensity: 0.92,
+      valence: -0.8,
+      arousal: 0.9,
+      triggers: ["女儿", "孩子", "放学", "在家"],
+      possibleResolutions: ["确认女儿安全"],
+      createdAt: new Date().toISOString(),
+      decayRate: 0.04,
+      status: "active",
+    },
+  ],
+  shortTermMemory: [
+    {
+      id: "stm_qoo_threat",
+      timestamp: new Date().toISOString(),
+      speakerId: "user:2",
+      speakerName: "Qoo",
+      content: "坐着了啊，你看啊那么大的人你看不见？？？",
+      eventId: "event_qoo_threat",
+    },
+    {
+      id: "stm_sun_old_reply",
+      timestamp: new Date().toISOString(),
+      speakerId: "zz_sun_xiaoya",
+      speakerName: "孙小雅",
+      content: "你下来，指给我看。",
+      eventId: "event_qoo_threat",
+    },
+    {
+      id: "stm_qoo_safe",
+      timestamp: new Date().toISOString(),
+      speakerId: "user:2",
+      speakerName: "Qoo",
+      content: "算了，告诉你吧，你女儿在家，已经写完作业了，你回去吧，回去就能看到你女儿了",
+      eventId: "event_qoo_safe",
+    },
+  ],
+  relationshipMemory: [
+    {
+      id: "relationship_qoo",
+      targetUserId: "user:2",
+      targetUserName: "Qoo",
+      impressionSummary: "Qoo先说女儿在车上，随后又说女儿在家，孙小雅感到被戏弄。",
+      relationshipSummary: "信任崩塌，但事实层已经出现女儿在家的澄清。",
+      evidence: ["Qoo说女儿在家，已经写完作业了"],
+      lastInteractionSummary: "Qoo澄清女儿在家，孙小雅仍很愤怒。",
+      updatedAt: new Date().toISOString(),
+      history: [],
+    },
+  ],
+  runtime: {
+    ...severeRuntimeState.runtime,
+    energy: 0.1,
+    derivedMood: { valence: -0.9, arousal: 0.9, label: "恐惧愤怒爆发" },
+  },
+};
+
+const safetyClarificationEvent = {
+  id: "event_qoo_safe",
+  type: "user_message",
+  timestamp: new Date().toISOString(),
+  speakerId: "user:2",
+  speakerName: "Qoo",
+  content: "算了，告诉你吧，你女儿在家，已经写完作业了，你回去吧，回去就能看到你女儿了",
+};
+
+const lowSafetyAppraisal = {
+  ...lowImpactAppraisal,
+  narrative: "模型仍把澄清误判成女儿安全继续受到直接威胁。",
+  eventId: "event_qoo_safe",
+  dangerState: { isInDanger: true, level: 0.92, sources: ["女儿安全"], rationale: "仍按直接威胁处理。" },
+  composureRisk: { shouldLoseComposure: true, level: 0.9, rationale: "模型仍判定失控。" },
+  personaBreakRisk: { shouldBreakPersona: true, level: 0.8, rationale: "模型仍判定突破外壳。" },
+  replyRhythm: "burst",
+  eventSalience: 0.9,
+};
+
+globalThis.__finalByModule = { appraisal: lowSafetyAppraisal };
+const safetyAppraisalTrace = await runAppraisal(
+  safetyClarificationEvent,
+  sunSevereState,
+  { provider: "external", endpoint: "http://fake.local/deepseek", model: "deepseek-v4-flash" },
+);
+globalThis.__finalByModule = {};
+
+if (safetyAppraisalTrace.output.dangerState.level > 0.55 || safetyAppraisalTrace.output.replyRhythm === "burst") {
+  throw new Error("Expected safety clarification to lower direct danger and avoid burst appraisal.");
+}
+
+const safetyDecisionTrace = await decideResponse(
+  safetyClarificationEvent,
+  lowSafetyAppraisal,
+  "刚才有过女儿在家的澄清。",
+  sunSevereState,
+  { provider: "external", endpoint: "http://fake.local/deepseek", model: "deepseek-v4-flash" },
+);
+
+if (safetyDecisionTrace.output.replyRhythm === "burst" || safetyDecisionTrace.output.shouldBreakPersona) {
+  throw new Error("Expected safety clarification to stop direct-danger burst routing.");
+}
+
+const postClarificationInvite = {
+  ...inviteEvent,
+  speakerId: "user:2",
+  speakerName: "Qoo",
+  content: "周末一起去爬山吗？",
+};
+const postClarificationDecisionTrace = await decideResponse(
+  postClarificationInvite,
+  lowImpactAppraisal,
+  "刚才有过女儿在家的澄清。",
+  sunSevereState,
+  { provider: "external", endpoint: "http://fake.local/deepseek", model: "deepseek-v4-flash" },
+);
+
+if (postClarificationDecisionTrace.output.replyRhythm === "burst" || postClarificationDecisionTrace.output.shouldBreakPersona) {
+  throw new Error("Expected casual invite after safety clarification to retain anger without returning to the old direct-danger loop.");
+}
+
+const replyPrompt = generateNaturalPromptRequest(
+  postClarificationInvite,
+  sunSevereState,
+  "她仍很愤怒。",
+  "刚才有过女儿在家的澄清。",
+  postClarificationDecisionTrace.output.narrative || postClarificationDecisionTrace.output.rationale,
+  "external",
+  "deepseek-v4-flash",
+).prompt;
+
+if (!replyPrompt.includes("事实层已经变成")) {
+  throw new Error("Expected reply prompt to carry safety clarification context.");
 }
 
 console.log("severe state continuity verified");

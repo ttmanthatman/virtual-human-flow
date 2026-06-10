@@ -95,17 +95,18 @@
 | Builtin Persona Dossiers | `builtinPersonaDossiers.mjs` | 提供“马可福音10”和“郑州市”全局初始人物/场景/位置档案，并登记生平事件、社会人格位置和熟人关系 | 无 | `PersonaDossier[]` | Server Support | 无 |
 | Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport/fallbackReason | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Appraisal/Memory/Decision/State Update | 外部 LLM endpoint |
 | Cognitive Module Fallback Verification | `scripts/verify-cognitive-module-fallback.mjs` | 伪造未闭合 SSE JSON，验证认知模块会 fallback 而不是抛错卡住 | 无 | pass/fail | npm script | TypeScript compiler |
-| Severe State Continuity Verification | `scripts/verify-severe-state-continuity.mjs` | 伪造重大坏消息和后续普通邀约，验证长期记忆、关系记忆和回应决策不会抹平严重余波 | 无 | pass/fail | npm script | State Updater, Response Decision |
+| Severe State Continuity Verification | `scripts/verify-severe-state-continuity.mjs` | 伪造重大坏消息、后续普通邀约和孩子安全澄清，验证严重余波既不会被抹平，也不会在事实澄清后无限复读旧危险指令 | 无 | pass/fail | npm script | Appraisal, State Updater, Response Decision, Prompt Generator |
 | Temporal Scene And Reply Segments Verification | `scripts/verify-temporal-scene-and-reply-segments.mjs` | 验证真实时间场景推进不会瞬移，工作/睡眠场景按当地时区变化，连续/爆发回复会归一化为多条消息 | 无 | pass/fail | npm script | Temporal Scene Progression, LLM Client |
 | Update Button Clickable Verification | `scripts/verify-update-button-clickable.mjs` | 用 Playwright mock 有新版本状态，验证未登录时“更新服务器”按钮仍可点击并进入权限反馈路径 | 无 | pass/fail | npm script | App Shell |
-| Appraisal | `src/pipeline/appraisal.ts` | 通过 LLM 判断事件触发的关切、危险状态、清醒程度、回应必要性、回复节奏、触动强度、失态风险和突破人设外壳风险 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | Conversation Pipeline | Cognitive Module Client |
+| Appraisal | `src/pipeline/appraisal.ts` | 通过 LLM 判断事件触发的关切、危险状态、清醒程度、回应必要性、回复节奏、触动强度、失态风险和突破人设外壳风险，并确定性识别孩子安全澄清 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | Conversation Pipeline | Cognitive Module Client, Safety Continuity |
 | Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 用自然语言候选清单和 LLM 复判判断哪些记忆会浮现；LLM 只选择 ID，完整记忆由本地回填；召回不能退化为敏感词过滤 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` | Conversation Pipeline | Cognitive Module Client |
-| Response Decision | `src/pipeline/responseDecision.ts` | 通过 LLM 消费事件、结构化评估、记忆和运行时信号，决定是否回应、回应模式、单条/连续/爆发节奏、是否失态和是否突破人设外壳，并确定性承接严重余波 | event, appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | Conversation Pipeline | Cognitive Module Client |
+| Response Decision | `src/pipeline/responseDecision.ts` | 通过 LLM 消费事件、结构化评估、记忆和运行时信号，决定是否回应、回应模式、单条/连续/爆发节奏、是否失态和是否突破人设外壳，并确定性承接严重余波与安全澄清 | event, appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | Conversation Pipeline | Cognitive Module Client, Safety Continuity |
 | Temporal Scene Progression | `src/pipeline/temporalScene.ts` | 根据人物地理位置推断时区，用当地真实时间和对话触发推进 `scene/location`，并阻止未来计划或远距离地点造成瞬移 | `CharacterState`, `EventInput`, now? | `TemporalSceneProgression`, next `CharacterState` | Conversation Pipeline | Core Types |
-| Prompt Generator | `src/pipeline/promptBuilder.ts` | 将认知模块输出转成只给 Reply LLM 的自然语言 prompt | event, state, appraisal, recall, decision | `ExpressionLlmRequest` | Conversation Pipeline | Core Types |
+| Prompt Generator | `src/pipeline/promptBuilder.ts` | 将认知模块输出转成只给 Reply LLM 的自然语言 prompt，并在安全澄清后补入事实层变化叙述 | event, state, appraisal, recall, decision | `ExpressionLlmRequest` | Conversation Pipeline | Core Types, Safety Continuity |
 | LLM Client | `src/pipeline/llmClient.ts` | 调用 Reply LLM；正式模式只传自然语言 prompt | `ExpressionLlmRequest`, `LlmConfig` | `ReplyOutput` | Conversation Pipeline | 外部 LLM endpoint |
-| State Updater | `src/pipeline/stateUpdater.ts` | 通过 State Update LLM 生成状态更新计划，再确定性写回 | state, event, replyOutput, context, llmConfig | next state, `StateDelta`, `stateUpdate` | Conversation Pipeline | Cognitive Module Client |
+| State Updater | `src/pipeline/stateUpdater.ts` | 通过 State Update LLM 生成状态更新计划，再确定性写回；安全澄清会降低直接危险警报但保留关系余波 | state, event, replyOutput, context, llmConfig | next state, `StateDelta`, `stateUpdate` | Conversation Pipeline | Cognitive Module Client, Safety Continuity |
 | Runtime Signal Evaluator | `src/pipeline/runtimeSignalEvaluator.ts` | 通过专门 LLM 模块评估能量、情绪、情绪倾向、唤醒度 | state, event, replyOutput, appraisal/memory/decision/stateUpdatePlan, llmConfig | `runtimeSignalEvaluation`, next runtime signals | Conversation Pipeline | Cognitive Module Client |
+| Safety Continuity | `src/pipeline/safetyContinuity.ts` | 识别孩子/家人安全澄清和澄清后普通话题错位，避免严重余波无限回到旧危险循环 | `CharacterState`, `EventInput` | boolean/narrative helpers | Appraisal, Response Decision, Prompt Generator, State Updater | Core Types |
 | Conversation Pipeline | `src/pipeline/conversationPipeline.ts` | 串联一轮同步响应路径，并在认知模块前接入时间场景推进 | content, state, llmConfig | next state, trace | App Shell | pipeline steps, Temporal Scene Progression |
 | Generators | `src/pipeline/generators.ts` | 通过 LLM 解读用户人物/场景素材，并确定性归一化为待应用预览 | 描述文本、当前状态、LLM 配置 | `CharacterState` | App Shell | Cognitive Module Client, Core Types |
 | Profile Scene Consistency | `src/pipeline/profileSceneConsistency.ts` | 通过 LLM 判断人物档案和场景是否匹配，并返回是否需要扭曲时空密码 | `CharacterState`, `LlmConfig` | `ProfileSceneConsistencyResult` | App Shell | Cognitive Module Client |
@@ -114,7 +115,7 @@
 | Server Support | `serverSupport.mjs` | 认证会话、liao 登录代理、内置/共享档案合并、共享档案存储、DeepSeek 预览缓存写回、用户私有消息历史、角色全局对话运行态、全局关系余波、对话审计和站内手动更新 | HTTP request, liao login response, local runtime JSON, builtin persona dossiers, git working tree | auth session, persona dossiers, audit entries, update status/SSE | Vite Dev Server/Production Server | liao Chatroom, local runtime files, Builtin Persona Dossiers, Git |
 | Global Conversation State Verification | `scripts/verify-global-conversation-state.mjs` | 在临时运行目录验证用户 A 写入角色运行态后用户 B 和全局读取都能承接，同时中间栏消息仍按用户隔离 | 无 | pass/fail | npm script | Server Support |
 | Conversation Message History Verification | `scripts/verify-conversation-message-history.mjs` | 在临时运行目录验证中间栏消息历史按用户和档案保存、读取和隔离 | 无 | pass/fail | npm script | Server Support |
-| Admin History And Module Audit Verification | `scripts/verify-admin-history-and-module-audit.mjs` | 验证管理员能按人物列出/读取用户历史，且审计会保存模块调用记录 | 无 | pass/fail | npm script | Server Support |
+| Admin History And Module Audit Verification | `scripts/verify-admin-history-and-module-audit.mjs` | 验证管理员能按人物列出/读取用户历史，审计会保存模块调用记录，删除审计会级联清理历史和运行态记忆 | 无 | pass/fail | npm script | Server Support |
 | Audit Modal Scroll Verification | `scripts/verify-audit-modal-scroll.mjs` | 用真实 App Shell 样式构造大量审计记录，验证管理员审计浮层内部列表可滚动且不会被父级裁掉 | 无 | pass/fail | npm script | App Shell |
 | User Relationship Memory Verification | `scripts/verify-user-relationship-memory.mjs` | 验证 State Update 会按当前说话用户写入自然语言关系印象记忆，并回写关系备注 | 无 | pass/fail | npm script | State Updater |
 | Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录站内手动更新、VPS git 工作树配置、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | manualVpsUpdate |
@@ -138,6 +139,7 @@
 | `normalizeAppraisalResult` | `src/pipeline/appraisal.ts` | 将 Appraisal LLM 输出归一化，防止关系、关切数组和事件 ID 形状漂移传入下游 | result, fallback, event, state | AppraisalResult | 无 | implemented |
 | `formatRuntimeSignalNarrative` | `src/pipeline/appraisal.ts`, `src/pipeline/responseDecision.ts` | 将运行时信号 profile 合成为认知模块可读的自然语言状态叙述 | state | string | 无 | implemented |
 | `formatRecentConversation` | `src/pipeline/appraisal.ts` | 将最近短期记忆合成为 Appraisal 可读的近期对话叙述 | state | string | 无 | implemented |
+| `stabilizeAppraisalForChildSafetyClarification` | `src/pipeline/appraisal.ts` | 当用户澄清孩子安全时，降低 Appraisal 里的直接现实危险和爆发节奏，保留关系/心理余波 | result, event, state | AppraisalResult | 无 | implemented |
 | `retrieveMemory` | `src/pipeline/memoryRetrieval.ts` | 通过 LLM 召回相关记忆 | event, appraisalNarrative, state, llmConfig | CognitiveModuleTrace<MemoryRecallResult> | 可调用外部 endpoint | implemented |
 | `createMemoryRetrievalContext` | `src/pipeline/memoryRetrieval.ts` | 将事件、自然语言评估和说话者关系合成召回上下文，供同步和未来异步路径复用 | event, appraisalNarrative, state, source | MemoryRetrievalContext | 无 | implemented |
 | `buildNaturalCandidateList` | `src/pipeline/memoryRetrieval.ts` | 将短期上下文、长期记忆和关系记忆候选转成给 Memory Recall LLM 读取的自然语言候选清单 | state, context, speechSpeakerId | string | 无 | implemented |
@@ -147,6 +149,9 @@
 | `decideResponse` | `src/pipeline/responseDecision.ts` | 通过 LLM 根据事件、完整 AppraisalResult、记忆和运行时信号决定回应路由 | event, appraisal, memoryRecallNarrative, state, llmConfig | CognitiveModuleTrace<ResponseDecision> | 可调用外部 endpoint | implemented |
 | `normalizeResponseDecision` | `src/pipeline/responseDecision.ts` | 将 Response Decision LLM 输出归一化，保证回应模式、回应节奏、是否回应、失态和突破外壳字段稳定 | result, fallback | ResponseDecision | 无 | implemented |
 | `stabilizeDecisionForCurrentState` | `src/pipeline/responseDecision.ts` | 当严重运行时余波遇到普通邀约/工作安排且 LLM 判成礼貌单条回应时，确定性调回失态或爆发式路由 | decision, event, appraisal, state | ResponseDecision | 无 | implemented |
+| `stabilizeDecisionForChildSafetyContinuity` | `src/pipeline/responseDecision.ts` | 当孩子安全已经澄清或澄清后出现普通话题时，把路由从旧直接危险爆发改为愤怒、追问或拒绝 | decision, event | ResponseDecision | 无 | implemented |
+| `shouldAvoidChildSafetyDangerLoop` | `src/pipeline/safetyContinuity.ts` | 判断当前输入是否处在孩子安全澄清或澄清后普通话题场景，避免管线回到旧危险循环 | event, state | boolean | 无 | implemented |
+| `buildChildSafetyContinuityNarrative` | `src/pipeline/safetyContinuity.ts` | 生成 Reply prompt 可读的自然语言事实层变化叙述 | event, state | string | 无 | implemented |
 | `isSevereRuntimeState` | `src/pipeline/responseDecision.ts` | 判断当前运行时能量、效价和状态叙述是否处在严重余波中 | state | boolean | 无 | implemented |
 | `isCasualDiscontinuity` | `src/pipeline/responseDecision.ts` | 判断用户原话是否是普通邀约、闲聊或工作安排这类与严重余波错位的事件 | content | boolean | 无 | implemented |
 | `advanceSceneForCurrentTime` | `src/pipeline/temporalScene.ts` | 在一轮对话的 Appraisal 前按真实当地时间、人物生活节奏和对话触发推进场景与位置 | state, event, now? | nextState, `TemporalSceneProgression` | 写入运行态 scene/location | implemented |
@@ -163,6 +168,7 @@
 | `splitReplyIntoSegments` | `src/pipeline/llmClient.ts` | 按换行和标点把 `multi_turn`/`burst` 自然语言回复拆成多条聊天消息 | reply, rhythm, modelSegments? | string[] | 无 | implemented |
 | `applyStateUpdates` | `src/pipeline/stateUpdater.ts` | 调用 State Update LLM 并写回状态 | state, event, replyOutput, context, llmConfig | nextState, StateDelta, stateUpdate | 写入记忆和状态 | implemented |
 | `normalizeStateUpdatePlan` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 输出归一化，保证 concernUpdates、relationshipUpdates、userRelationshipMemory 和 internalStateNote 稳定 | result, fallback, state, event | StateUpdatePlan | 无 | implemented |
+| `stabilizeStateUpdateForChildSafetyClarification` | `src/pipeline/stateUpdater.ts` | 当用户澄清孩子安全时，降低相关关切即时强度和唤醒，关系记忆保留被戏弄与确认需求 | plan, state, event, context | StateUpdatePlan | 无 | implemented |
 | `normalizeUserRelationshipMemory` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 生成的当前用户印象和关系总结归一化为自然语言关系记忆 | value, fallback, event | StateUpdatePlan.userRelationshipMemory | 无 | implemented |
 | `strengthenUserRelationshipMemoryForSevereEvent` | `src/pipeline/stateUpdater.ts` | 在重大噩耗、威胁、羞辱或崩溃事件后，把本轮事件确定性合入当前用户关系记忆，避免旧印象覆盖冲击余波 | memory, event, replyOutput, context | StateUpdatePlan.userRelationshipMemory | 无 | implemented |
 | `ensureMentionsCurrentEvent` | `src/pipeline/stateUpdater.ts` | 关系记忆摘要未提到本轮事件时，给摘要补上严重事件前缀 | text, eventContent, prefix | string | 无 | implemented |
@@ -246,8 +252,9 @@
 | `exportConversationAudits` | `serverSupport.mjs` | 管理员导出所选或全部用户输入输出记录 | ids? | conversationAuditExport payload | 读取 `.conversation-audits.local.json` | implemented |
 | `readConversationHistorySummaries` | `serverSupport.mjs` | 管理员按人物读取所有用户历史摘要 | dossierId | ConversationHistorySummary[] | 读取 `.conversation-histories.local.json` | implemented |
 | `readConversationHistoryMessagesByKey` | `serverSupport.mjs` | 管理员按内部历史 key 读取某用户某人物消息 | dossierId, key | ChatMessage[] | 读取 `.conversation-histories.local.json` | implemented |
-| `deleteConversationAudit` | `serverSupport.mjs` | 管理员删除单条用户输入输出审计记录 | auditId | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
-| `clearConversationAudits` | `serverSupport.mjs` | 管理员清空用户输入输出审计记录 | 无 | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
+| `deleteConversationArtifactsForAudit` | `serverSupport.mjs` | 删除审计记录对应的中间栏历史、短期记忆、长期记忆和关系记忆片段 | conversationAuditEntry | auditArtifactDeletionResult | 写 `.conversation-histories.local.json` 和 `.conversation-states.local.json` | implemented |
+| `deleteConversationAudit` | `serverSupport.mjs` | 管理员删除单条用户输入输出审计记录并级联清理同轮历史/记忆 | auditId | deleted flag + artifact cleanup summary | 写 runtime JSON | implemented |
+| `clearConversationAudits` | `serverSupport.mjs` | 管理员清空用户输入输出审计记录并级联清理关联历史/记忆 | 无 | deleted flag + artifact cleanup summary | 写 runtime JSON | implemented |
 | `readAppUpdateStatus` | `serverSupport.mjs` | 检查本机 git 工作树当前提交和远端分支提交是否一致，并读取待更新提交摘要 | 无 | appUpdateStatus | 调用 git 命令读取本机、远端状态和提交说明 | implemented |
 | `readPendingUpdateChanges` | `serverSupport.mjs` | 读取服务器当前提交到远端提交之间的提交数量、标题和正文摘要 | workdir, branch, currentCommit, remoteCommit | appUpdateChangeSummary | 调用 git fetch/rev-list/log | implemented |
 | `streamAppUpdate` | `serverSupport.mjs` | 管理员触发 git pull、npm ci、npm run build 和重启命令，并通过 SSE 返回进度 | HTTP response | text/event-stream | 在 `APP_UPDATE_WORKDIR` 执行更新命令 | implemented |
@@ -273,9 +280,11 @@
 | `relationships` | `CharacterState` | `Record<string, Relationship>` | 角色对每个对象的关系档案 | seed/stateUpdater | appraisal/promptBuilder/UI | implemented |
 | `shortTermMemory` | `CharacterState` | `ShortTermMemory[]` | 最近对话原文 | stateUpdater | memoryRetrieval/promptBuilder | implemented |
 | `longTermMemory` | `CharacterState` | `LongTermMemory[]` | 长期摘要记忆 | seed/stateUpdater | memoryRetrieval/promptBuilder | implemented |
+| `longTermMemory[].sourceEventId` | `LongTermMemory` | `string?` | 长期记忆对应的一轮对话事件 ID，用于删除审计时清理同轮记忆 | stateUpdater | Server Support audit deletion | implemented |
 | `relationshipMemory` | `CharacterState` | `RelationshipMemory[]` | 长期记忆中的关系记忆区，按当前用户保存自然语言印象、关系总结、证据和最近互动 | seed/builtin/stateUpdater | memoryRetrieval/promptBuilder/right panel | implemented |
 | `relationshipMemory[].impressionSummary` | `RelationshipMemory` | `string` | 人物对该用户的自然语言印象，不使用数值评分 | stateUpdater | promptBuilder/right panel | implemented |
 | `relationshipMemory[].relationshipSummary` | `RelationshipMemory` | `string` | 人物与该用户当前关系的自然语言总结，不使用数值评分 | stateUpdater | promptBuilder/right panel | implemented |
+| `relationshipMemory[].history[].sourceEventId` | `RelationshipMemory.history` | `string?` | 关系记忆历史片段对应的一轮对话事件 ID，用于删除审计时清理同轮关系余波 | stateUpdater | Server Support audit deletion | implemented |
 | `runtime.derivedMood` | `RuntimeState` | object | 由状态信号评估模块产出的当前心情摘要 | seed/runtimeSignalEvaluator | UI/promptBuilder | implemented |
 | `runtime.signalProfiles` | `RuntimeState` | `Record<RuntimeSignalKey, RuntimeSignalProfile>` | UI 简化指标背后的自然语言考量，供 Prompt Generator 组织上下文 | seed/generator/stateUpdater | promptBuilder/UI | implemented |
 | `runtime.signalProfiles.*.cognitiveNarrative` | `RuntimeSignalProfile` | `string` | 状态信号背后的内在状态叙述，只描述属性和成因，不写回复指令 | seed/generator/stateUpdater | promptBuilder/UI | implemented |
@@ -356,6 +365,8 @@
 | `conversationHistorySummary` | `/api/admin/conversation-histories` | object | 管理员可见的某人物下用户历史摘要，包含用户、消息数和更新时间 | Server Support | App Shell admin history selector | implemented |
 | `globalConversationStateEntry` | `.conversation-states.local.json` | object | 某个档案上的角色全局运行态覆盖层，包含 `scope: "global"` 和 `global::dossier:<id>` 键 | `/api/persona-dossiers/:id/conversation-state` | `readPersonaDossiers(user)` | implemented |
 | `conversationAuditEntry.id` | ConversationAuditEntry | `string` | 单条审计记录 ID，用于管理员删除 | serverSupport | Admin audit UI/API | implemented |
+| `conversationAuditEntry.conversationEventId` | ConversationAuditEntry | `string?` | 审计记录对应的 Pipeline `event.id`，用于删除时定位短期/长期/关系记忆 | App Shell/serverSupport | Admin audit deletion | implemented |
+| `conversationAuditEntry.conversationHistoryMessageIds` | ConversationAuditEntry | `string[]?` | 审计记录对应的中间栏用户消息和角色消息 ID，用于删除时精确清理历史 | App Shell/serverSupport | Admin audit deletion | implemented |
 | `conversationAuditEntry.userInput` | ConversationAuditEntry | `string` | 登录用户发送给虚拟人的输入 | App Shell | Admin audit UI | implemented |
 | `conversationAuditEntry.personaOutput` | ConversationAuditEntry | `string` | 虚拟人回复或失败时为空 | App Shell | Admin audit UI | implemented |
 | `conversationAuditEntry.moduleCalls` | ConversationAuditEntry | `ConversationModuleCall[]` | 一轮对话中每个 pipeline 模块的输入、输出、状态和 transport | App Shell | Admin audit UI/API | implemented |

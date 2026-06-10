@@ -272,6 +272,10 @@ export function appendConversationAudit(entry, user) {
     nickname: user.nickname,
     dossierId: typeof entry.dossierId === "string" ? entry.dossierId : "",
     dossierTitle: typeof entry.dossierTitle === "string" ? entry.dossierTitle : "",
+    conversationEventId: typeof entry.conversationEventId === "string" ? entry.conversationEventId.slice(0, 160) : extractConversationEventIdFromModuleCalls(entry.moduleCalls),
+    conversationHistoryMessageIds: Array.isArray(entry.conversationHistoryMessageIds)
+      ? entry.conversationHistoryMessageIds.map((id) => (typeof id === "string" ? id.slice(0, 160) : "")).filter(Boolean).slice(0, 12)
+      : [],
     userInput: typeof entry.userInput === "string" ? entry.userInput.slice(0, 8000) : "",
     personaOutput: typeof entry.personaOutput === "string" ? entry.personaOutput.slice(0, 8000) : "",
     status: entry.status === "failed" ? "failed" : "completed",
@@ -314,14 +318,19 @@ export function exportConversationAudits(options = {}) {
 export function deleteConversationAudit(auditId) {
   const store = readJsonFile(conversationAuditStorePath, { entries: [] });
   const entries = Array.isArray(store.entries) ? store.entries : [];
+  const deletedEntry = entries.find((entry) => entry?.id === auditId);
   const nextEntries = entries.filter((entry) => entry.id !== auditId);
   writeJsonFile(conversationAuditStorePath, { entries: nextEntries });
-  return { deleted: entries.length !== nextEntries.length };
+  const artifacts = deletedEntry ? deleteConversationArtifactsForAudit(deletedEntry) : createEmptyAuditArtifactDeletionResult();
+  return { deleted: entries.length !== nextEntries.length, artifacts };
 }
 
 export function clearConversationAudits() {
+  const store = readJsonFile(conversationAuditStorePath, { entries: [] });
+  const entries = Array.isArray(store.entries) ? store.entries : [];
+  const artifacts = entries.reduce((summary, entry) => mergeAuditArtifactDeletionResults(summary, deleteConversationArtifactsForAudit(entry)), createEmptyAuditArtifactDeletionResult());
   writeJsonFile(conversationAuditStorePath, { entries: [] });
-  return { deleted: true };
+  return { deleted: true, artifacts };
 }
 
 export async function readAppUpdateStatus() {
@@ -622,6 +631,242 @@ function sanitizeConversationModuleCalls(moduleCalls) {
     }))
     .filter((call) => call.step || call.label)
     .slice(0, maxModuleCallsPerAudit);
+}
+
+function deleteConversationArtifactsForAudit(auditEntry) {
+  return mergeAuditArtifactDeletionResults(deleteConversationHistoryArtifactsForAudit(auditEntry), deleteConversationStateArtifactsForAudit(auditEntry));
+}
+
+function deleteConversationHistoryArtifactsForAudit(auditEntry) {
+  const summary = createEmptyAuditArtifactDeletionResult();
+  if (!auditEntry?.dossierId) return summary;
+
+  const store = readConversationHistoryStore();
+  let changed = false;
+  const targetKey = createConversationHistoryEntryKey(auditEntry.dossierId, auditEntry);
+  const targetUserKey = normalizeUserId(auditEntry);
+  const targetMessageIds = new Set(Array.isArray(auditEntry.conversationHistoryMessageIds) ? auditEntry.conversationHistoryMessageIds : []);
+  const textFragments = createAuditTextFragments(auditEntry);
+  const nextEntries = store.entries.map((entry) => {
+    if (!entry || entry.dossierId !== auditEntry.dossierId) return entry;
+    const entryUserKey = normalizeUserId(entry);
+    if (entry.key !== targetKey && entryUserKey !== targetUserKey) return entry;
+    const messages = Array.isArray(entry.messages) ? entry.messages : [];
+    const nextMessages = messages.filter((message) => !shouldDeleteConversationHistoryMessage(message, auditEntry, targetMessageIds, textFragments));
+    const removedCount = messages.length - nextMessages.length;
+    if (!removedCount) return entry;
+    changed = true;
+    summary.historyMessagesRemoved += removedCount;
+    return { ...entry, messages: nextMessages, updatedAt: new Date().toISOString() };
+  });
+
+  if (changed) writeJsonFile(conversationHistoryStorePath, { entries: nextEntries });
+  return summary;
+}
+
+function deleteConversationStateArtifactsForAudit(auditEntry) {
+  const summary = createEmptyAuditArtifactDeletionResult();
+  if (!auditEntry?.dossierId) return summary;
+
+  const store = readConversationStateStore();
+  const eventId = getConversationAuditEventId(auditEntry);
+  const textFragments = createAuditTextFragments(auditEntry);
+  const userSpeakerId = createAuditUserSpeakerId(auditEntry);
+  let changed = false;
+
+  const nextEntries = store.entries.map((entry) => {
+    if (!entry || entry.dossierId !== auditEntry.dossierId || !entry.state || typeof entry.state !== "object") return entry;
+    const state = entry.state;
+    const shortTermMemory = Array.isArray(state.shortTermMemory) ? state.shortTermMemory : [];
+    const nextShortTermMemory = shortTermMemory.filter((memory) => !shouldDeleteShortTermMemory(memory, eventId, userSpeakerId, textFragments));
+    const shortRemoved = shortTermMemory.length - nextShortTermMemory.length;
+
+    const longTermMemory = Array.isArray(state.longTermMemory) ? state.longTermMemory : [];
+    const nextLongTermMemory = longTermMemory.filter((memory) => !shouldDeleteLongTermMemory(memory, eventId, userSpeakerId, textFragments, auditEntry));
+    const longRemoved = longTermMemory.length - nextLongTermMemory.length;
+
+    const relationshipMemory = Array.isArray(state.relationshipMemory) ? state.relationshipMemory : [];
+    const nextRelationshipMemory = relationshipMemory
+      .map((memory) => scrubRelationshipMemoryForAudit(memory, eventId, userSpeakerId, textFragments, summary))
+      .filter(Boolean);
+    const relationshipRemoved = relationshipMemory.length - nextRelationshipMemory.length;
+
+    if (!shortRemoved && !longRemoved && !relationshipRemoved) return entry;
+    changed = true;
+    summary.shortTermMemoriesRemoved += shortRemoved;
+    summary.longTermMemoriesRemoved += longRemoved;
+    summary.relationshipMemoriesRemoved += relationshipRemoved;
+    return {
+      ...entry,
+      state: {
+        ...state,
+        shortTermMemory: nextShortTermMemory,
+        longTermMemory: nextLongTermMemory,
+        relationshipMemory: nextRelationshipMemory,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+  });
+
+  if (changed) writeJsonFile(conversationStateStorePath, { entries: nextEntries });
+  return summary;
+}
+
+function shouldDeleteConversationHistoryMessage(message, auditEntry, targetMessageIds, textFragments) {
+  if (!message || typeof message !== "object") return false;
+  if (targetMessageIds.has(message.id)) return true;
+  if (!isWithinAuditDeleteWindow(message.timestamp, auditEntry.createdAt)) return false;
+  const content = compactComparableText(message.content);
+  if (!content) return false;
+  if (message.speaker === "user" && content === compactComparableText(auditEntry.userInput)) return true;
+  if (message.speaker === "persona" && textFragments.has(content)) return true;
+  return false;
+}
+
+function shouldDeleteShortTermMemory(memory, eventId, userSpeakerId, textFragments) {
+  if (!memory || typeof memory !== "object") return false;
+  if (eventId && memory.eventId === eventId) return true;
+  const content = compactComparableText(memory.content);
+  if (!content) return false;
+  if (memory.speakerId === userSpeakerId && textFragments.has(content)) return true;
+  if (textFragments.has(content)) return true;
+  return false;
+}
+
+function shouldDeleteLongTermMemory(memory, eventId, userSpeakerId, textFragments, auditEntry) {
+  if (!memory || typeof memory !== "object") return false;
+  if (eventId && memory.sourceEventId === eventId) return true;
+  if (!isWithinAuditDeleteWindow(memory.createdAt, auditEntry.createdAt)) return false;
+  const relatedPeople = Array.isArray(memory.relatedPeople) ? memory.relatedPeople : [];
+  const content = compactComparableText(memory.summary);
+  return relatedPeople.includes(userSpeakerId) && containsAnyAuditText(content, textFragments);
+}
+
+function scrubRelationshipMemoryForAudit(memory, eventId, userSpeakerId, textFragments, summary) {
+  if (!memory || typeof memory !== "object") return memory;
+  if (userSpeakerId && memory.targetUserId !== userSpeakerId) return memory;
+
+  const evidence = Array.isArray(memory.evidence) ? memory.evidence : [];
+  const nextEvidence = evidence.filter((item) => !containsAnyAuditText(compactComparableText(item), textFragments));
+  summary.relationshipEvidenceRemoved += evidence.length - nextEvidence.length;
+
+  const history = Array.isArray(memory.history) ? memory.history : [];
+  const nextHistory = history.filter((item) => {
+    if (eventId && item?.sourceEventId === eventId) return false;
+    return !containsAnyAuditText(compactComparableText(item?.summary), textFragments);
+  });
+  summary.relationshipHistoryItemsRemoved += history.length - nextHistory.length;
+
+  const hasDeletedSummaryText =
+    containsAnyAuditText(compactComparableText(memory.impressionSummary), textFragments) ||
+    containsAnyAuditText(compactComparableText(memory.relationshipSummary), textFragments) ||
+    containsAnyAuditText(compactComparableText(memory.lastInteractionSummary), textFragments);
+
+  if (nextEvidence.length === 0 && nextHistory.length === 0 && hasDeletedSummaryText) {
+    return undefined;
+  }
+
+  if (!hasDeletedSummaryText && nextEvidence.length === evidence.length && nextHistory.length === history.length) return memory;
+
+  return {
+    ...memory,
+    impressionSummary: scrubDeletedAuditFragments(memory.impressionSummary, textFragments),
+    relationshipSummary: scrubDeletedAuditFragments(memory.relationshipSummary, textFragments),
+    lastInteractionSummary: scrubDeletedAuditFragments(memory.lastInteractionSummary, textFragments),
+    evidence: nextEvidence,
+    history: nextHistory,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function extractConversationEventIdFromModuleCalls(moduleCalls) {
+  if (!Array.isArray(moduleCalls)) return "";
+  const eventCall = moduleCalls.find((call) => call && typeof call === "object" && call.step === "event");
+  const output = typeof eventCall?.output === "string" ? eventCall.output : "";
+  if (!output) return "";
+  try {
+    const parsed = JSON.parse(output);
+    if (parsed && typeof parsed.id === "string") return parsed.id.slice(0, 160);
+  } catch {
+    const match = output.match(/"id"\s*:\s*"([^"]+)"/);
+    if (match?.[1]) return match[1].slice(0, 160);
+  }
+  return "";
+}
+
+function getConversationAuditEventId(auditEntry) {
+  return typeof auditEntry?.conversationEventId === "string" && auditEntry.conversationEventId
+    ? auditEntry.conversationEventId
+    : extractConversationEventIdFromModuleCalls(auditEntry?.moduleCalls);
+}
+
+function createAuditUserSpeakerId(auditEntry) {
+  const userId = Number(auditEntry?.userId);
+  return Number.isFinite(userId) && userId > 0 ? `user:${userId}` : "";
+}
+
+function createAuditTextFragments(auditEntry) {
+  const fragments = new Set();
+  for (const value of [auditEntry?.userInput, auditEntry?.personaOutput]) {
+    const compact = compactComparableText(value);
+    if (compact) fragments.add(compact);
+    if (typeof value === "string") {
+      value
+        .split(/\n+/)
+        .map(compactComparableText)
+        .filter(Boolean)
+        .forEach((item) => fragments.add(item));
+    }
+  }
+  return fragments;
+}
+
+function containsAnyAuditText(text, fragments) {
+  if (!text) return false;
+  for (const fragment of fragments) {
+    if (fragment && (text.includes(fragment) || fragment.includes(text))) return true;
+  }
+  return false;
+}
+
+function scrubDeletedAuditFragments(value, fragments) {
+  if (typeof value !== "string") return "";
+  let next = value;
+  for (const fragment of fragments) {
+    if (!fragment) continue;
+    next = next.split(fragment).join("");
+  }
+  return next.replace(/\s+/g, " ").trim() || "一轮已删除的对话内容已从关系记忆中移除。";
+}
+
+function compactComparableText(value) {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+function isWithinAuditDeleteWindow(candidateTime, auditTime) {
+  const candidateMs = Date.parse(candidateTime || "");
+  const auditMs = Date.parse(auditTime || "");
+  if (!Number.isFinite(candidateMs) || !Number.isFinite(auditMs)) return true;
+  return Math.abs(candidateMs - auditMs) <= 30 * 60 * 1000;
+}
+
+function createEmptyAuditArtifactDeletionResult() {
+  return {
+    historyMessagesRemoved: 0,
+    shortTermMemoriesRemoved: 0,
+    longTermMemoriesRemoved: 0,
+    relationshipMemoriesRemoved: 0,
+    relationshipHistoryItemsRemoved: 0,
+    relationshipEvidenceRemoved: 0,
+  };
+}
+
+function mergeAuditArtifactDeletionResults(left, right) {
+  const next = createEmptyAuditArtifactDeletionResult();
+  for (const key of Object.keys(next)) {
+    next[key] = (left?.[key] ?? 0) + (right?.[key] ?? 0);
+  }
+  return next;
 }
 
 function applyGlobalConversationStates(dossiers) {

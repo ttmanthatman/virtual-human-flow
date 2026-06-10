@@ -130,6 +130,7 @@ export interface LongTermMemory {
   createdAt: string;
   lastAccessedAt?: string;
   importance: number;
+  sourceEventId?: string;
 }
 
 export interface RelationshipMemory {
@@ -145,6 +146,7 @@ export interface RelationshipMemory {
     id: string;
     summary: string;
     createdAt: string;
+    sourceEventId?: string;
   }[];
 }
 
