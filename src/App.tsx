@@ -36,6 +36,7 @@ import { defaultLlmConfig, seedMessages, seedState } from "./data/seedState";
 import { runConversationPipeline } from "./pipeline/conversationPipeline";
 import { generateDossierFromDescription, generateSceneFromDescription } from "./pipeline/generators";
 import { evaluateProfileSceneConsistency } from "./pipeline/profileSceneConsistency";
+import { filterPersistableConversationMessages, foldTransientMindFlowMessages, upsertMindFlowChatMessage } from "./chat/mindFlowMessages";
 import packageInfo from "../package.json";
 
 const githubRepositoryUrl = "https://github.com/ttmanthatman/virtual-human-flow";
@@ -196,7 +197,7 @@ function readStoredConversationHistory(historyKey: string) {
 
 function writeStoredConversationHistory(historyKey: string, messages: ChatMessage[]) {
   try {
-    localStorage.setItem(`${conversationHistoryStoragePrefix}:${historyKey}`, JSON.stringify(messages.slice(-maxConversationHistoryMessages)));
+    localStorage.setItem(`${conversationHistoryStoragePrefix}:${historyKey}`, JSON.stringify(filterPersistableConversationMessages(messages).slice(-maxConversationHistoryMessages)));
   } catch {
     // History persistence is best-effort; the active in-memory history still updates.
   }
@@ -1175,6 +1176,7 @@ export function App() {
       content: input.trim(),
       timestamp: nowIso(),
     };
+    const liveReplyMessages: ChatMessage[] = [];
     setMessagesForHistory(sendingHistoryKey, (items) => [...items, userMessage]);
 
     try {
@@ -1185,6 +1187,23 @@ export function App() {
         speaker: activeConversationSpeaker,
         onProgress: (progress) => {
           updateMonitorProgress(progress);
+          if (progress.mindFlow) {
+            setMessagesForHistory(sendingHistoryKey, (items) => upsertMindFlowChatMessage(items, progress.mindFlow!));
+          }
+          if (progress.step === "llmOutput" && progress.status === "completed" && progress.replyOutput && liveReplyMessages.length === 0) {
+            const liveSegments = normalizeReplySegments(progress.replyOutput);
+            const liveReply = progress.replyOutput.reply;
+            const firstContent = liveSegments[0] || progress.output || "（林安看见了，但没有回复。）";
+            const firstReplyMessage: ChatMessage = {
+              id: makeId("msg"),
+              speaker: liveReply ? "persona" : "system",
+              speakerName: liveReply ? state.profile.name : "沉默",
+              content: firstContent,
+              timestamp: nowIso(),
+            };
+            liveReplyMessages.push(firstReplyMessage);
+            setMessagesForHistory(sendingHistoryKey, (items) => [...foldTransientMindFlowMessages(items, "pre_speech"), firstReplyMessage]);
+          }
         },
       });
       setState(result.nextState);
@@ -1193,15 +1212,31 @@ export function App() {
 
       const reply = result.trace.llmOutput.reply || "（林安看见了，但没有回复。）";
       const replySegments = result.trace.llmOutput.reply ? normalizeReplySegments(result.trace.llmOutput) : [reply];
-      const replyMessages: ChatMessage[] = replySegments.map((segment, index) => ({
+      const visibleReplyMessages =
+        liveReplyMessages.length > 0
+          ? liveReplyMessages.map((message, index) => ({
+              ...message,
+              speakerName: result.trace.llmOutput.reply ? result.nextState.profile.name : message.speakerName,
+              trace: index === 0 ? result.trace : message.trace,
+            }))
+          : [];
+      const remainingReplySegments = replySegments.slice(visibleReplyMessages.length);
+      const remainingReplyMessages: ChatMessage[] = remainingReplySegments.map((segment, index) => ({
         id: makeId("msg"),
         speaker: result.trace.llmOutput.reply ? "persona" : "system",
         speakerName: result.trace.llmOutput.reply ? result.nextState.profile.name : "沉默",
         content: segment,
         timestamp: nowIso(),
-        trace: index === 0 ? result.trace : undefined,
+        trace: visibleReplyMessages.length === 0 && index === 0 ? result.trace : undefined,
       }));
-      setMessagesForHistory(sendingHistoryKey, (items) => [...items, ...replyMessages]);
+      const replyMessages = visibleReplyMessages.length > 0 ? [...visibleReplyMessages, ...remainingReplyMessages] : remainingReplyMessages;
+      setMessagesForHistory(sendingHistoryKey, (items) => {
+        const folded = foldTransientMindFlowMessages(items).map((message) => {
+          const replacement = visibleReplyMessages.find((replyMessage) => replyMessage.id === message.id);
+          return replacement ?? message;
+        });
+        return [...folded, ...remainingReplyMessages];
+      });
       await persistConversationHistoryMessages(sendingDossierId, [userMessage, ...replyMessages]);
       await syncConversationState(result.nextState, {
         userInput: userMessage.content,
@@ -1221,6 +1256,7 @@ export function App() {
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "流程运行失败";
       setError(message);
+      setMessagesForHistory(sendingHistoryKey, (items) => foldTransientMindFlowMessages(items));
       await persistConversationHistoryMessages(sendingDossierId, [userMessage]);
       await recordConversationAudit({
         dossierId: activeDossierId,
@@ -1717,7 +1753,7 @@ export function App() {
 
           <div className="message-list">
             {messages.map((message) => (
-              <article className={`message ${message.speaker}`} key={message.id}>
+              <article className={`message ${message.speaker}${message.messageType === "mind_flow" ? " mind-flow" : ""}`} key={message.id}>
                 <div>
                   <strong>{message.speakerName}</strong>
                   <time>{new Date(message.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>

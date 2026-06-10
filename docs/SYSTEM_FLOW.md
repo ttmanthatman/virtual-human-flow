@@ -16,7 +16,7 @@
 
 人物档案显示分成预览和详细。详细档案直接来自 `CharacterProfile` 的 `fullLifeStory`、`lifeEvents`、`personalityFacets` 和 `relationships`；预览短文由 DeepSeek 生成，不由源码手写。角色缺少 `personaDossier.previewSummary` 时，UI 显示“预览生成中”并在左侧档案卡显示扫光动画；登录用户打开该角色后，前端调用 DeepSeek 生成短预览，再通过 `/api/persona-dossiers/:id/preview` 全局保存。短预览生成和管理员人物/场景生成使用独立生成状态，不设置聊天 `isRunning`，因此生成过程中仍可发送对话。
 
-后台会记录每个登录用户的一次输入、虚拟人输出和本轮对话的模块调用记录，并在新审计记录里保存本轮 `conversationEventId` 和中间栏消息 ID，作为删除同轮运行态的锚点。审计记录写入 `.conversation-audits.local.json`，中间栏历史写入 `.conversation-histories.local.json`，角色全局对话运行态写入 `.conversation-states.local.json`，共享档案写入 `.persona-dossiers.local.json`；这些都是运行时文件，被 `.gitignore` 忽略。只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计，也可以通过 `/api/conversation-audits/export` 导出所选记录或完整导出所有用户的所有输入输出审计记录；删除审计时会级联清理同轮中间栏消息、短期记忆、长期记忆和关系记忆片段。管理员还可以通过 `/api/admin/conversation-histories` 按人物查看各用户中间栏历史。
+后台会记录每个登录用户的一次输入、虚拟人输出和本轮对话的模块调用记录，并在新审计记录里保存本轮 `conversationEventId` 和中间栏消息 ID，作为删除同轮运行态的锚点。审计记录写入 `.conversation-audits.local.json`，中间栏历史写入 `.conversation-histories.local.json`，角色全局对话运行态写入 `.conversation-states.local.json`，共享档案写入 `.persona-dossiers.local.json`；这些都是运行时文件，被 `.gitignore` 忽略。中间栏临时心理流来自 `PipelineStepProgress.mindFlow`，只在当前轮 streaming 展示和折叠，不写入后台历史。只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计，也可以通过 `/api/conversation-audits/export` 导出所选记录或完整导出所有用户的所有输入输出审计记录；删除审计时会级联清理同轮中间栏消息、短期记忆、长期记忆和关系记忆片段。管理员还可以通过 `/api/admin/conversation-histories` 按人物查看各用户中间栏历史。
 
 重要约束：Reply LLM 只接收自然语言上下文，只生成角色说出口的话。不能把 JSON、字段名、输出契约、工程术语或类似编程语言的内容混进这一步。
 
@@ -590,12 +590,23 @@ flowchart TD
     UPDATE --> SIGNAL["evaluateRuntimeSignals"]
     SIGNAL --> APPLY["applyRuntimeSignalEvaluation"]
     APPLY --> RETURN["返回 nextState + PipelineTrace"]
+    SCENE --> MIND["emit pre-speech mindFlow"]
+    APPRAISAL --> MIND
+    MEM --> MIND
+    DECISION --> MIND
+    REPLY --> FOLD["App Shell 折叠 pre-speech 心理流并显示第一句"]
+    UPDATE --> POSTMIND["emit post-speech mindFlow"]
+    SIGNAL --> POSTMIND
+    APPLY --> POSTMIND
     SAFETY["safetyContinuity: 安全澄清/旧危险循环判断"] --> APPRAISAL
     SAFETY --> DECISION
     SAFETY --> PROMPT
     SAFETY --> UPDATE
     PROGRESS1 --> TRACE["onProgress liveTrace"]
     SCENE --> TRACE
+    MIND --> CHAT["中间栏临时心理流"]
+    POSTMIND --> CHAT
+    FOLD --> CHAT
     APPRAISAL --> TRACE
     MEM --> TRACE
     DECISION --> TRACE
@@ -814,11 +825,12 @@ flowchart LR
 | 登录机制 | initialized | 用户来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室登录接口；未登录可看界面但操作会弹登录浮窗 |
 | 权限控制 | initialized | `isAdmin` 用户可维护共享档案和查看审计；普通登录用户只可选择共享档案并对话 |
 | 共享多人档案 | initialized | 管理员保存到 `.persona-dossiers.local.json`，所有登录用户可读取和使用 |
-| 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`，切换人物时加载对应中间栏历史；连续回复会按 `replyOutput.segments` 写成多条角色消息 |
+| 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`，切换人物时加载对应中间栏历史；连续回复会按 `replyOutput.segments` 写成多条角色消息；`mindFlow` 临时心理流会在当前轮折叠，不进入历史文件 |
 | 管理员用户历史查看 | initialized | 管理员可在当前人物下列出所有用户历史摘要，并选择某个用户以只读方式查看该用户与该人物的中间栏历史 |
 | 角色全局对话运行态 | initialized | 登录用户对话后按 `dossierId` 写入 `.conversation-states.local.json`，读取档案时叠加同一人物的全局记忆、runtime、scene 和 location |
 | 用户关系印象记忆 | initialized | `CharacterState.relationshipMemory` 作为长期记忆中的关系记忆区，按当前说话用户保存自然语言印象、关系总结、证据和最近互动，并进入召回、回复提示词和右侧展示 |
 | 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，包含用户输入、虚拟人输出、conversationEventId、history message ids 和每个 pipeline 模块的输入输出；仅管理员可查看、删除单条、清空、导出所选或完整导出所有用户所有记录；删除会级联清理同轮历史和角色运行态记忆 |
+| 心理流 streaming | initialized | `PipelineTrace.mindFlow` 和 `PipelineStepProgress.mindFlow` 承接每轮说话前/说话后的心理、动作、场景和余波；App Shell 只把它作为临时聊天消息展示，第一句完成后折叠 pre-speech，整轮完成后折叠 post-speech |
 | 人物档案生成 | initialized | 通过 Dossier Interpretation LLM 重新解读用户素材，生成 profile、concerns、longTermMemory 和 runtime 预览 |
 | 人物档案预览 | initialized | 左侧只展示 `profile.displaySummary` 等摘要信息，用户确认后应用 |
 | 生成监视 | initialized | 右侧展示人物短预览、人物档案和场景生成的输入、流式输出和状态；生成不阻塞聊天发送 |

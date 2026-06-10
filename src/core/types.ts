@@ -367,6 +367,23 @@ export type PipelineStepStatus = "pending" | "running" | "streaming" | "complete
 
 export type GenerationMonitorStep = "dossierSummaryGeneration" | "dossierGeneration" | "sceneGeneration";
 
+export type MindFlowPhase = "pre_speech" | "post_speech";
+
+export type MindFlowKind = "scene" | "internal_state" | "memory" | "relationship" | "action" | "speech" | "settle";
+
+export interface MindFlowFrame {
+  id: string;
+  eventId: string;
+  phase: MindFlowPhase;
+  kind: MindFlowKind;
+  sequence: number;
+  title: string;
+  content: string;
+  relatedStep: keyof PipelineTrace;
+  status: PipelineStepStatus;
+  timestamp: string;
+}
+
 export interface PipelineStepProgress {
   step: keyof PipelineTrace | GenerationMonitorStep;
   status: PipelineStepStatus;
@@ -374,6 +391,8 @@ export interface PipelineStepProgress {
   output?: string;
   error?: string;
   transport?: CognitiveModuleTrace<unknown>["transport"] | "local";
+  mindFlow?: MindFlowFrame;
+  replyOutput?: ReplyOutput;
 }
 
 export interface ExpressionLlmRequest {
@@ -434,6 +453,7 @@ export interface StateDelta {
 export interface PipelineTrace {
   event: EventInput;
   sceneContext: TemporalSceneProgression;
+  mindFlow: MindFlowFrame[];
   appraisal: CognitiveModuleTrace<AppraisalResult>;
   memoryRecall: CognitiveModuleTrace<MemoryRecallResult>;
   decision: CognitiveModuleTrace<ResponseDecision>;
@@ -451,6 +471,9 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   trace?: PipelineTrace;
+  messageType?: "normal" | "mind_flow";
+  transient?: boolean;
+  mindFlow?: Pick<MindFlowFrame, "id" | "phase" | "kind" | "status">;
 }
 
 export interface LlmConfig {

@@ -977,6 +977,22 @@ textarea {
   max-width: 95%;
 }
 
+.message.mind-flow {
+  align-self: flex-start;
+  background: #f8fbfc;
+  border: 1px dashed #bfd1d8;
+  color: #52646c;
+  max-width: 88%;
+}
+
+.message.mind-flow strong {
+  color: #3f5963;
+}
+
+.message.mind-flow p {
+  font-size: 13px;
+}
+
 .composer {
   gap: 10px;
 }

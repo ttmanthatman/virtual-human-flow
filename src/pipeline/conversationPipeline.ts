@@ -1,4 +1,4 @@
-import { CharacterState, CognitiveModuleTrace, LlmConfig, PipelineStepProgress, PipelineTrace } from "../core/types";
+import { CharacterState, CognitiveModuleTrace, LlmConfig, MindFlowFrame, PipelineStepProgress, PipelineTrace } from "../core/types";
 import { runAppraisal } from "./appraisal";
 import { retrieveMemory } from "./memoryRetrieval";
 import { decideResponse } from "./responseDecision";
@@ -33,6 +33,24 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     roomId: "main_room",
     content,
   };
+  const mindFlow: MindFlowFrame[] = [];
+  const emitMindFlow = (frame: Omit<MindFlowFrame, "id" | "eventId" | "sequence" | "timestamp">) => {
+    const nextFrame: MindFlowFrame = {
+      ...frame,
+      id: `mind_${event.id}_${mindFlow.length + 1}`,
+      eventId: event.id,
+      sequence: mindFlow.length + 1,
+      timestamp: new Date().toISOString(),
+    };
+    mindFlow.push(nextFrame);
+    emit({
+      step: frame.relatedStep,
+      status: frame.status,
+      output: `${frame.title}：${frame.content}`,
+      transport: "local",
+      mindFlow: nextFrame,
+    });
+  };
 
   emit({ step: "event", status: "completed", input: summarizeText(content), output: `${speaker.name}说：「${content}」`, transport: "local" });
 
@@ -43,6 +61,14 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     input: "当前人物、原场景、物理位置和当地真实时间",
     output: formatSceneContext(sceneContext),
     transport: "local",
+  });
+  emitMindFlow({
+    phase: "pre_speech",
+    kind: "scene",
+    relatedStep: "sceneContext",
+    status: "completed",
+    title: "场景先动了一下",
+    content: summarizeText(formatSceneMindFlow(sceneContext), 220),
   });
 
   emit({ step: "appraisal", status: "running", input: "事件评估模块输入\n\n" + summarizeText(event.content), output: "等待模型输出..." });
@@ -56,6 +82,14 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     input: "事件评估模块输入\n\n" + summarizeText(event.content),
     output: appraisalNarrative,
     transport: appraisal.transport,
+  });
+  emitMindFlow({
+    phase: "pre_speech",
+    kind: "internal_state",
+    relatedStep: "appraisal",
+    status: "completed",
+    title: "心里先有了判断",
+    content: summarizeText(formatAppraisalMindFlow(appraisal.output), 260),
   });
 
   emit({
@@ -75,6 +109,14 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     output: memoryNarrative,
     transport: memoryRecall.transport,
   });
+  emitMindFlow({
+    phase: "pre_speech",
+    kind: memoryNarrative.includes("关系") ? "relationship" : "memory",
+    relatedStep: "memoryRecall",
+    status: "completed",
+    title: "记忆和关系浮上来",
+    content: summarizeText(memoryNarrative || "没有特别强的记忆浮上来，她更多是在观察当前这句话。", 260),
+  });
 
   emit({ step: "decision", status: "running", input: "回应决策模块输入\n\n" + summarizeText([appraisalNarrative, memoryNarrative].filter(Boolean).join("\n")), output: "等待模型输出..." });
   const decision = await decideResponse(event, appraisal.output, memoryNarrative, sceneAwareState, llmConfig, (output) =>
@@ -87,6 +129,14 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     input: "回应决策模块输入\n\n" + summarizeText([appraisalNarrative, memoryNarrative].filter(Boolean).join("\n")),
     output: decisionNarrative,
     transport: decision.transport,
+  });
+  emitMindFlow({
+    phase: "pre_speech",
+    kind: "action",
+    relatedStep: "decision",
+    status: "completed",
+    title: "话到嘴边之前",
+    content: summarizeText(formatDecisionMindFlow(decision.output), 260),
   });
 
   const llmRequest = generateNaturalPromptRequest(
@@ -110,7 +160,13 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
   const llmOutput = await runLlm(llmRequest, llmConfig, { event, state: sceneAwareState, decision: decision.output }, (output) =>
     emit({ step: "llmOutput", status: "streaming", output: summarizeText(output) }),
   );
-  emit({ step: "llmOutput", status: "completed", output: llmOutput.reply || "（林安看见了，但没有回复。）", transport: "external_llm" });
+  emit({
+    step: "llmOutput",
+    status: "completed",
+    output: llmOutput.reply || "（林安看见了，但没有回复。）",
+    transport: "external_llm",
+    replyOutput: llmOutput,
+  });
 
   emit({
     step: "stateUpdate",
@@ -131,6 +187,14 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     (output) => emit({ step: "stateUpdate", status: "streaming", output: summarizeText(output) }),
   );
   emit({ step: "stateUpdate", status: "completed", output: formatCognitiveTraceOutput(stateUpdate), transport: stateUpdate.transport });
+  emitMindFlow({
+    phase: "post_speech",
+    kind: "internal_state",
+    relatedStep: "stateUpdate",
+    status: "completed",
+    title: "说完以后还在变化",
+    content: summarizeText(formatStateUpdateMindFlow(stateUpdate.output), 260),
+  });
 
   emit({
     step: "runtimeSignalEvaluation",
@@ -152,6 +216,14 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     (output) => emit({ step: "runtimeSignalEvaluation", status: "streaming", output: summarizeText(output) }),
   );
   emit({ step: "runtimeSignalEvaluation", status: "completed", output: formatCognitiveTraceOutput(runtimeSignalEvaluation), transport: runtimeSignalEvaluation.transport });
+  emitMindFlow({
+    phase: "post_speech",
+    kind: "internal_state",
+    relatedStep: "runtimeSignalEvaluation",
+    status: "completed",
+    title: "身体和情绪重新落点",
+    content: summarizeText(formatRuntimeSignalMindFlow(runtimeSignalEvaluation.output), 260),
+  });
   const { nextState, stateDelta } = applyRuntimeSignalEvaluation(stateAfterUpdate, deltaAfterUpdate, runtimeSignalEvaluation.output);
   const finalStateDelta = {
     ...stateDelta,
@@ -161,12 +233,24 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     ],
   };
   emit({ step: "stateDelta", status: "completed", input: "确定性写回输入\n\n状态更新、信号评估和场景推进已完成", output: formatStateDelta(finalStateDelta), transport: "local" });
+  emitMindFlow({
+    phase: "post_speech",
+    kind: (llmOutput.segments?.length ?? 0) > 1 ? "speech" : "settle",
+    relatedStep: "stateDelta",
+    status: "completed",
+    title: (llmOutput.segments?.length ?? 0) > 1 ? "还有后半句话往外冒" : "余波暂时收住",
+    content:
+      (llmOutput.segments?.length ?? 0) > 1
+        ? "她说完第一句后，心理余波还在推着后面的短句继续出来。"
+        : "她说完后仍有余波，但这一轮没有形成第二句能说出口的话。",
+  });
 
   return {
     nextState,
     trace: {
       event,
       sceneContext,
+      mindFlow,
       appraisal,
       memoryRecall,
       decision,
@@ -218,6 +302,43 @@ function formatSceneContext(sceneContext: PipelineTrace["sceneContext"]) {
     `原因：${sceneContext.reason}`,
     `地理约束：${sceneContext.locationPlausibility}`,
   ].join("\n");
+}
+
+function formatSceneMindFlow(sceneContext: PipelineTrace["sceneContext"]) {
+  const transition =
+    sceneContext.previousSceneTitle && sceneContext.nextSceneTitle && sceneContext.previousSceneTitle !== sceneContext.nextSceneTitle
+      ? `${sceneContext.previousSceneTitle} 转到 ${sceneContext.nextSceneTitle}`
+      : sceneContext.nextSceneTitle || sceneContext.previousSceneTitle || "现场暂时不变";
+  return `${sceneContext.localTimeLabel}，${transition}。${sceneContext.reason}`;
+}
+
+function formatAppraisalMindFlow(appraisal: PipelineTrace["appraisal"]["output"]) {
+  const danger = appraisal.dangerState.isInDanger ? `危险感 ${appraisal.dangerState.level.toFixed(2)}` : "没有直接危险";
+  const composure = appraisal.composureRisk.shouldLoseComposure ? `失态风险 ${appraisal.composureRisk.level.toFixed(2)}` : "还能压住外壳";
+  return [appraisal.narrative || appraisal.appraisalSummary, danger, composure].filter(Boolean).join(" ");
+}
+
+function formatDecisionMindFlow(decision: PipelineTrace["decision"]["output"]) {
+  const rhythm =
+    decision.replyRhythm === "none"
+      ? "话没有形成出口。"
+      : decision.replyRhythm === "single"
+        ? "会先压成一句能说出口的话。"
+        : decision.replyRhythm === "multi_turn"
+          ? "第一句后面还可能继续补出来。"
+          : "短句会先冲出来。";
+  return [decision.narrative || decision.rationale, rhythm].filter(Boolean).join(" ");
+}
+
+function formatStateUpdateMindFlow(stateUpdate: PipelineTrace["stateUpdate"]["output"]) {
+  const relationship = stateUpdate.userRelationshipMemory?.relationshipSummary ? `关系里留下：${stateUpdate.userRelationshipMemory.relationshipSummary}` : "";
+  return [stateUpdate.narrative || stateUpdate.internalStateNote, relationship].filter(Boolean).join(" ");
+}
+
+function formatRuntimeSignalMindFlow(runtimeSignal: PipelineTrace["runtimeSignalEvaluation"]["output"]) {
+  const mood = runtimeSignal.derivedMood?.label ? `情绪落在「${runtimeSignal.derivedMood.label}」` : "";
+  const energy = typeof runtimeSignal.energy === "number" ? `能量 ${runtimeSignal.energy.toFixed(2)}` : "";
+  return [runtimeSignal.narrative || runtimeSignal.rationale, mood, energy].filter(Boolean).join(" ");
 }
 
 function formatStateDelta(stateDelta: PipelineTrace["stateDelta"]) {

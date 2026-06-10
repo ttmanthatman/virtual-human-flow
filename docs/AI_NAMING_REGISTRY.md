@@ -42,6 +42,8 @@
 | 回复分段 | `replyOutput.segments` | runtime field | 从自然语言角色回复归一化出的多条聊天消息，用于 `multi_turn` 或 `burst` 展示；不是 Reply LLM JSON 契约 | `replyArrayContract`, `messageJson` |
 | Prompt 生成器 | `promptGenerator` | pipeline module | 把认知模块输出转换成自然语言回复上下文 | `promptBuilder` 作为概念名 |
 | 状态更新计划 | `stateUpdatePlan` | runtime object | State Update LLM 生成的结构化状态变化 | `stateDeltaDraft` |
+| 心理流帧 | `mindFlowFrame` | runtime object | 每轮对话中可 streaming 到中间栏的心理、场景、动作和余波片段；临时展示，不写入历史 | `thoughtBubble`, `debugTyping` |
+| 心理流消息 | `mindFlowChatMessage` | app state object | App Shell 用来临时展示 `mindFlowFrame` 的中间栏消息，发言后折叠 | `hiddenReasoningMessage`, `pipelineBubble` |
 | 性格特性 | `personalityFacet` | domain object | 一个性格摘要背后的来源、张力和表达方式 | `traitDefinition` |
 | 状态信号详情 | `runtimeSignalProfile` | domain object | 能量、情绪、情绪倾向、唤醒度显示值背后的自然语言考量 | `metricDetail` |
 | 状态信号评估 | `runtimeSignalEvaluation` | cognitive module | 专门评估能量、情绪、情绪倾向、唤醒度的 LLM 模块 | `derivedMoodUpdater` |
@@ -107,7 +109,8 @@
 | State Updater | `src/pipeline/stateUpdater.ts` | 通过 State Update LLM 生成状态更新计划，再确定性写回；安全澄清会降低直接危险警报但保留关系余波 | state, event, replyOutput, context, llmConfig | next state, `StateDelta`, `stateUpdate` | Conversation Pipeline | Cognitive Module Client, Safety Continuity |
 | Runtime Signal Evaluator | `src/pipeline/runtimeSignalEvaluator.ts` | 通过专门 LLM 模块评估能量、情绪、情绪倾向、唤醒度 | state, event, replyOutput, appraisal/memory/decision/stateUpdatePlan, llmConfig | `runtimeSignalEvaluation`, next runtime signals | Conversation Pipeline | Cognitive Module Client |
 | Safety Continuity | `src/pipeline/safetyContinuity.ts` | 识别孩子/家人安全澄清和澄清后普通话题错位，避免严重余波无限回到旧危险循环 | `CharacterState`, `EventInput` | boolean/narrative helpers | Appraisal, Response Decision, Prompt Generator, State Updater | Core Types |
-| Conversation Pipeline | `src/pipeline/conversationPipeline.ts` | 串联一轮同步响应路径，并在认知模块前接入时间场景推进 | content, state, llmConfig | next state, trace | App Shell | pipeline steps, Temporal Scene Progression |
+| Mind Flow Messages | `src/chat/mindFlowMessages.ts` | 将 `MindFlowFrame` 转成中间栏临时消息，负责 upsert、折叠和持久化过滤 | `MindFlowFrame`, `ChatMessage[]` | `ChatMessage[]` | App Shell, verification scripts | Core Types |
+| Conversation Pipeline | `src/pipeline/conversationPipeline.ts` | 串联一轮同步响应路径，并在认知模块前接入时间场景推进和心流 streaming | content, state, llmConfig | next state, trace + `mindFlow` | App Shell | pipeline steps, Temporal Scene Progression |
 | Generators | `src/pipeline/generators.ts` | 通过 LLM 解读用户人物/场景素材，并确定性归一化为待应用预览 | 描述文本、当前状态、LLM 配置 | `CharacterState` | App Shell | Cognitive Module Client, Core Types |
 | Profile Scene Consistency | `src/pipeline/profileSceneConsistency.ts` | 通过 LLM 判断人物档案和场景是否匹配，并返回是否需要扭曲时空密码 | `CharacterState`, `LlmConfig` | `ProfileSceneConsistencyResult` | App Shell | Cognitive Module Client |
 | DeepSeek Local Proxy | `vite.config.ts` | 在本地开发服务器中代理 DeepSeek Chat Completions，固定 flash 模型、关闭 thinking 并保存根目录密钥文件 | `/api/deepseek-config`, `/api/deepseek-chat` | DeepSeek 响应或配置状态 | App Shell | DeepSeek API |
@@ -116,6 +119,7 @@
 | Global Conversation State Verification | `scripts/verify-global-conversation-state.mjs` | 在临时运行目录验证用户 A 写入角色运行态后用户 B 和全局读取都能承接，同时中间栏消息仍按用户隔离 | 无 | pass/fail | npm script | Server Support |
 | Conversation Message History Verification | `scripts/verify-conversation-message-history.mjs` | 在临时运行目录验证中间栏消息历史按用户和档案保存、读取和隔离 | 无 | pass/fail | npm script | Server Support |
 | Admin History And Module Audit Verification | `scripts/verify-admin-history-and-module-audit.mjs` | 验证管理员能按人物列出/读取用户历史，审计会保存模块调用记录，删除审计会级联清理历史和运行态记忆 | 无 | pass/fail | npm script | Server Support |
+| Mind Flow Streaming Verification | `scripts/verify-mind-flow-streaming.mjs` | 验证说话前心理流 streaming、第一句后折叠、说话后余波继续并产生后续发言或收住沉默 | 无 | pass/fail | npm script | Conversation Pipeline, Mind Flow Messages |
 | Audit Modal Scroll Verification | `scripts/verify-audit-modal-scroll.mjs` | 用真实 App Shell 样式构造大量审计记录，验证管理员审计浮层内部列表可滚动且不会被父级裁掉 | 无 | pass/fail | npm script | App Shell |
 | User Relationship Memory Verification | `scripts/verify-user-relationship-memory.mjs` | 验证 State Update 会按当前说话用户写入自然语言关系印象记忆，并回写关系备注 | 无 | pass/fail | npm script | State Updater |
 | Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录站内手动更新、VPS git 工作树配置、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | manualVpsUpdate |
@@ -196,7 +200,11 @@
 | `createAdminConversationHistoryKey` | `src/App.tsx` | 为管理员查看其他用户历史生成前端只读历史桶键 | historyKey | string | 无 | implemented |
 | `createConversationSpeaker` | `src/App.tsx` | 将登录用户归一化为 pipeline 事件说话者身份 | user | `{ id, name }` | 无 | implemented |
 | `readStoredConversationHistory` | `src/App.tsx` | 从 localStorage 读取指定历史桶 | historyKey | ChatMessage[]? | 读取 localStorage | implemented |
-| `writeStoredConversationHistory` | `src/App.tsx` | 将指定历史桶截断后写入 localStorage | historyKey, messages | void | 写入 localStorage | implemented |
+| `writeStoredConversationHistory` | `src/App.tsx` | 过滤临时心理流后，将指定历史桶截断写入 localStorage | historyKey, messages | void | 写入 localStorage | implemented |
+| `createMindFlowChatMessage` | `src/chat/mindFlowMessages.ts` | 将一个 `MindFlowFrame` 转成中间栏临时系统消息 | frame | ChatMessage | 无 | implemented |
+| `upsertMindFlowChatMessage` | `src/chat/mindFlowMessages.ts` | 将心理流帧插入或更新到当前消息列表，支持 streaming 过程中稳定刷新 | messages, frame | ChatMessage[] | 无 | implemented |
+| `foldTransientMindFlowMessages` | `src/chat/mindFlowMessages.ts` | 按阶段折叠临时心理流消息；不传阶段时折叠全部心理流 | messages, phase? | ChatMessage[] | 无 | implemented |
+| `filterPersistableConversationMessages` | `src/chat/mindFlowMessages.ts` | 过滤不应写入本地缓存和后台历史的临时心理流消息 | messages | ChatMessage[] | 无 | implemented |
 | `normalizeReplySegments` | `src/App.tsx` | 将 `ReplyOutput.segments` 归一化为中间栏可展示和可保存的多条消息内容 | replyOutput | string[] | 无 | implemented |
 | `setMessagesForHistory` | `src/App.tsx` | 将消息更新写入指定 `conversationHistoryKey`，避免切任务或切用户串历史 | historyKey, updater | void | 更新 App state 和 localStorage | implemented |
 | `loadConversationHistory` | `src/App.tsx` | 切换人物或登录后读取当前用户当前人物的后台中间栏历史，并在后台为空时回填本地缓存 | dossierId, historyKey, cachedMessages? | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-history` 并更新历史桶 | implemented |
@@ -317,6 +325,9 @@
 | `profileSceneConsistency` | cognitive module output | `ProfileSceneConsistencyResult` | 人物档案和场景的匹配结果、冲突理由、是否需要门禁 | Profile Scene Consistency | App Shell | implemented |
 | `pipelineTrace` | `ChatMessage` | `PipelineTrace` | 一轮对话所有中间结果 | conversationPipeline | Pipeline Debug Panel | implemented |
 | `pipelineTrace.sceneContext` | `PipelineTrace` | `TemporalSceneProgression` | Event 后、Appraisal 前的时空场景推进结果 | temporalSceneProgression | Pipeline Debug Panel/audit | implemented |
+| `pipelineTrace.mindFlow` | `PipelineTrace` | `MindFlowFrame[]` | 本轮说话前和说话后的心理、场景、动作和余波 streaming 帧集合 | conversationPipeline | App Shell temporary chat/Pipeline Debug Panel | implemented |
+| `mindFlowFrame.phase` | `MindFlowFrame` | `pre_speech/post_speech` | 区分发言前心理变化和发言后余波 | conversationPipeline | App Shell folding logic | implemented |
+| `mindFlowFrame.kind` | `MindFlowFrame` | enum | 标识心理流内容类型：场景、内部状态、记忆、关系、动作、继续发言或收住 | conversationPipeline | App Shell display/verification | implemented |
 | `prompt` | `ExpressionLlmRequest` | `string` | 交给 Reply LLM 的自然语言上下文 | promptGenerator | llmClient/UI | implemented |
 | `outputContract` | `CognitiveModuleRequest` | `string` | 认知模块结构化输出约束，不进入 Reply LLM prompt | cognitive modules | cognitiveModuleClient/backend | implemented |
 | `appraisal.narrative` | `AppraisalResult` | `string?` | Appraisal LLM 输出的可选自然语言叙事说明 | appraisal | Pipeline Debug Panel/downstream cognitive context | implemented |
@@ -344,6 +355,11 @@
 | `stateUpdate` | `PipelineTrace` | `CognitiveModuleTrace<StateUpdatePlan>` | State Update LLM 的完整调用记录 | stateUpdater | Pipeline Debug Panel | implemented |
 | `runtimeSignalEvaluation` | `PipelineTrace` | `CognitiveModuleTrace<RuntimeSignalEvaluationResult>` | Runtime Signal Evaluation LLM 的完整调用记录 | runtimeSignalEvaluator | Pipeline Debug Panel | implemented |
 | `pipelineStepProgress` | App state | `PipelineStepProgress` | 执行中某一步的输入、输出、状态和 transport，用于 live trace | conversationPipeline | App Shell | implemented |
+| `pipelineStepProgress.mindFlow` | `PipelineStepProgress` | `MindFlowFrame?` | 当前进度附带的心理流 streaming 帧；只用于当前轮临时 UI | conversationPipeline | App Shell temporary chat | implemented |
+| `pipelineStepProgress.replyOutput` | `PipelineStepProgress` | `ReplyOutput?` | Reply LLM 完成时附带完整回复结果，让 App Shell 能先显示第一句再继续跑后置心理流 | conversationPipeline | App Shell live first reply | implemented |
+| `chatMessage.messageType` | `ChatMessage` | `"normal" / "mind_flow"?` | 标识中间栏消息是否为临时心理流消息 | App Shell/Mind Flow Messages | message list rendering/persistence filter | implemented |
+| `chatMessage.transient` | `ChatMessage` | `boolean?` | 标识消息只用于当前轮展示，不应持久化 | Mind Flow Messages | localStorage/backend history filter | implemented |
+| `chatMessage.mindFlow` | `ChatMessage` | object? | 保存心理流消息对应的帧 ID、阶段、类型和状态 | Mind Flow Messages | folding/upsert logic | implemented |
 | `TraceDisplayProgress` | App Shell type | `Omit<PipelineStepProgress, "output"> & { output?: unknown }` | 右侧流程追踪面板的本地展示态，允许完成态 trace 保留带 `narrative` 的原始输出对象 | App Shell | Pipeline Debug Panel | implemented |
 | `cognitiveModuleTrace.fallbackReason` | `CognitiveModuleTrace` | `string?` | 外部结构化输出无法解析时的回退原因，右侧流程追踪会展示 | cognitiveModuleClient | Pipeline Debug Panel | implemented |
 | `generationMonitorStep` | Core type | `GenerationMonitorStep` | 右侧生成监视可选步骤：`dossierSummaryGeneration`、`dossierGeneration`、`sceneGeneration` | App Shell/generators | live trace UI | implemented |
