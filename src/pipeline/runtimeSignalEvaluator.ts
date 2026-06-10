@@ -50,6 +50,7 @@ export async function evaluateRuntimeSignals(
         "请根据以上所有信息决定四个信号的数值和自然语言说明。",
         "数值范围：energy 0~1；valence -1~1；arousal 0~1。",
         "自然语言说明只描述内部状态、身体感、注意力落点，不写成回复指令。",
+        "不要把“外表克制”写成内在平稳；如果她是在压住崩溃，mood/valence/arousal 的 label 和 cognitiveNarrative 必须保留痛苦、麻木、应激或耗竭的余波。",
         "以这个 JSON 格式回复：",
         '{ energy: number, derivedMood: { valence, arousal, label }, signalProfiles: { energy: {...}, mood: {...}, valence: {...}, arousal: {...} }, rationale: "..." }',
       ].join("\n"),

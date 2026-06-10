@@ -92,6 +92,10 @@ export async function runAppraisal(
     "",
     "角色：" + state.profile.name + "。" + state.profile.background,
     "她此刻的整体状态：" + state.runtime.derivedMood.label,
+    "她此刻的运行时信号：",
+    formatRuntimeSignalNarrative(state),
+    "最近几句对话：",
+    formatRecentConversation(state),
     "她一直装在心里的事：",
     ...activeConcerns.map(
       (concern) =>
@@ -119,6 +123,7 @@ export async function runAppraisal(
     "- 这句话对当事人的触动有多大，是否击中核心创伤、欲望、羞耻、执念、爱、依赖或底线。",
     "- 是否会失态：表情、语气、节奏、逻辑或距离感从平常模式里滑出去。",
     "- 是否需要突破人设外壳式失控：不是乱写 OOC，而是自我控制被击穿，露出更底层、更真实、更危险的反应。",
+    "- 如果她已经处在极低能量、强烈负面、震惊、麻木、崩溃边缘或高压余波里，新的普通闲聊/邀约也要按“和当前状态错位”评估；不能只按新话题表面是否危险来降权。",
     "",
     "Return JSON only: { narrative, eventId, dangerState: { isInDanger, level, sources, rationale }, awarenessState: { isClearHeaded, controlLevel, rationale }, responseNeed: { shouldRespond, rationale }, replyRhythm, emotionalImpact: { level, touchedCore, rationale }, composureRisk: { shouldLoseComposure, level, rationale }, personaBreakRisk: { shouldBreakPersona, level, rationale }, activatedConcerns: [{ concernId, activationScore, matchedTriggers, reason }], eventSalience, appraisalSummary }",
   ].join("\n");
@@ -231,6 +236,23 @@ function normalizeText(value: unknown, fallback = "") {
 function normalizeStringArray(value: unknown, fallback: string[]) {
   if (!Array.isArray(value)) return fallback;
   return value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim());
+}
+
+function formatRuntimeSignalNarrative(state: CharacterState) {
+  return Object.values(state.runtime.signalProfiles)
+    .map((signal) =>
+      [signal.label, signal.summary, signal.considerations.join("；"), signal.cognitiveNarrative].filter(Boolean).join("："),
+    )
+    .join("\n");
+}
+
+function formatRecentConversation(state: CharacterState) {
+  return state.shortTermMemory.length > 0
+    ? state.shortTermMemory
+        .slice(-4)
+        .map((memory) => `${memory.speakerName}刚才说过：「${memory.content}」`)
+        .join("\n")
+    : "刚才没有直接上下文。";
 }
 
 function getRecord(value: unknown) {

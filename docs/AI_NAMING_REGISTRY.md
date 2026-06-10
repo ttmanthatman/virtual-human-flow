@@ -93,10 +93,11 @@
 | Builtin Persona Dossiers | `builtinPersonaDossiers.mjs` | 提供“马可福音10”和“郑州市”全局初始人物/场景/位置档案，并登记生平事件、社会人格位置和熟人关系 | 无 | `PersonaDossier[]` | Server Support | 无 |
 | Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport/fallbackReason | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Appraisal/Memory/Decision/State Update | 外部 LLM endpoint |
 | Cognitive Module Fallback Verification | `scripts/verify-cognitive-module-fallback.mjs` | 伪造未闭合 SSE JSON，验证认知模块会 fallback 而不是抛错卡住 | 无 | pass/fail | npm script | TypeScript compiler |
+| Severe State Continuity Verification | `scripts/verify-severe-state-continuity.mjs` | 伪造重大坏消息和后续普通邀约，验证长期记忆、关系记忆和回应决策不会抹平严重余波 | 无 | pass/fail | npm script | State Updater, Response Decision |
 | Update Button Clickable Verification | `scripts/verify-update-button-clickable.mjs` | 用 Playwright mock 有新版本状态，验证未登录时“更新服务器”按钮仍可点击并进入权限反馈路径 | 无 | pass/fail | npm script | App Shell |
 | Appraisal | `src/pipeline/appraisal.ts` | 通过 LLM 判断事件触发的关切、危险状态、清醒程度、回应必要性、回复节奏、触动强度、失态风险和突破人设外壳风险 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | Conversation Pipeline | Cognitive Module Client |
 | Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 用自然语言候选清单和 LLM 复判判断哪些记忆会浮现；LLM 只选择 ID，完整记忆由本地回填；召回不能退化为敏感词过滤 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` | Conversation Pipeline | Cognitive Module Client |
-| Response Decision | `src/pipeline/responseDecision.ts` | 通过 LLM 消费结构化评估和记忆，决定是否回应、回应模式、单条/连续/爆发节奏、是否失态和是否突破人设外壳 | appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | Conversation Pipeline | Cognitive Module Client |
+| Response Decision | `src/pipeline/responseDecision.ts` | 通过 LLM 消费事件、结构化评估、记忆和运行时信号，决定是否回应、回应模式、单条/连续/爆发节奏、是否失态和是否突破人设外壳，并确定性承接严重余波 | event, appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | Conversation Pipeline | Cognitive Module Client |
 | Prompt Generator | `src/pipeline/promptBuilder.ts` | 将认知模块输出转成只给 Reply LLM 的自然语言 prompt | event, state, appraisal, recall, decision | `ExpressionLlmRequest` | Conversation Pipeline | Core Types |
 | LLM Client | `src/pipeline/llmClient.ts` | 调用 Reply LLM；正式模式只传自然语言 prompt | `ExpressionLlmRequest`, `LlmConfig` | `ReplyOutput` | Conversation Pipeline | 外部 LLM endpoint |
 | State Updater | `src/pipeline/stateUpdater.ts` | 通过 State Update LLM 生成状态更新计划，再确定性写回 | state, event, replyOutput, context, llmConfig | next state, `StateDelta`, `stateUpdate` | Conversation Pipeline | Cognitive Module Client |
@@ -131,20 +132,29 @@
 | `runCognitiveModule` | `src/pipeline/cognitiveModuleClient.ts` | 执行一个认知脑区式 LLM 模块；结构化输出不可解析时用 mockOutput 继续并记录原因 | request, config, mockOutput | CognitiveModuleTrace | 可调用外部 endpoint | implemented |
 | `runAppraisal` | `src/pipeline/appraisal.ts` | 通过 LLM 做事件到角色状态评估，输出危险、清醒、回应必要性、节奏、触动、失态和突破外壳风险 | event, state, llmConfig | CognitiveModuleTrace<AppraisalResult> | 可调用外部 endpoint | implemented |
 | `normalizeAppraisalResult` | `src/pipeline/appraisal.ts` | 将 Appraisal LLM 输出归一化，防止关系、关切数组和事件 ID 形状漂移传入下游 | result, fallback, event, state | AppraisalResult | 无 | implemented |
+| `formatRuntimeSignalNarrative` | `src/pipeline/appraisal.ts`, `src/pipeline/responseDecision.ts` | 将运行时信号 profile 合成为认知模块可读的自然语言状态叙述 | state | string | 无 | implemented |
+| `formatRecentConversation` | `src/pipeline/appraisal.ts` | 将最近短期记忆合成为 Appraisal 可读的近期对话叙述 | state | string | 无 | implemented |
 | `retrieveMemory` | `src/pipeline/memoryRetrieval.ts` | 通过 LLM 召回相关记忆 | event, appraisalNarrative, state, llmConfig | CognitiveModuleTrace<MemoryRecallResult> | 可调用外部 endpoint | implemented |
 | `createMemoryRetrievalContext` | `src/pipeline/memoryRetrieval.ts` | 将事件、自然语言评估和说话者关系合成召回上下文，供同步和未来异步路径复用 | event, appraisalNarrative, state, source | MemoryRetrievalContext | 无 | implemented |
 | `buildNaturalCandidateList` | `src/pipeline/memoryRetrieval.ts` | 将短期上下文、长期记忆和关系记忆候选转成给 Memory Recall LLM 读取的自然语言候选清单 | state, context, speechSpeakerId | string | 无 | implemented |
 | `buildRelationshipMemoryCandidates` | `src/pipeline/memoryRetrieval.ts` | 将 `relationshipMemory` 关系印象转换为长期记忆候选，参与混合召回 | state | LongTermMemory[] | 无 | implemented |
 | `createMemoryCandidates` | `src/pipeline/memoryRetrieval.ts` | 将长期记忆候选转成本地按 ID 回填摘要、参考重要性和空 factors 的候选表 | memories | MemoryCandidate[] | 无 | implemented |
 | `normalizeMemoryRecallResult` | `src/pipeline/memoryRetrieval.ts` | 将 Memory Recall LLM 的 ID 选择结果归一化，并从本地候选表回填完整短期/长期记忆内容 | result, fallbackSelection, retrievalContext, candidates, fallback | MemoryRecallResult | 无 | implemented |
-| `decideResponse` | `src/pipeline/responseDecision.ts` | 通过 LLM 根据完整 AppraisalResult 和记忆决定回应路由 | appraisal, memoryRecallNarrative, state, llmConfig | CognitiveModuleTrace<ResponseDecision> | 可调用外部 endpoint | implemented |
+| `decideResponse` | `src/pipeline/responseDecision.ts` | 通过 LLM 根据事件、完整 AppraisalResult、记忆和运行时信号决定回应路由 | event, appraisal, memoryRecallNarrative, state, llmConfig | CognitiveModuleTrace<ResponseDecision> | 可调用外部 endpoint | implemented |
 | `normalizeResponseDecision` | `src/pipeline/responseDecision.ts` | 将 Response Decision LLM 输出归一化，保证回应模式、回应节奏、是否回应、失态和突破外壳字段稳定 | result, fallback | ResponseDecision | 无 | implemented |
+| `stabilizeDecisionForCurrentState` | `src/pipeline/responseDecision.ts` | 当严重运行时余波遇到普通邀约/工作安排且 LLM 判成礼貌单条回应时，确定性调回失态或爆发式路由 | decision, event, appraisal, state | ResponseDecision | 无 | implemented |
+| `isSevereRuntimeState` | `src/pipeline/responseDecision.ts` | 判断当前运行时能量、效价和状态叙述是否处在严重余波中 | state | boolean | 无 | implemented |
+| `isCasualDiscontinuity` | `src/pipeline/responseDecision.ts` | 判断用户原话是否是普通邀约、闲聊或工作安排这类与严重余波错位的事件 | content | boolean | 无 | implemented |
 | `generateNaturalPromptRequest` | `src/pipeline/promptBuilder.ts` | 生成只含自然语言的 Reply LLM 输入 | event, state, appraisalNarrative, memoryRecallNarrative, decisionNarrative, provider, model | ExpressionLlmRequest | 无 | implemented |
 | `runLlm` | `src/pipeline/llmClient.ts` | 调用 Reply LLM | request, config, simulateInput | ReplyOutput | 可调用外部 endpoint | implemented |
 | `readReplyEventStream` | `src/pipeline/llmClient.ts` | 读取 Reply LLM 的 SSE 输出并累积为回复文本 | response, onStream | ReplyOutput-like object | 调用 onStream 更新 live trace | implemented |
 | `applyStateUpdates` | `src/pipeline/stateUpdater.ts` | 调用 State Update LLM 并写回状态 | state, event, replyOutput, context, llmConfig | nextState, StateDelta, stateUpdate | 写入记忆和状态 | implemented |
 | `normalizeStateUpdatePlan` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 输出归一化，保证 concernUpdates、relationshipUpdates、userRelationshipMemory 和 internalStateNote 稳定 | result, fallback, state, event | StateUpdatePlan | 无 | implemented |
 | `normalizeUserRelationshipMemory` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 生成的当前用户印象和关系总结归一化为自然语言关系记忆 | value, fallback, event | StateUpdatePlan.userRelationshipMemory | 无 | implemented |
+| `strengthenUserRelationshipMemoryForSevereEvent` | `src/pipeline/stateUpdater.ts` | 在重大噩耗、威胁、羞辱或崩溃事件后，把本轮事件确定性合入当前用户关系记忆，避免旧印象覆盖冲击余波 | memory, event, replyOutput, context | StateUpdatePlan.userRelationshipMemory | 无 | implemented |
+| `ensureMentionsCurrentEvent` | `src/pipeline/stateUpdater.ts` | 关系记忆摘要未提到本轮事件时，给摘要补上严重事件前缀 | text, eventContent, prefix | string | 无 | implemented |
+| `isSevereInteraction` | `src/pipeline/stateUpdater.ts` | 判断 Appraisal/Decision 是否表示本轮互动达到重大冲击阈值 | context | boolean | 无 | implemented |
+| `computeInteractionImpact` | `src/pipeline/stateUpdater.ts` | 汇总 Appraisal/Decision 的危险、触动、失态和突破外壳强度，用于长期记忆重要性和状态写回 | context | number | 无 | implemented |
 | `evaluateRuntimeSignals` | `src/pipeline/runtimeSignalEvaluator.ts` | 调用 Runtime Signal Evaluation LLM 评估能量、情绪、情绪倾向、唤醒度 | state, event, replyOutput, context, llmConfig | CognitiveModuleTrace<RuntimeSignalEvaluationResult> | 可调用外部 endpoint | implemented |
 | `applyRuntimeSignalEvaluation` | `src/pipeline/runtimeSignalEvaluator.ts` | 将信号评估结果写回 runtime 并追加 trace 变化 | state, stateDelta, evaluation | nextState, StateDelta | 写入 runtime signals | implemented |
 | `normalizeRuntimeSignalEvaluation` | `src/pipeline/runtimeSignalEvaluator.ts` | 将模型返回的信号评估结果归一化为稳定 UI 结构 | state, evaluation | RuntimeSignalEvaluationResult | 防止模型形状漂移导致 UI 崩溃 | implemented |

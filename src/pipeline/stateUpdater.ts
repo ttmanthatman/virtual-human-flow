@@ -27,7 +27,7 @@ export async function applyStateUpdates(
   onStream?: (output: string) => void,
 ): Promise<{ nextState: CharacterState; stateDelta: StateDelta; stateUpdate: CognitiveModuleTrace<StateUpdatePlan> }> {
   const stateUpdate = await planStateUpdates(state, event, replyOutput, context, llmConfig, onStream);
-  const { nextState, stateDelta } = commitStateUpdates(state, event, replyOutput, stateUpdate.output);
+  const { nextState, stateDelta } = commitStateUpdates(state, event, replyOutput, stateUpdate.output, context);
   return { nextState, stateDelta, stateUpdate };
 }
 
@@ -71,6 +71,14 @@ async function planStateUpdates(
         "",
         "事件评估：",
         context.appraisal.narrative || "",
+        "危险/触动/失态：危险强度 " +
+          (context.appraisal.dangerState?.level ?? 0) +
+          "；触动强度 " +
+          (context.appraisal.emotionalImpact?.level ?? 0) +
+          "；失态强度 " +
+          (context.appraisal.composureRisk?.level ?? 0) +
+          "；突破外壳强度 " +
+          (context.appraisal.personaBreakRisk?.level ?? 0),
         "",
         "记忆浮现：",
         context.memoryRecall.narrative || "没有特别的记忆。",
@@ -89,6 +97,7 @@ async function planStateUpdates(
         "- 关系各维度变化一般在 -0.05 到 +0.05 之间",
         "- 如果没有明显变化，填 0 或不包含该项",
         "- 关系印象(userRelationshipMemory)必须用自然语言写，不要数字",
+        "- userRelationshipMemory 必须合并本轮真实事件，不得只复述旧印象；如果本轮是噩耗、威胁、羞辱、伤害或足以让她崩溃的信息，印象、关系总结、证据和最近互动都必须写出这次冲击。",
       ].join("\n"),
       outputContract:
         "Return JSON: { concernUpdates: [{ concernId, intensityDelta, valenceDelta, arousalDelta, status, note }], relationshipUpdates: [{ targetId, familiarityDelta, trustDelta, affectionDelta, tensionDelta, note }], newConcerns: [], userRelationshipMemory: { targetUserId, targetUserName, impressionSummary, relationshipSummary, evidence: string[], lastInteractionSummary }, internalStateNote }",
@@ -104,7 +113,17 @@ async function planStateUpdates(
   };
 }
 
-function commitStateUpdates(state: CharacterState, event: EventInput, replyOutput: ReplyOutput, stateUpdatePlan: StateUpdatePlan): { nextState: CharacterState; stateDelta: StateDelta } {
+function commitStateUpdates(
+  state: CharacterState,
+  event: EventInput,
+  replyOutput: ReplyOutput,
+  stateUpdatePlan: StateUpdatePlan,
+  context: {
+    appraisal: AppraisalResult;
+    memoryRecall: MemoryRecallResult;
+    decision: ResponseDecision;
+  },
+): { nextState: CharacterState; stateDelta: StateDelta } {
   const concernChanges: string[] = [];
   const relationshipChanges: string[] = [];
   const memoryWrites: string[] = [];
@@ -181,21 +200,22 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
 
   const longTermMemory = [...state.longTermMemory];
   if (stateUpdatePlan.internalStateNote) {
+    const impact = computeInteractionImpact(context);
     longTermMemory.push({
       id: makeId("ltm"),
       summary: stateUpdatePlan.internalStateNote,
       relatedPeople: [event.speakerId ?? "unknown"],
-      relatedConcerns: stateUpdatePlan.concernUpdates.map((update) => update.concernId),
-      emotionalValence: stateUpdatePlan.concernUpdates.length > 0 ? -0.35 : 0,
-      emotionalIntensity: stateUpdatePlan.concernUpdates.length > 0 ? 0.55 : 0.2,
+      relatedConcerns: Array.from(new Set([...stateUpdatePlan.concernUpdates.map((update) => update.concernId), ...context.appraisal.activatedConcerns.map((item) => item.concernId)])),
+      emotionalValence: impact >= 0.7 ? -0.75 : stateUpdatePlan.concernUpdates.length > 0 ? -0.35 : 0,
+      emotionalIntensity: impact >= 0.7 ? round(Math.max(0.72, impact)) : stateUpdatePlan.concernUpdates.length > 0 ? 0.55 : 0.2,
       createdAt: nowIso(),
-      importance: stateUpdatePlan.concernUpdates.length > 0 ? 0.62 : 0.25,
+      importance: impact >= 0.7 ? round(Math.max(0.82, impact)) : stateUpdatePlan.concernUpdates.length > 0 ? 0.62 : 0.25,
     });
     memoryWrites.push("写入 internal_state_note 到长期记忆");
   }
 
   const relationshipMemory = [...(state.relationshipMemory ?? [])];
-  const userRelationshipMemory = stateUpdatePlan.userRelationshipMemory;
+  const userRelationshipMemory = strengthenUserRelationshipMemoryForSevereEvent(stateUpdatePlan.userRelationshipMemory, event, replyOutput, context);
   if (userRelationshipMemory?.targetUserId) {
     const targetUserId = userRelationshipMemory.targetUserId;
     const existingIndex = relationshipMemory.findIndex((memory) => memory.targetUserId === targetUserId);
@@ -246,8 +266,11 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
   }
 
   const activeConcernIds = nextConcerns.filter((concern) => concern.status === "active" && concern.intensity > 0.15).map((concern) => concern.id);
-  const moodValence = round(clamp(nextConcerns.reduce((sum, concern) => sum + concern.valence * concern.intensity, 0) / Math.max(nextConcerns.length, 1), -1, 1));
-  const moodArousal = round(clamp(nextConcerns.reduce((sum, concern) => sum + concern.arousal * concern.intensity, 0) / Math.max(nextConcerns.length, 1), 0, 1));
+  const moodFromConcerns = nextConcerns.reduce((sum, concern) => sum + concern.valence * concern.intensity, 0) / Math.max(nextConcerns.length, 1);
+  const arousalFromConcerns = nextConcerns.reduce((sum, concern) => sum + concern.arousal * concern.intensity, 0) / Math.max(nextConcerns.length, 1);
+  const impact = computeInteractionImpact(context);
+  const moodValence = round(clamp(impact >= 0.7 ? Math.min(moodFromConcerns, -0.65) : moodFromConcerns, -1, 1));
+  const moodArousal = round(clamp(impact >= 0.7 ? Math.max(arousalFromConcerns, 0.62) : arousalFromConcerns, 0, 1));
 
   runtimeChanges.push(`derivedMood -> valence ${moodValence}, arousal ${moodArousal}`);
 
@@ -266,21 +289,25 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
         derivedMood: {
           valence: moodValence,
           arousal: moodArousal,
-          label: moodValence < -0.25 ? "被旧事牵动，语气更轻" : moodValence > 0.25 ? "稍微放松" : "平稳克制",
+          label: impact >= 0.7 ? "强烈震动，勉强压住" : moodValence < -0.25 ? "被旧事牵动，语气更轻" : moodValence > 0.25 ? "稍微放松" : "平稳克制",
         },
         signalProfiles: {
           ...state.runtime.signalProfiles,
           mood: {
             ...state.runtime.signalProfiles.mood,
-            label: moodValence < -0.25 ? "被旧事牵动，语气更轻" : moodValence > 0.25 ? "稍微放松" : "平稳克制",
+            label: impact >= 0.7 ? "痛苦压住外表" : moodValence < -0.25 ? "被旧事牵动，语气更轻" : moodValence > 0.25 ? "稍微放松" : "平稳克制",
             summary:
-              moodValence < -0.25
+              impact >= 0.7
+                ? "刚才的互动造成强烈冲击，她只能勉强维持外表，不代表内在平稳。"
+                : moodValence < -0.25
                 ? "刚才的互动让某个具体心事浮上来，表层仍克制。"
                 : moodValence > 0.25
                   ? "刚才的互动稍微缓和了她的表层状态。"
                   : "刚才的互动没有明显改变她的整体外显状态。",
             cognitiveNarrative:
-              moodValence < -0.25
+              impact >= 0.7
+                ? "她的注意力被冲击事件占住，身体和表达都在用力压制失控。"
+                : moodValence < -0.25
                 ? "回复后旧事余波仍在，心理预算更集中在维持体面和守住边界上。"
                 : moodValence > 0.25
                   ? "回复后她稍微放松，但关系边界仍然清楚地留在心里。"
@@ -288,13 +315,19 @@ function commitStateUpdates(state: CharacterState, event: EventInput, replyOutpu
           },
           valence: {
             ...state.runtime.signalProfiles.valence,
-            label: moodValence < -0.25 ? "局部偏负面" : moodValence > 0.25 ? "局部缓和" : "接近中性",
-            cognitiveNarrative: "这是当前互动之后形成的局部情绪方向，不是她整个人的全局色彩。",
+            label: impact >= 0.7 ? "强烈负面" : moodValence < -0.25 ? "局部偏负面" : moodValence > 0.25 ? "局部缓和" : "接近中性",
+            cognitiveNarrative:
+              impact >= 0.7 ? "这次互动的负面余波会压过普通闲聊和工作安排。" : "这是当前互动之后形成的局部情绪方向，不是她整个人的全局色彩。",
           },
           arousal: {
             ...state.runtime.signalProfiles.arousal,
-            label: moodArousal > 0.45 ? "内在被牵动，外表压低" : "外表平稳，内部观察",
-            cognitiveNarrative: moodArousal > 0.45 ? "她心里有波动，身体和注意力会先收紧，外在仍努力维持体面。" : "她没有明显被推高，主要处在观察和判断对方意图的状态。",
+            label: impact >= 0.7 ? "内部警报，外部压住" : moodArousal > 0.45 ? "内在被牵动，外表压低" : "外表平稳，内部观察",
+            cognitiveNarrative:
+              impact >= 0.7
+                ? "她看起来可能没立刻爆发，但身体和注意力已经进入强烈应激。"
+                : moodArousal > 0.45
+                  ? "她心里有波动，身体和注意力会先收紧，外在仍努力维持体面。"
+                  : "她没有明显被推高，主要处在观察和判断对方意图的状态。",
           },
         },
       },
@@ -354,6 +387,70 @@ function normalizeUserRelationshipMemory(value: unknown, fallback: StateUpdatePl
 function normalizeNaturalText(value: unknown, fallback: string) {
   if (typeof value !== "string" || !value.trim()) return fallback;
   return value.trim();
+}
+
+function strengthenUserRelationshipMemoryForSevereEvent(
+  memory: StateUpdatePlan["userRelationshipMemory"],
+  event: EventInput,
+  replyOutput: ReplyOutput,
+  context: {
+    appraisal: AppraisalResult;
+    memoryRecall: MemoryRecallResult;
+    decision: ResponseDecision;
+  },
+): StateUpdatePlan["userRelationshipMemory"] {
+  if (!memory || !isSevereInteraction(context)) return memory;
+
+  const targetName = memory.targetUserName || event.speakerName || "这个用户";
+  const currentEventEvidence = `${targetName}本轮说：「${event.content}」`;
+  const replyEvidence = replyOutput.reply ? `她当时回应：「${replyOutput.reply}」` : "她当时没有能正常回应。";
+  const severeAftermath = "这次互动带来了极端冲击，她暂时无法把对方和普通闲聊或工作配合放在同一个心理位置。";
+
+  return {
+    ...memory,
+    impressionSummary: ensureMentionsCurrentEvent(
+      memory.impressionSummary,
+      event.content,
+      `${targetName}这次带来足以让她崩溃的消息；旧有的普通印象被这次冲击盖过。`,
+    ),
+    relationshipSummary: ensureMentionsCurrentEvent(
+      memory.relationshipSummary,
+      event.content,
+      `当前关系被本轮冲击推入高压和失衡，她很难立刻恢复到普通工作关系或轻松社交。`,
+    ),
+    evidence: [...memory.evidence.filter(Boolean), currentEventEvidence, replyEvidence].slice(-6),
+    lastInteractionSummary: `${currentEventEvidence}；${replyEvidence}；${severeAftermath}`,
+  };
+}
+
+function ensureMentionsCurrentEvent(text: string, eventContent: string, prefix: string) {
+  const probe = eventContent.trim().slice(0, 8);
+  if (probe && text.includes(probe)) return text;
+  return `${prefix}${text ? ` ${text}` : ""}`;
+}
+
+function isSevereInteraction(context: {
+  appraisal: AppraisalResult;
+  memoryRecall: MemoryRecallResult;
+  decision: ResponseDecision;
+}) {
+  return computeInteractionImpact(context) >= 0.7 || context.decision.shouldLoseComposure || context.decision.shouldBreakPersona;
+}
+
+function computeInteractionImpact(context: {
+  appraisal: AppraisalResult;
+  memoryRecall: MemoryRecallResult;
+  decision: ResponseDecision;
+}) {
+  return Math.max(
+    context.appraisal.dangerState?.level ?? 0,
+    context.appraisal.emotionalImpact?.level ?? 0,
+    context.appraisal.composureRisk?.level ?? 0,
+    context.appraisal.personaBreakRisk?.level ?? 0,
+    context.appraisal.eventSalience ?? 0,
+    context.decision.shouldLoseComposure ? 0.75 : 0,
+    context.decision.shouldBreakPersona ? 0.86 : 0,
+  );
 }
 
 function normalizeConcernUpdates(value: unknown, fallback: StateUpdatePlan["concernUpdates"], knownConcernIds: Set<string>) {

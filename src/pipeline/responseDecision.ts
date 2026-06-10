@@ -1,7 +1,8 @@
-import { AppraisalResult, CharacterState, CognitiveModuleTrace, LlmConfig, ReplyRhythm, ResponseDecision, ResponseMode } from "../core/types";
+import { AppraisalResult, CharacterState, CognitiveModuleTrace, EventInput, LlmConfig, ReplyRhythm, ResponseDecision, ResponseMode } from "../core/types";
 import { runCognitiveModule } from "./cognitiveModuleClient";
 
 export async function decideResponse(
+  event: EventInput,
   appraisal: AppraisalResult,
   memoryRecallNarrative: string,
   state: CharacterState,
@@ -21,10 +22,11 @@ export async function decideResponse(
       : "评估认为她可以先不回应。",
   };
 
-  return runDecisionModule(appraisal, memoryRecallNarrative, state, llmConfig, mockOutput, onStream);
+  return runDecisionModule(event, appraisal, memoryRecallNarrative, state, llmConfig, mockOutput, onStream);
 }
 
 function runDecisionModule(
+  event: EventInput,
   appraisal: AppraisalResult,
   memoryRecallNarrative: string,
   state: CharacterState,
@@ -37,7 +39,10 @@ function runDecisionModule(
     "你是虚拟人大脑里的行为决策区。你只决定回复路由，不写角色台词。",
     "必须输出严格 JSON，不要 Markdown，不要额外解释。",
     "",
+    "当前用户原话：" + event.content,
     "她此刻的整体状态：" + state.runtime.derivedMood.label,
+    "她此刻的运行时信号：",
+    formatRuntimeSignalNarrative(state),
     "",
     "事件评估：",
     appraisalNarrative,
@@ -59,6 +64,7 @@ function runDecisionModule(
     "- shouldLoseComposure：是否失态。",
     "- shouldBreakPersona：是否突破平常人设外壳进行失控式回应。只有评估强度足够时才为 true。",
     "- narrative/rationale 用自然语言解释为什么这样路由，但不要写具体台词。",
+    "- 如果她上一刻已经处在强烈负面、低能量、震惊、麻木或崩溃边缘，普通邀约、周末计划、工作安排也可能因为时机错位而让她失态、沉默或碎裂回应；不能只用“邀约本身无威胁”来维持礼貌工作状态。",
     "",
     "Return JSON only: { shouldRespond, responseMode, replyRhythm, shouldLoseComposure, shouldBreakPersona, delaySeconds, narrative, rationale }",
   ].join("\n");
@@ -75,10 +81,13 @@ function runDecisionModule(
     llmConfig,
     mockOutput,
     { onStream },
-  ).then((trace) => ({
-    ...trace,
-    output: normalizeResponseDecision(trace.output, mockOutput),
-  }));
+  ).then((trace) => {
+    const normalized = normalizeResponseDecision(trace.output, mockOutput);
+    return {
+      ...trace,
+      output: stabilizeDecisionForCurrentState(normalized, event, appraisal, state),
+    };
+  });
 }
 
 function normalizeResponseDecision(result: unknown, fallback: ResponseDecision): ResponseDecision {
@@ -140,6 +149,60 @@ function normalizeReplyRhythm(value: unknown, fallback: ReplyRhythm): ReplyRhyth
 
 function formatBoolean(value: boolean) {
   return value ? "是" : "否";
+}
+
+function stabilizeDecisionForCurrentState(
+  decision: ResponseDecision,
+  event: EventInput,
+  appraisal: AppraisalResult,
+  state: CharacterState,
+): ResponseDecision {
+  if (!isSevereRuntimeState(state) || !isCasualDiscontinuity(event.content)) return decision;
+  if (!decision.shouldRespond || decision.responseMode === "silence") return decision;
+  if (decision.shouldLoseComposure || decision.shouldBreakPersona || decision.replyRhythm === "burst") return decision;
+
+  const appraisalImpact = Math.max(appraisal.emotionalImpact.level, appraisal.composureRisk.level, appraisal.personaBreakRisk.level, appraisal.dangerState.level);
+  const isSurfaceLowImpact = appraisalImpact <= 0.45;
+  if (!isSurfaceLowImpact) return decision;
+
+  const rationale =
+    "确定性承接：她上一轮仍处在极低能量和强烈负面余波里，普通邀约与当下状态严重错位，不能继续按礼貌工作状态处理。";
+
+  return {
+    ...decision,
+    shouldRespond: true,
+    responseMode: "emotional_outburst",
+    replyRhythm: state.runtime.energy <= 0.15 || state.runtime.derivedMood.valence <= -0.8 ? "burst" : "multi_turn",
+    shouldLoseComposure: true,
+    shouldBreakPersona: state.runtime.energy <= 0.15 || state.runtime.derivedMood.valence <= -0.85,
+    delaySeconds: 0,
+    narrative: [decision.narrative, rationale].filter(Boolean).join("\n"),
+    rationale: [decision.rationale, rationale].filter(Boolean).join("\n"),
+  };
+}
+
+function isSevereRuntimeState(state: CharacterState) {
+  const labels = [
+    state.runtime.derivedMood.label,
+    ...Object.values(state.runtime.signalProfiles).flatMap((profile) => [profile.label, profile.summary, profile.cognitiveNarrative]),
+  ].join(" ");
+  return (
+    state.runtime.energy <= 0.25 ||
+    state.runtime.derivedMood.valence <= -0.65 ||
+    /极低|耗竭|强烈负面|极度负面|痛苦|震惊|崩溃|麻木|绝望|天塌|无法集中|警报/.test(labels)
+  );
+}
+
+function isCasualDiscontinuity(content: string) {
+  return /周末|爬山|约|一起|出去|玩|吃饭|喝|电影|逛|聚|安排|上班|工作|单|项目/.test(content);
+}
+
+function formatRuntimeSignalNarrative(state: CharacterState) {
+  return Object.values(state.runtime.signalProfiles)
+    .map((signal) =>
+      [signal.label, signal.summary, signal.considerations.join("；"), signal.cognitiveNarrative].filter(Boolean).join("："),
+    )
+    .join("\n");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -464,19 +464,21 @@ flowchart TD
 
 ### Response Decision
 
-Response Decision 消费完整 `AppraisalResult`，把状态评估翻译为回复路由：是否回应、回应模式、单条/连续多条/短句爆发、是否失态、是否突破平常人设外壳。它仍不写角色台词；Prompt Generator 会把路由转成自然语言语境交给 Reply LLM。
+Response Decision 消费 `EventInput`、完整 `AppraisalResult`、召回叙述和 `CharacterState` 运行时信号，把状态评估翻译为回复路由：是否回应、回应模式、单条/连续多条/短句爆发、是否失态、是否突破平常人设外壳。它仍不写角色台词；Prompt Generator 会把路由转成自然语言语境交给 Reply LLM。若角色上一轮仍处在极低能量、强烈负面、震惊、麻木或崩溃边缘，而 LLM 把新的普通邀约/工作安排判成低影响礼貌回应，`stabilizeDecisionForCurrentState` 会把路由确定性调回失态或爆发式承接，避免重大事件余波被普通场景抹平。
 
 ```mermaid
 flowchart TD
+    E["EventInput"] --> PROMPT["组装结构化 Decision prompt"]
     A["AppraisalResult"] --> PROMPT["组装结构化 Decision prompt"]
     M["memoryRecallNarrative"] --> PROMPT
-    S["CharacterState"] --> PROMPT
+    S["CharacterState + runtime signal narrative"] --> PROMPT
     S --> MOCK["ResponseDecision fallback"]
     PROMPT --> CLIENT["Cognitive Module Client"]
     MOCK --> CLIENT
     CLIENT --> RAW["LLM ResponseDecision"]
     RAW --> NORM["normalizeResponseDecision"]
-    NORM --> OUT["shouldRespond / responseMode / replyRhythm / shouldLoseComposure / shouldBreakPersona / delaySeconds / rationale"]
+    NORM --> STABLE["stabilizeDecisionForCurrentState"]
+    STABLE --> OUT["shouldRespond / responseMode / replyRhythm / shouldLoseComposure / shouldBreakPersona / delaySeconds / rationale"]
     OUT --> PROMPTGEN["Prompt Generator"]
     OUT --> TRACE["流程追踪"]
 ```
@@ -526,22 +528,25 @@ flowchart TD
     S["当前 CharacterState"] --> PLAN["planStateUpdates"]
     E["EventInput"] --> PLAN
     R["ReplyOutput"] --> PLAN
-    C["Appraisal/Memory/Decision narrative"] --> PLAN
+    C["Appraisal/Memory/Decision narrative + impact levels"] --> PLAN
     PLAN --> CLIENT["State Update LLM JSON 出口"]
     CLIENT --> RAW["StateUpdatePlan raw"]
     RAW --> NORM["normalizeStateUpdatePlan"]
     NORM --> COMMIT["commitStateUpdates"]
+    C --> COMMIT
     S --> COMMIT
     E --> COMMIT
     R --> COMMIT
     COMMIT --> STM["写入 shortTermMemory"]
-    COMMIT --> LTM["可写入 longTermMemory"]
-    COMMIT --> RMEM["写入 relationshipMemory 关系记忆区"]
+    COMMIT --> LTM["按冲击强度写入 longTermMemory"]
+    COMMIT --> RMEM["写入/强化 relationshipMemory 关系记忆区"]
     COMMIT --> REL["更新 relationships"]
     COMMIT --> CONCERN["更新 concerns"]
     COMMIT --> NEXT["nextState + StateDelta"]
     NEXT --> SIGNAL["Runtime Signal Evaluator"]
 ```
+
+重大事件写回有确定性保护：`computeInteractionImpact` 根据 Appraisal/Decision 的危险、触动、失态和突破外壳强度决定长期记忆重要性与情绪强度；`strengthenUserRelationshipMemoryForSevereEvent` 会把本轮噩耗、威胁、羞辱或伤害写进当前用户关系记忆，避免模型把关系摘要回退成旧的礼貌同事印象。
 
 ### Runtime Signal Evaluator
 

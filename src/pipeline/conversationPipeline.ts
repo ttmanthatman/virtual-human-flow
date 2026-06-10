@@ -67,7 +67,7 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
   });
 
   emit({ step: "decision", status: "running", input: "回应决策模块输入\n\n" + summarizeText([appraisalNarrative, memoryNarrative].filter(Boolean).join("\n")), output: "等待模型输出..." });
-  const decision = await decideResponse(appraisal.output, memoryNarrative, state, llmConfig, (output) =>
+  const decision = await decideResponse(event, appraisal.output, memoryNarrative, state, llmConfig, (output) =>
     emit({ step: "decision", status: "streaming", output: summarizeText(output) }),
   );
   const decisionNarrative = formatDecisionNarrative(decision.output);
