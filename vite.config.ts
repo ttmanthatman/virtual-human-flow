@@ -10,6 +10,7 @@ import {
   deleteConversationAudit,
   deletePersonaDossier,
   destroyLocalSession,
+  exportConversationAudits,
   getRequestSession,
   appendConversationHistoryMessages,
   loginWithLiaoChatroom,
@@ -164,6 +165,14 @@ function deepseekProxyPlugin(): Plugin {
         if (pathname === "/api/conversation-audits" && request.method === "GET") {
           if (!requireAdminSession(request, response)) return;
           sendJson(response, 200, { entries: readConversationAudits() });
+          return;
+        }
+
+        if (pathname === "/api/conversation-audits/export" && request.method === "POST") {
+          if (!requireAdminSession(request, response)) return;
+          const body = await readJsonBody(request);
+          const ids = Array.isArray(body.ids) ? body.ids : [];
+          sendJson(response, 200, exportConversationAudits({ ids }));
           return;
         }
 

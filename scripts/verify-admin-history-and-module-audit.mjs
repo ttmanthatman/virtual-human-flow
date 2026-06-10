@@ -12,6 +12,7 @@ try {
   const {
     appendConversationAudit,
     appendConversationHistoryMessages,
+    exportConversationAudits,
     readConversationAudits,
     readConversationHistoryMessagesByKey,
     readConversationHistorySummaries,
@@ -76,10 +77,39 @@ try {
     qoo,
   );
 
+  const yuki = { userId: 702, username: "Yuki", nickname: "Yuki", isAdmin: false };
+  appendConversationAudit(
+    {
+      dossierId: dossier.id,
+      dossierTitle: dossier.title,
+      userInput: "另一个用户的输入",
+      personaOutput: "另一个用户的输出",
+      status: "completed",
+      moduleCalls: [],
+    },
+    yuki,
+  );
+
   const audits = readConversationAudits(20);
   const audit = audits.find((entry) => entry.username === "Qoo" && JSON.stringify(entry.moduleCalls).includes(moduleCallOutput));
   if (!audit) {
     throw new Error("Expected conversation audit to preserve module calls.");
+  }
+
+  const selectedExport = exportConversationAudits({ ids: [audit.id, "missing-audit-id"] });
+  if (selectedExport.scope !== "selected" || selectedExport.count !== 1 || selectedExport.entries[0]?.id !== audit.id) {
+    throw new Error("Expected selected audit export to include only requested matching entries.");
+  }
+  if (!selectedExport.missingIds.includes("missing-audit-id")) {
+    throw new Error("Expected selected audit export to report missing requested ids.");
+  }
+
+  const allExport = exportConversationAudits();
+  if (allExport.scope !== "all" || allExport.count !== 2) {
+    throw new Error("Expected full audit export to include every user's audit entries.");
+  }
+  if (!allExport.entries.some((entry) => entry.username === "Qoo") || !allExport.entries.some((entry) => entry.username === "Yuki")) {
+    throw new Error("Expected full audit export to include all users.");
   }
 
   console.log("admin history and module audit verified");

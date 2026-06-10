@@ -6,6 +6,7 @@ import {
   ChevronsRight,
   Check,
   Database,
+  Download,
   Eye,
   FileText,
   LogIn,
@@ -22,6 +23,8 @@ import {
   ScrollText,
   Send,
   ShieldCheck,
+  Square,
+  SquareCheck,
   Sparkles,
   Trash2,
   UserRound,
@@ -89,14 +92,25 @@ type AuthUser = {
 type ConversationAuditEntry = {
   id: string;
   createdAt: string;
+  userId?: number;
   username: string;
   nickname: string;
+  dossierId?: string;
   dossierTitle: string;
   userInput: string;
   personaOutput: string;
   status: "completed" | "failed";
   error?: string;
   moduleCalls?: ConversationModuleCall[];
+};
+type ConversationAuditExportPayload = {
+  schema: string;
+  exportedAt: string;
+  scope: "all" | "selected";
+  requestedIds: string[];
+  missingIds: string[];
+  count: number;
+  entries: ConversationAuditEntry[];
 };
 type ConversationModuleCall = {
   id: string;
@@ -176,6 +190,23 @@ function writeStoredConversationHistory(historyKey: string, messages: ChatMessag
   }
 }
 
+function createConversationAuditExportFilename(payload: ConversationAuditExportPayload) {
+  const timestamp = payload.exportedAt.replace(/[:.]/g, "-");
+  return `conversation-audits-${payload.scope}-${timestamp}.json`;
+}
+
+function downloadJsonFile(data: unknown, filename: string) {
+  const blob = new Blob([`${JSON.stringify(data, null, 2)}\n`], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function createPersonaDossier(state: CharacterState, dossierDescription: string, sceneDescription: string, title?: string): PersonaDossier {
   const timestamp = nowIso();
   return {
@@ -228,6 +259,7 @@ export function App() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [dossierSyncStatus, setDossierSyncStatus] = useState("登录后读取后台共享档案");
   const [auditEntries, setAuditEntries] = useState<ConversationAuditEntry[]>([]);
+  const [selectedAuditIds, setSelectedAuditIds] = useState<string[]>([]);
   const [auditPanelOpen, setAuditPanelOpen] = useState(false);
   const [auditStatus, setAuditStatus] = useState("管理员可查看用户输入输出");
   const [adminHistorySummaries, setAdminHistorySummaries] = useState<ConversationHistorySummary[]>([]);
@@ -243,6 +275,8 @@ export function App() {
 
   const selectedTraceData = liveTrace[activeStep] ?? (isPipelineTraceStep(activeStep) ? buildCompletedTraceProgress(activeStep, activeTrace) : undefined);
   const traceDisplay = formatTraceDisplay(selectedTraceData);
+  const selectedAuditIdSet = useMemo(() => new Set(selectedAuditIds), [selectedAuditIds]);
+  const allVisibleAuditEntriesSelected = auditEntries.length > 0 && auditEntries.every((entry) => selectedAuditIdSet.has(entry.id));
   const isAuthenticated = Boolean(authToken && authUser);
   const isAdmin = Boolean(authUser?.isAdmin);
   const activeConcernTitles = useMemo(
@@ -678,9 +712,49 @@ export function App() {
       return;
     }
     const data = (await response.json()) as { entries?: ConversationAuditEntry[] };
-    setAuditEntries(Array.isArray(data.entries) ? data.entries : []);
+    const entries = Array.isArray(data.entries) ? data.entries : [];
+    setAuditEntries(entries);
+    setSelectedAuditIds([]);
     setAuditPanelOpen(true);
-    setAuditStatus(data.entries?.length ? "已读取用户输入输出" : "暂无用户输入输出记录");
+    setAuditStatus(entries.length ? "已读取用户输入输出" : "暂无用户输入输出记录");
+  }
+
+  function toggleConversationAuditSelection(auditId: string) {
+    setSelectedAuditIds((items) => (items.includes(auditId) ? items.filter((id) => id !== auditId) : [...items, auditId]));
+  }
+
+  function toggleVisibleConversationAuditSelection() {
+    if (!auditEntries.length) return;
+    const visibleIds = auditEntries.map((entry) => entry.id);
+    if (allVisibleAuditEntriesSelected) {
+      setSelectedAuditIds((items) => items.filter((id) => !visibleIds.includes(id)));
+      return;
+    }
+    setSelectedAuditIds((items) => Array.from(new Set([...items, ...visibleIds])));
+  }
+
+  async function exportConversationAuditEntries(scope: "selected" | "all") {
+    if (!requireAdmin("导出审计记录")) return;
+    const ids = scope === "selected" ? selectedAuditIds : [];
+    if (scope === "selected" && ids.length === 0) {
+      setAuditStatus("请先选择要导出的用户输入输出记录");
+      return;
+    }
+    setAuditStatus(scope === "all" ? "正在导出所有用户输入输出记录..." : "正在导出所选用户输入输出记录...");
+    const response = await fetch("/api/conversation-audits/export", {
+      method: "POST",
+      headers: authHeaders(undefined, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ ids }),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      setAuditStatus(`审计导出失败：${detail.slice(0, 80)}`);
+      return;
+    }
+    const payload = (await response.json()) as ConversationAuditExportPayload;
+    downloadJsonFile(payload, createConversationAuditExportFilename(payload));
+    const missingText = payload.missingIds.length ? `，${payload.missingIds.length} 条已不存在` : "";
+    setAuditStatus(`已导出${scope === "all" ? "所有" : "所选"} ${payload.count} 条用户输入输出记录${missingText}`);
   }
 
   async function deleteConversationAuditEntry(auditId: string) {
@@ -695,6 +769,7 @@ export function App() {
       return;
     }
     setAuditEntries((items) => items.filter((entry) => entry.id !== auditId));
+    setSelectedAuditIds((items) => items.filter((id) => id !== auditId));
     setAuditStatus("已删除一条用户输入输出记录");
   }
 
@@ -711,6 +786,7 @@ export function App() {
       return;
     }
     setAuditEntries([]);
+    setSelectedAuditIds([]);
     setAuditStatus("已清空用户输入输出记录");
   }
 
@@ -1856,6 +1932,21 @@ export function App() {
                 <span>仅管理员可见，后台保留最近 1000 条</span>
               </div>
               <div className="modal-actions">
+                <button
+                  className="icon-button compact"
+                  type="button"
+                  onClick={toggleVisibleConversationAuditSelection}
+                  title={allVisibleAuditEntriesSelected ? "取消选择当前显示" : "选择当前显示"}
+                  disabled={!auditEntries.length}
+                >
+                  {allVisibleAuditEntriesSelected ? <SquareCheck size={15} /> : <Square size={15} />}
+                </button>
+                <button className="secondary-button compact-text-button" type="button" onClick={() => exportConversationAuditEntries("selected")} disabled={!selectedAuditIds.length}>
+                  <Download size={14} /> 导出所选
+                </button>
+                <button className="secondary-button compact-text-button" type="button" onClick={() => exportConversationAuditEntries("all")}>
+                  <Download size={14} /> 全部导出
+                </button>
                 <button className="secondary-button danger-button compact-text-button" type="button" onClick={clearConversationAuditEntries}>
                   <Trash2 size={14} /> 清空
                 </button>
@@ -1869,7 +1960,17 @@ export function App() {
                 auditEntries.map((entry) => (
                   <article className="audit-entry" key={entry.id}>
                     <div className="audit-entry-head">
-                      <strong>{entry.nickname || entry.username}</strong>
+                      <div className="audit-entry-title">
+                        <button
+                          className={selectedAuditIdSet.has(entry.id) ? "icon-button compact selected" : "icon-button compact"}
+                          type="button"
+                          onClick={() => toggleConversationAuditSelection(entry.id)}
+                          title={selectedAuditIdSet.has(entry.id) ? "取消选择这条记录" : "选择这条记录"}
+                        >
+                          {selectedAuditIdSet.has(entry.id) ? <SquareCheck size={15} /> : <Square size={15} />}
+                        </button>
+                        <strong>{entry.nickname || entry.username}</strong>
+                      </div>
                       <div className="audit-entry-actions">
                         <span>{new Date(entry.createdAt).toLocaleString("zh-CN")}</span>
                         <button className="icon-button compact" type="button" onClick={() => deleteConversationAuditEntry(entry.id)} title="删除这条记录">

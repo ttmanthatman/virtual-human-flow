@@ -287,6 +287,28 @@ export function readConversationAudits(limit = 200) {
   return entries.slice(-limit).reverse();
 }
 
+export function exportConversationAudits(options = {}) {
+  const store = readJsonFile(conversationAuditStorePath, { entries: [] });
+  const entries = Array.isArray(store.entries) ? store.entries : [];
+  const rawIds = Array.isArray(options.ids) ? options.ids : [];
+  const selectedIds = rawIds
+    .map((id) => (typeof id === "string" ? id.trim() : ""))
+    .filter(Boolean);
+  const selectedIdSet = selectedIds.length ? new Set(selectedIds) : undefined;
+  const exportedEntries = selectedIdSet ? entries.filter((entry) => selectedIdSet.has(entry?.id)) : entries;
+  const exportedIds = new Set(exportedEntries.map((entry) => entry.id));
+
+  return {
+    schema: "virtual-human-flow.conversationAuditExport.v1",
+    exportedAt: new Date().toISOString(),
+    scope: selectedIdSet ? "selected" : "all",
+    requestedIds: selectedIds,
+    missingIds: selectedIds.filter((id) => !exportedIds.has(id)),
+    count: exportedEntries.length,
+    entries: exportedEntries,
+  };
+}
+
 export function deleteConversationAudit(auditId) {
   const store = readJsonFile(conversationAuditStorePath, { entries: [] });
   const entries = Array.isArray(store.entries) ? store.entries : [];

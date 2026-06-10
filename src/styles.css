@@ -232,6 +232,12 @@ select {
   width: 38px;
 }
 
+.icon-button.selected {
+  background: #e7f2f1;
+  border-color: rgba(15, 118, 110, 0.34);
+  color: #0d5f58;
+}
+
 .workspace {
   display: grid;
   gap: 16px;
@@ -1381,6 +1387,13 @@ pre {
   justify-content: space-between;
 }
 
+.audit-entry-title {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
 .audit-entry-actions {
   align-items: center;
   display: flex;
@@ -1389,6 +1402,9 @@ pre {
 
 .audit-entry-head strong {
   font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .audit-entry-head span,

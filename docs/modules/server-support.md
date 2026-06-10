@@ -2,7 +2,7 @@
 
 ## 边界
 
-Server Support 负责 Node/Vite/生产服务共享的后端能力：登录会话、liao 登录代理、共享档案合并、运行时 JSON 文件、用户私有历史和运行态、审计、管理员历史读取和站内更新执行。它不负责前端 UI 布局或认知模块内部判断。
+Server Support 负责 Node/Vite/生产服务共享的后端能力：登录会话、liao 登录代理、共享档案合并、运行时 JSON 文件、用户私有历史和运行态、审计、管理员审计导出、管理员历史读取和站内更新执行。它不负责前端 UI 布局或认知模块内部判断。
 
 ## 相关文件
 
@@ -17,7 +17,7 @@ Server Support 负责 Node/Vite/生产服务共享的后端能力：登录会话
 ## 输入输出
 
 - 输入：HTTP request、本地 runtime JSON、`builtinPersonaDossiers`、liao 登录响应、git 工作树状态。
-- 输出：auth session、persona dossiers、conversation histories、conversation states、conversation audits、update status/SSE。
+- 输出：auth session、persona dossiers、conversation histories、conversation states、conversation audits、conversation audit export、update status/SSE。
 
 ## 不变量
 
@@ -29,8 +29,8 @@ Server Support 负责 Node/Vite/生产服务共享的后端能力：登录会话
 
 ## 查询线索
 
-- `rg -n "Server Support|authSession|sharedPersonaDossier|userConversationState|conversationAuditEntry|manualVpsUpdate|DeepSeek" docs/AI_NAMING_REGISTRY.md docs/SYSTEM_FLOW.md`
-- `rg -n "requireSession|requireAdminSession|readPersonaDossiers|conversation-history|conversation-state|conversation-audits|app-update" serverSupport.mjs server.mjs vite.config.ts`
+- `rg -n "Server Support|authSession|sharedPersonaDossier|userConversationState|conversationAuditEntry|conversationAuditExport|manualVpsUpdate|DeepSeek" docs/AI_NAMING_REGISTRY.md docs/SYSTEM_FLOW.md`
+- `rg -n "requireSession|requireAdminSession|readPersonaDossiers|conversation-history|conversation-state|conversation-audits|exportConversationAudits|app-update" serverSupport.mjs server.mjs vite.config.ts`
 
 ## 验证
 

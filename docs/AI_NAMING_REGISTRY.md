@@ -62,6 +62,7 @@
 | 对话审计记录 | `conversationAuditEntry` | persisted audit object | 记录每个登录用户的一次输入、虚拟人输出、失败信息和模块调用记录，仅管理员可读 | `chatLog`, `debugRecord` |
 | 管理员用户历史查看 | `adminConversationHistoryAccess` | admin workflow | 管理员在当前人物下选择用户并查看该用户与该人物的中间栏历史 | `globalAdminChat`, `impersonation` |
 | 对话审计删除 | `conversationAuditDeletion` | admin action | 管理员删除单条或清空用户输入输出审计记录 | `logCleanup`, `chatPurge` |
+| 对话审计导出 | `conversationAuditExport` | admin workflow | 管理员将所选用户输入输出记录或全部用户全部输入输出记录导出为 JSON 文件 | `logDownload`, `chatBackup` |
 | 人物场景一致性 | `profileSceneConsistency` | cognitive module | 判断人物档案和场景是否处于同一世界观、时代和社会语境 | `settingMatch`, `sceneFit` |
 | 扭曲时空密码 | `distortionPassword` | permission gate | 人物和场景硬冲突时允许继续应用的本地门禁短语 | `overrideCode`, `adminPassword` |
 | 混合记忆召回 | `hybridMemoryRetrieval` | pipeline design | 记忆召回同时参考自然语言相关度、关切关联、关系关联、情绪显著、近期性和词面线索 | `keywordMemorySearch`, `sensitiveWordRecall` |
@@ -182,6 +183,7 @@
 | `handleDossierGroupChange` | `src/App.tsx` | 管理员修改当前人物档案分组 | groupName | void | 更新 App state | implemented |
 | `deleteConversationAuditEntry` | `src/App.tsx` | 管理员在审计浮层删除单条用户输入输出记录 | auditId | Promise<void> | 调用审计删除 API 并更新 App state | implemented |
 | `clearConversationAuditEntries` | `src/App.tsx` | 管理员在审计浮层清空用户输入输出记录 | 无 | Promise<void> | 调用审计清空 API 并更新 App state | implemented |
+| `exportConversationAuditEntries` | `src/App.tsx` | 管理员导出所选或全部用户输入输出记录 | scope | Promise<void> | 调用 `/api/conversation-audits/export` 并下载 JSON 文件 | implemented |
 | `checkAppUpdate` | `src/App.tsx` | 左上角自动检查服务器是否落后于 GitHub 远端 | 无 | Promise<void> | 调用 `/api/app-update/status` 并更新 UI 状态 | implemented |
 | `handleRunAppUpdate` | `src/App.tsx` | 管理员触发 VPS 手动更新并读取 SSE 日志 | 无 | Promise<void> | 调用 `/api/app-update/run`，显示进度和日志 | implemented |
 | `consumeUpdateEvent` | `src/App.tsx` | 解析更新 SSE data 事件 | event text | void | 更新进度条和日志窗口 | implemented |
@@ -211,6 +213,7 @@
 | `propagateRelationshipInfluence` | `serverSupport.mjs` | 将一个角色的压缩互动余波写入同一用户运行态中与其有关系的其他角色 | dossiers, sourceIndex, interaction, user, now | PersonaDossier[] | 更新当前用户相关角色长期记忆和 relationship notes | implemented |
 | `appendConversationAudit` | `serverSupport.mjs` | 记录登录用户的一次输入输出 | entry, user | ConversationAuditEntry | 写入 `.conversation-audits.local.json` | implemented |
 | `readConversationAudits` | `serverSupport.mjs` | 管理员读取最近用户输入输出 | limit | ConversationAuditEntry[] | 读取 `.conversation-audits.local.json` | implemented |
+| `exportConversationAudits` | `serverSupport.mjs` | 管理员导出所选或全部用户输入输出记录 | ids? | conversationAuditExport payload | 读取 `.conversation-audits.local.json` | implemented |
 | `readConversationHistorySummaries` | `serverSupport.mjs` | 管理员按人物读取所有用户历史摘要 | dossierId | ConversationHistorySummary[] | 读取 `.conversation-histories.local.json` | implemented |
 | `readConversationHistoryMessagesByKey` | `serverSupport.mjs` | 管理员按内部历史 key 读取某用户某人物消息 | dossierId, key | ChatMessage[] | 读取 `.conversation-histories.local.json` | implemented |
 | `deleteConversationAudit` | `serverSupport.mjs` | 管理员删除单条用户输入输出审计记录 | auditId | deleted flag | 写入 `.conversation-audits.local.json` | implemented |
@@ -309,6 +312,9 @@
 | `conversationAuditEntry.userInput` | ConversationAuditEntry | `string` | 登录用户发送给虚拟人的输入 | App Shell | Admin audit UI | implemented |
 | `conversationAuditEntry.personaOutput` | ConversationAuditEntry | `string` | 虚拟人回复或失败时为空 | App Shell | Admin audit UI | implemented |
 | `conversationAuditEntry.moduleCalls` | ConversationAuditEntry | `ConversationModuleCall[]` | 一轮对话中每个 pipeline 模块的输入、输出、状态和 transport | App Shell | Admin audit UI/API | implemented |
+| `selectedAuditIds` | App state | `string[]` | 管理员审计浮层中被选择用于导出的审计记录 ID | Admin audit UI | conversationAuditExport | implemented |
+| `conversationAuditExport.scope` | conversationAuditExport payload | `"all" \| "selected"` | 标识导出文件来自全量导出还是所选导出 | `/api/conversation-audits/export` | downloaded JSON | implemented |
+| `conversationAuditExport.entries` | conversationAuditExport payload | `ConversationAuditEntry[]` | 被导出的用户输入输出审计记录集合 | `.conversation-audits.local.json` | downloaded JSON | implemented |
 | `conversationModuleCall.step` | ConversationModuleCall | `string` | 模块步骤键，例如 `memoryRecall`、`stateUpdate` | App Shell | Admin audit UI | implemented |
 | `appUpdateStatus.available` | AppUpdateStatus | `boolean` | 服务器当前提交是否落后于远端分支 | `/api/app-update/status` | 左上角更新提示 | implemented |
 | `appUpdateStatus.currentCommit` | AppUpdateStatus | `string` | VPS 当前 git 提交 SHA | serverSupport git command | 更新窗口 | implemented |
@@ -336,6 +342,7 @@
 | `/api/persona-dossiers/:id` | DELETE | 管理员删除后台共享多人档案 | 需要管理员会话；写 `.persona-dossiers.local.json` | implemented |
 | `/api/conversation-audits` | POST | 登录用户记录一次输入输出和模块调用记录 | 需要登录会话；写 `.conversation-audits.local.json` | implemented |
 | `/api/conversation-audits` | GET | 管理员读取所有用户输入输出和模块调用记录 | 需要管理员会话 | implemented |
+| `/api/conversation-audits/export` | POST | 管理员导出所选记录或完整导出所有用户的所有输入输出审计记录 | 需要管理员会话；只读 `.conversation-audits.local.json` | implemented |
 | `/api/conversation-audits` | DELETE | 管理员清空所有用户输入输出审计记录 | 需要管理员会话；写 `.conversation-audits.local.json` | implemented |
 | `/api/conversation-audits/:id` | DELETE | 管理员删除单条用户输入输出审计记录 | 需要管理员会话；写 `.conversation-audits.local.json` | implemented |
 | `/api/app-update/status` | GET | 检查服务器 git 工作树和 GitHub 远端分支是否一致 | 不执行更新；需要 VPS git remote 凭据可用 | implemented |
