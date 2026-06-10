@@ -1234,6 +1234,7 @@ pre {
 }
 
 .audit-modal {
+  grid-template-rows: auto minmax(0, 1fr);
   max-height: min(760px, calc(100vh - 36px));
   overflow: hidden;
   padding: 18px;
@@ -1294,6 +1295,7 @@ pre {
 .audit-list {
   display: grid;
   gap: 10px;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
 }

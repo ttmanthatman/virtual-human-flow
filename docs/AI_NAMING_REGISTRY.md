@@ -107,6 +107,7 @@
 | Conversation History Isolation Verification | `scripts/verify-conversation-history-isolation.mjs` | 在临时运行目录验证用户 A 的对话状态不会进入用户 B 或共享档案 | 无 | pass/fail | npm script | Server Support |
 | Conversation Message History Verification | `scripts/verify-conversation-message-history.mjs` | 在临时运行目录验证中间栏消息历史按用户和档案保存、读取和隔离 | 无 | pass/fail | npm script | Server Support |
 | Admin History And Module Audit Verification | `scripts/verify-admin-history-and-module-audit.mjs` | 验证管理员能按人物列出/读取用户历史，且审计会保存模块调用记录 | 无 | pass/fail | npm script | Server Support |
+| Audit Modal Scroll Verification | `scripts/verify-audit-modal-scroll.mjs` | 用真实 App Shell 样式构造大量审计记录，验证管理员审计浮层内部列表可滚动且不会被父级裁掉 | 无 | pass/fail | npm script | App Shell |
 | User Relationship Memory Verification | `scripts/verify-user-relationship-memory.mjs` | 验证 State Update 会按当前说话用户写入自然语言关系印象记忆，并回写关系备注 | 无 | pass/fail | npm script | State Updater |
 | Deployment Automation Runbook | `docs/DEPLOYMENT_AUTOMATION.md` | 记录站内手动更新、VPS git 工作树配置、部署边界和回滚方法 | 部署约束 | 可读部署说明 | 用户/AI | manualVpsUpdate |
 | Module Parameter Flow Review | `docs/MODULE_PARAMETER_FLOW_REVIEW.md` | 逐项说明共享数据对象、模块输入参数、内部派生参数、输出参数和模块间数据流，供人工审核 | 当前代码模块和系统流 | 可读审核说明 | 用户/AI | App Shell, Conversation Pipeline, Server Support |
