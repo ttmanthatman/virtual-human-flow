@@ -28,6 +28,8 @@ Memory Recall 不是敏感词召回。当前同步路径先在本地构建自然
 
 左侧 UI 里的 DeepSeek 预览、性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由 DeepSeek 预览缓存、专门的 Runtime Signal Evaluation LLM 模块、种子档案或管理员维护字段提供，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `fullLifeStory`、`lifeEvents`、`socialPersonaPattern`、`personalitySummary`、`personalityFacets`、`relationships`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
 
+对话开始后，系统不再把人物固定在档案初始场景。Conversation Pipeline 会先运行本地 `temporalSceneProgression`：根据 `CharacterState.location` 推断时区，用该地真实当前时间判断人物更可能在工作、通勤、住处、睡眠或临时外出场景，再把 `scene/location` 推进为同一地理范围内的自然现场。对话可以触发离开原场景，但只允许同城或同区域内合理移动；未来邀约不会立刻移动，跨城/跨国或世界观不可能的地点会被记录为 blocked 场景上下文，不会瞬移。
+
 人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。Reply Prompt 的作用是把这些自然语言材料过一遍，让回复从人物整体状态中长出来，而不是让某个单独指标指挥台词风格。
 
 人物档案和场景预览也属于认知模块，不是本地字符串拼接。这里的“预览”指管理员应用前的待应用预览：人物档案预览通过 Dossier Interpretation LLM 将用户素材拆成展示摘要、生平事件、长期记忆、人性/人格、标签、关切和状态信号；场景预览通过 Scene Interpretation LLM 将用户素材拆成场景摘要、状态影响和人物影响。预览应用时写入的是 LLM 解读后的结构化状态，而不是用户原文。左侧人物短预览是另一条 DeepSeek 缓存路径：它只生成 `personaDossier.previewSummary`，不改详细档案。
@@ -516,7 +518,8 @@ flowchart TD
     STREAM -- "否" --> JSON["response.json"]
     READ --> OUT["ReplyOutput.reply"]
     JSON --> OUT
-    OUT --> CHAT["聊天室显示"]
+    OUT --> SEG["normalize ReplyOutput.segments"]
+    SEG --> CHAT["聊天室显示；multi_turn/burst 可分成多条消息"]
     OUT --> STATE["State Updater"]
     OUT --> TRACE["流程追踪"]
 ```
@@ -573,7 +576,8 @@ flowchart TD
 flowchart TD
     INPUT["用户消息 content"] --> EVENT["构造 EventInput"]
     EVENT --> PROGRESS1["emit event progress"]
-    EVENT --> APPRAISAL["runAppraisal"]
+    EVENT --> SCENE["advanceSceneForCurrentTime"]
+    SCENE --> APPRAISAL["runAppraisal"]
     APPRAISAL --> MEM["retrieveMemory"]
     MEM --> DECISION["decideResponse"]
     DECISION --> PROMPT["generateNaturalPromptRequest"]
@@ -583,6 +587,7 @@ flowchart TD
     SIGNAL --> APPLY["applyRuntimeSignalEvaluation"]
     APPLY --> RETURN["返回 nextState + PipelineTrace"]
     PROGRESS1 --> TRACE["onProgress liveTrace"]
+    SCENE --> TRACE
     APPRAISAL --> TRACE
     MEM --> TRACE
     DECISION --> TRACE
@@ -797,11 +802,11 @@ flowchart LR
 | MVP 业务模块 | initialized | 已实现本地可运行的三栏工作台 |
 | 多人档案 | initialized | 左侧可按 `personaDossierGroup` 分组、新建、切换、删除 `personaDossier`；每个档案绑定人物状态、配套场景素材和位置属性 |
 | 内置人物档案 | initialized | `builtinPersonaDossiers.mjs` 提供 7 个“马可福音10”和 7 个“郑州市”全局初始档案 |
-| 人物位置属性 | initialized | `CharacterState.location` 支持当前位置、速度、方向、周边道路/地点/建筑和环境摘要；当前来自 seed/manual |
+| 人物位置属性 | initialized | `CharacterState.location` 支持当前位置、速度、方向和周边地图上下文；初始来自 seed/manual，对话运行态可由 `temporalSceneProgression` 按真实当地时间推进 |
 | 登录机制 | initialized | 用户来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室登录接口；未登录可看界面但操作会弹登录浮窗 |
 | 权限控制 | initialized | `isAdmin` 用户可维护共享档案和查看审计；普通登录用户只可选择共享档案并对话 |
 | 共享多人档案 | initialized | 管理员保存到 `.persona-dossiers.local.json`，所有登录用户可读取和使用 |
-| 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`，切换人物时加载对应中间栏历史 |
+| 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`，切换人物时加载对应中间栏历史；连续回复会按 `replyOutput.segments` 写成多条角色消息 |
 | 管理员用户历史查看 | initialized | 管理员可在当前人物下列出所有用户历史摘要，并选择某个用户以只读方式查看该用户与该人物的中间栏历史 |
 | 用户私有对话运行态 | initialized | 登录用户对话后按 `userId + dossierId` 写入 `.conversation-states.local.json`，读取档案时只叠加当前用户条目 |
 | 用户关系印象记忆 | initialized | `CharacterState.relationshipMemory` 作为长期记忆中的关系记忆区，按当前说话用户保存自然语言印象、关系总结、证据和最近互动，并进入召回、回复提示词和右侧展示 |
@@ -812,7 +817,8 @@ flowchart LR
 | 场景生成 | initialized | 通过 Scene Interpretation LLM 重新解读用户素材，生成 scene、状态影响、人物影响、关切和记忆预览 |
 | 场景预览 | initialized | 先显示场景摘要和状态影响预览，用户确认后应用完整状态 |
 | 人物场景一致性检测 | initialized | Profile Scene Consistency LLM 判断人物和场景是否硬冲突；硬冲突需要扭曲时空密码继续 |
-| 同步对话路径 | initialized | 登录用户身份 -> 事件 -> 评估 -> 记忆召回（含关系记忆区）-> 回应决策 -> 回应提示词（含当前用户印象）-> 回应输出 -> 状态更新（写入关系印象）-> 信号评估 -> 状态变化 |
+| 时间场景推进 | initialized | `temporalSceneProgression` 在 Event 后、Appraisal 前根据位置时区真实时间和对话触发，推进 `scene/location`，并拒绝未来计划瞬移或跨地理范围跳转 |
+| 同步对话路径 | initialized | 登录用户身份 -> 事件 -> 时间场景推进 -> 评估 -> 记忆召回（含关系记忆区）-> 回应决策 -> 回应提示词（含当前用户印象）-> 回应输出/分段 -> 状态更新（写入关系印象）-> 信号评估 -> 状态变化 |
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
 | 结构化输出回退 | initialized | 外部认知模块 JSON 截断或无法解析时记录 `fallbackReason`，使用本地候选结果继续对话 |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |

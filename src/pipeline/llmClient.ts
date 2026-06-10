@@ -38,12 +38,12 @@ export async function runLlm(
     const data = response.headers.get("Content-Type")?.includes("text/event-stream")
       ? await readReplyEventStream(response, onStream)
       : await response.json();
-    return typeof data === "string" ? { reply: data } : (data as ReplyOutput);
+    return normalizeReplyOutput(data, simulateInput.decision);
   }
 
   const output = simulateLlmOutput(simulateInput);
   onStream?.(output.reply);
-  return output;
+  return normalizeReplyOutput(output, simulateInput.decision);
 }
 
 async function readReplyEventStream(response: Response, onStream?: (output: string) => void) {
@@ -56,6 +56,7 @@ async function readReplyEventStream(response: Response, onStream?: (output: stri
   let buffer = "";
   let accumulated = "";
   let finalReply = "";
+  let finalSegments: string[] | undefined;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -73,7 +74,7 @@ async function readReplyEventStream(response: Response, onStream?: (output: stri
         .join("\n");
       if (!data || data === "[DONE]") continue;
 
-      const parsed = JSON.parse(data) as { delta?: string; final?: { reply?: string }; error?: string };
+      const parsed = JSON.parse(data) as { delta?: string; final?: { reply?: string; segments?: string[] }; error?: string };
       if (parsed.error) throw new Error(parsed.error);
       if (typeof parsed.delta === "string") {
         accumulated += parsed.delta;
@@ -82,10 +83,57 @@ async function readReplyEventStream(response: Response, onStream?: (output: stri
       if (parsed.final?.reply !== undefined) {
         finalReply = parsed.final.reply;
       }
+      if (Array.isArray(parsed.final?.segments)) {
+        finalSegments = parsed.final.segments.filter((segment): segment is string => typeof segment === "string");
+      }
     }
   }
 
-  return { reply: finalReply || accumulated };
+  return { reply: finalReply || accumulated, segments: finalSegments };
+}
+
+function normalizeReplyOutput(data: unknown, decision: ResponseDecision): ReplyOutput {
+  const reply =
+    typeof data === "string"
+      ? data
+      : isRecord(data) && typeof data.reply === "string"
+        ? data.reply
+        : "";
+  const modelSegments = isRecord(data) && Array.isArray(data.segments)
+    ? data.segments.filter((item): item is string => typeof item === "string")
+    : undefined;
+  const segments = splitReplyIntoSegments(reply, decision.replyRhythm, modelSegments);
+  return {
+    reply,
+    segments,
+  };
+}
+
+function splitReplyIntoSegments(reply: string, rhythm: ResponseDecision["replyRhythm"], modelSegments?: string[]) {
+  const explicitSegments = (modelSegments && modelSegments.length > 0 ? modelSegments : reply.split(/\n+/))
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (!reply.trim()) return [];
+  if (rhythm === "single" || rhythm === "none") return explicitSegments.length > 0 ? [explicitSegments.join("\n")] : [reply.trim()];
+  if (explicitSegments.length > 1) return explicitSegments.slice(0, 6);
+
+  const sentenceSegments = (reply.match(/[^。！？!?]+[。！？!?]?/g) ?? [])
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (sentenceSegments.length <= 1) return [reply.trim()];
+  if (rhythm === "burst") return sentenceSegments.slice(0, 6);
+
+  const grouped: string[] = [];
+  for (let index = 0; index < sentenceSegments.length; index += 2) {
+    grouped.push(sentenceSegments.slice(index, index + 2).join(""));
+  }
+  return grouped.slice(0, 5);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function simulateLlmOutput({ decision }: SimulateInput): ReplyOutput {

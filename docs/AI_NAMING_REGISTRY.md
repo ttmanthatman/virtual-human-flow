@@ -30,6 +30,7 @@
 | 关切 | `concern` | domain entity | 虚拟人稳定在意的事项，是情绪的来源之一 | `moodItem` |
 | 关系档案 | `relationship` | domain entity | 虚拟人对某个对象的独立关系状态 | `friendship` |
 | 场景 | `scene` | domain entity | 当前对话发生的环境和氛围 | `background` |
+| 时间场景推进 | `temporalSceneProgression` | pipeline workflow | 每轮对话在 Appraisal 前根据人物位置时区、真实时间和对话触发推进 `scene/location`，同时阻止不现实瞬移 | `sceneAutoSwap`, `timeJump`, `teleportScene` |
 | 人物位置 | `characterLocation` | domain object | 角色当前物理位置、速度、方向和地图上下文 | `geoPoint`, `placeInfo` |
 | 地图上下文 | `mapContext` | domain object | 位置周边道路、地点、建筑和环境摘要；当前可由种子或人工维护，未来可由地图服务解析 | `mapDataDump`, `poiText` |
 | 管线追踪 | `pipelineTrace` | runtime object | 一轮对话的完整中间结果 | `debugInfo` |
@@ -37,7 +38,8 @@
 | 结构化输出回退 | `structuredOutputFallback` | runtime safety workflow | 外部认知模块返回截断或不可解析 JSON 时，记录原因并用本地候选结果继续流程 | `jsonCrash`, `silentRetry` |
 | 认知模块调用 | `cognitiveModuleTrace` | runtime object | 一个脑区式模块的一次 LLM 调用记录 | `debugInfo` |
 | 回复请求 | `expressionLlmRequest` | runtime object | 只交给 Reply LLM 的自然语言上下文 | `promptData` |
-| 回复输出 | `replyOutput` | runtime object | Reply LLM 生成的角色台词 | `aiResult` |
+| 回复输出 | `replyOutput` | runtime object | Reply LLM 生成的角色台词和本地归一化分段 | `aiResult` |
+| 回复分段 | `replyOutput.segments` | runtime field | 从自然语言角色回复归一化出的多条聊天消息，用于 `multi_turn` 或 `burst` 展示；不是 Reply LLM JSON 契约 | `replyArrayContract`, `messageJson` |
 | Prompt 生成器 | `promptGenerator` | pipeline module | 把认知模块输出转换成自然语言回复上下文 | `promptBuilder` 作为概念名 |
 | 状态更新计划 | `stateUpdatePlan` | runtime object | State Update LLM 生成的结构化状态变化 | `stateDeltaDraft` |
 | 性格特性 | `personalityFacet` | domain object | 一个性格摘要背后的来源、张力和表达方式 | `traitDefinition` |
@@ -94,15 +96,17 @@
 | Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport/fallbackReason | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Appraisal/Memory/Decision/State Update | 外部 LLM endpoint |
 | Cognitive Module Fallback Verification | `scripts/verify-cognitive-module-fallback.mjs` | 伪造未闭合 SSE JSON，验证认知模块会 fallback 而不是抛错卡住 | 无 | pass/fail | npm script | TypeScript compiler |
 | Severe State Continuity Verification | `scripts/verify-severe-state-continuity.mjs` | 伪造重大坏消息和后续普通邀约，验证长期记忆、关系记忆和回应决策不会抹平严重余波 | 无 | pass/fail | npm script | State Updater, Response Decision |
+| Temporal Scene And Reply Segments Verification | `scripts/verify-temporal-scene-and-reply-segments.mjs` | 验证真实时间场景推进不会瞬移，工作/睡眠场景按当地时区变化，连续/爆发回复会归一化为多条消息 | 无 | pass/fail | npm script | Temporal Scene Progression, LLM Client |
 | Update Button Clickable Verification | `scripts/verify-update-button-clickable.mjs` | 用 Playwright mock 有新版本状态，验证未登录时“更新服务器”按钮仍可点击并进入权限反馈路径 | 无 | pass/fail | npm script | App Shell |
 | Appraisal | `src/pipeline/appraisal.ts` | 通过 LLM 判断事件触发的关切、危险状态、清醒程度、回应必要性、回复节奏、触动强度、失态风险和突破人设外壳风险 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | Conversation Pipeline | Cognitive Module Client |
 | Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 用自然语言候选清单和 LLM 复判判断哪些记忆会浮现；LLM 只选择 ID，完整记忆由本地回填；召回不能退化为敏感词过滤 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` | Conversation Pipeline | Cognitive Module Client |
 | Response Decision | `src/pipeline/responseDecision.ts` | 通过 LLM 消费事件、结构化评估、记忆和运行时信号，决定是否回应、回应模式、单条/连续/爆发节奏、是否失态和是否突破人设外壳，并确定性承接严重余波 | event, appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | Conversation Pipeline | Cognitive Module Client |
+| Temporal Scene Progression | `src/pipeline/temporalScene.ts` | 根据人物地理位置推断时区，用当地真实时间和对话触发推进 `scene/location`，并阻止未来计划或远距离地点造成瞬移 | `CharacterState`, `EventInput`, now? | `TemporalSceneProgression`, next `CharacterState` | Conversation Pipeline | Core Types |
 | Prompt Generator | `src/pipeline/promptBuilder.ts` | 将认知模块输出转成只给 Reply LLM 的自然语言 prompt | event, state, appraisal, recall, decision | `ExpressionLlmRequest` | Conversation Pipeline | Core Types |
 | LLM Client | `src/pipeline/llmClient.ts` | 调用 Reply LLM；正式模式只传自然语言 prompt | `ExpressionLlmRequest`, `LlmConfig` | `ReplyOutput` | Conversation Pipeline | 外部 LLM endpoint |
 | State Updater | `src/pipeline/stateUpdater.ts` | 通过 State Update LLM 生成状态更新计划，再确定性写回 | state, event, replyOutput, context, llmConfig | next state, `StateDelta`, `stateUpdate` | Conversation Pipeline | Cognitive Module Client |
 | Runtime Signal Evaluator | `src/pipeline/runtimeSignalEvaluator.ts` | 通过专门 LLM 模块评估能量、情绪、情绪倾向、唤醒度 | state, event, replyOutput, appraisal/memory/decision/stateUpdatePlan, llmConfig | `runtimeSignalEvaluation`, next runtime signals | Conversation Pipeline | Cognitive Module Client |
-| Conversation Pipeline | `src/pipeline/conversationPipeline.ts` | 串联一轮同步响应路径 | content, state, llmConfig | next state, trace | App Shell | pipeline steps |
+| Conversation Pipeline | `src/pipeline/conversationPipeline.ts` | 串联一轮同步响应路径，并在认知模块前接入时间场景推进 | content, state, llmConfig | next state, trace | App Shell | pipeline steps, Temporal Scene Progression |
 | Generators | `src/pipeline/generators.ts` | 通过 LLM 解读用户人物/场景素材，并确定性归一化为待应用预览 | 描述文本、当前状态、LLM 配置 | `CharacterState` | App Shell | Cognitive Module Client, Core Types |
 | Profile Scene Consistency | `src/pipeline/profileSceneConsistency.ts` | 通过 LLM 判断人物档案和场景是否匹配，并返回是否需要扭曲时空密码 | `CharacterState`, `LlmConfig` | `ProfileSceneConsistencyResult` | App Shell | Cognitive Module Client |
 | DeepSeek Local Proxy | `vite.config.ts` | 在本地开发服务器中代理 DeepSeek Chat Completions，固定 flash 模型、关闭 thinking 并保存根目录密钥文件 | `/api/deepseek-config`, `/api/deepseek-chat` | DeepSeek 响应或配置状态 | App Shell | DeepSeek API |
@@ -145,9 +149,15 @@
 | `stabilizeDecisionForCurrentState` | `src/pipeline/responseDecision.ts` | 当严重运行时余波遇到普通邀约/工作安排且 LLM 判成礼貌单条回应时，确定性调回失态或爆发式路由 | decision, event, appraisal, state | ResponseDecision | 无 | implemented |
 | `isSevereRuntimeState` | `src/pipeline/responseDecision.ts` | 判断当前运行时能量、效价和状态叙述是否处在严重余波中 | state | boolean | 无 | implemented |
 | `isCasualDiscontinuity` | `src/pipeline/responseDecision.ts` | 判断用户原话是否是普通邀约、闲聊或工作安排这类与严重余波错位的事件 | content | boolean | 无 | implemented |
+| `advanceSceneForCurrentTime` | `src/pipeline/temporalScene.ts` | 在一轮对话的 Appraisal 前按真实当地时间、人物生活节奏和对话触发推进场景与位置 | state, event, now? | nextState, `TemporalSceneProgression` | 写入运行态 scene/location | implemented |
+| `inferTimezone` | `src/pipeline/temporalScene.ts` | 根据人物位置、地址、背景和场景推断当前真实时间所用时区 | state | IANA timezone string | 无 | implemented |
+| `chooseScheduledPhase` | `src/pipeline/temporalScene.ts` | 根据人物职业/生活类型和当地小时数判断睡眠、工作、通勤、住处或外出阶段 | archetype, hour | `TemporalSceneProgression.schedulePhase` | 无 | implemented |
+| `detectTriggeredSceneTarget` | `src/pipeline/temporalScene.ts` | 判断用户当前话语是否触发同区域内可达场景变化或应阻止远距离瞬移 | state, event, localClock | SceneTarget? | 无 | implemented |
 | `generateNaturalPromptRequest` | `src/pipeline/promptBuilder.ts` | 生成只含自然语言的 Reply LLM 输入 | event, state, appraisalNarrative, memoryRecallNarrative, decisionNarrative, provider, model | ExpressionLlmRequest | 无 | implemented |
 | `runLlm` | `src/pipeline/llmClient.ts` | 调用 Reply LLM | request, config, simulateInput | ReplyOutput | 可调用外部 endpoint | implemented |
 | `readReplyEventStream` | `src/pipeline/llmClient.ts` | 读取 Reply LLM 的 SSE 输出并累积为回复文本 | response, onStream | ReplyOutput-like object | 调用 onStream 更新 live trace | implemented |
+| `normalizeReplyOutput` | `src/pipeline/llmClient.ts` | 将外部或模拟 Reply 输出归一化为 `reply` 和自然消息分段 | data, decision | ReplyOutput | 无 | implemented |
+| `splitReplyIntoSegments` | `src/pipeline/llmClient.ts` | 按换行和标点把 `multi_turn`/`burst` 自然语言回复拆成多条聊天消息 | reply, rhythm, modelSegments? | string[] | 无 | implemented |
 | `applyStateUpdates` | `src/pipeline/stateUpdater.ts` | 调用 State Update LLM 并写回状态 | state, event, replyOutput, context, llmConfig | nextState, StateDelta, stateUpdate | 写入记忆和状态 | implemented |
 | `normalizeStateUpdatePlan` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 输出归一化，保证 concernUpdates、relationshipUpdates、userRelationshipMemory 和 internalStateNote 稳定 | result, fallback, state, event | StateUpdatePlan | 无 | implemented |
 | `normalizeUserRelationshipMemory` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 生成的当前用户印象和关系总结归一化为自然语言关系记忆 | value, fallback, event | StateUpdatePlan.userRelationshipMemory | 无 | implemented |
@@ -178,6 +188,7 @@
 | `createConversationSpeaker` | `src/App.tsx` | 将登录用户归一化为 pipeline 事件说话者身份 | user | `{ id, name }` | 无 | implemented |
 | `readStoredConversationHistory` | `src/App.tsx` | 从 localStorage 读取指定历史桶 | historyKey | ChatMessage[]? | 读取 localStorage | implemented |
 | `writeStoredConversationHistory` | `src/App.tsx` | 将指定历史桶截断后写入 localStorage | historyKey, messages | void | 写入 localStorage | implemented |
+| `normalizeReplySegments` | `src/App.tsx` | 将 `ReplyOutput.segments` 归一化为中间栏可展示和可保存的多条消息内容 | replyOutput | string[] | 无 | implemented |
 | `setMessagesForHistory` | `src/App.tsx` | 将消息更新写入指定 `conversationHistoryKey`，避免切任务或切用户串历史 | historyKey, updater | void | 更新 App state 和 localStorage | implemented |
 | `loadConversationHistory` | `src/App.tsx` | 切换人物或登录后读取当前用户当前人物的后台中间栏历史，并在后台为空时回填本地缓存 | dossierId, historyKey, cachedMessages? | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-history` 并更新历史桶 | implemented |
 | `loadAdminConversationHistorySummaries` | `src/App.tsx` | 管理员读取当前人物下所有用户历史摘要 | dossierId | Promise<void> | 调用 `/api/admin/conversation-histories` | implemented |
@@ -263,7 +274,7 @@
 | `runtime.signalProfiles.*.cognitiveNarrative` | `RuntimeSignalProfile` | `string` | 状态信号背后的内在状态叙述，只描述属性和成因，不写回复指令 | seed/generator/stateUpdater | promptBuilder/UI | implemented |
 | `scene` | `CharacterState` | `SceneState` | 当前场景 | seed/generator | UI/promptBuilder | implemented |
 | `scene.cognitiveNarrative` | `SceneState` | `string` | 场景如何改变注意力、身体感和关系距离的自然语言叙述 | seed/generator | promptBuilder/UI | implemented |
-| `location` | `CharacterState` | `CharacterLocation?` | 角色当前物理位置、速度、方向和地图上下文 | seed/builtin/manual | UI/promptBuilder | implemented |
+| `location` | `CharacterState` | `CharacterLocation?` | 角色当前物理位置、速度、方向和地图上下文 | seed/builtin/manual/temporalSceneProgression | UI/promptBuilder | implemented |
 | `location.label` | `CharacterLocation` | `string` | 人可读当前位置名称 | seed/builtin/manual | UI/promptBuilder | implemented |
 | `location.address` | `CharacterLocation` | `string` | 当前位置地址或范围描述 | seed/builtin/manual | UI/promptBuilder | implemented |
 | `location.region` | `CharacterLocation` | `string` | 位置所属城市/区县/世界区域 | seed/builtin/manual | UI/promptBuilder | implemented |
@@ -272,7 +283,10 @@
 | `location.headingDeg` | `CharacterLocation` | `number` | 角色移动方向角度 | seed/builtin/manual | UI/promptBuilder | implemented |
 | `location.headingLabel` | `CharacterLocation` | `string` | 角色移动方向中文摘要 | seed/builtin/manual | UI/promptBuilder | implemented |
 | `location.motionState` | `CharacterLocation` | enum | 停留、步行、骑行、驾车或未知 | seed/builtin/manual | UI/promptBuilder | implemented |
-| `location.mapContext` | `CharacterLocation` | object? | 周边道路、地点、建筑和环境摘要 | seed/builtin/manual/mapService | UI/promptBuilder | implemented |
+| `location.mapContext` | `CharacterLocation` | object? | 周边道路、地点、建筑和环境摘要 | seed/builtin/manual/mapService/temporalSceneProgression | UI/promptBuilder | implemented |
+| `temporalSceneProgression` | `PipelineTrace` | `TemporalSceneProgression` | 本轮对话开始时场景/位置按真实当地时间和触发事件推进的记录 | conversationPipeline | Pipeline Debug Panel/Appraisal input | implemented |
+| `temporalSceneProgression.schedulePhase` | `TemporalSceneProgression` | enum | 本轮生活阶段：睡眠、住处、工作、通勤、外出或 blocked | temporalScene | Pipeline Debug Panel | implemented |
+| `temporalSceneProgression.locationPlausibility` | `TemporalSceneProgression` | `string` | 说明新场景为什么仍符合人物原地理范围，或为什么拒绝远距离瞬移 | temporalScene | Pipeline Debug Panel | implemented |
 | `dossierPreview` | App state | `CharacterState?` | 人物档案生成后的待应用预览 | App Shell | UI/apply action | implemented |
 | `scenePreview` | App state | `CharacterState?` | 场景解读后的待应用状态预览，包含 scene、状态、关切、长期记忆和人物影响 | App Shell | UI/apply action | implemented |
 | `personaDossiers` / `dossiers` | App state | `PersonaDossier[]` | 左侧多人档案列表，每个条目绑定人物状态和场景输入 | App Shell | UI/switch/apply/delete | implemented |
@@ -286,6 +300,7 @@
 | `distortionPassword` | App constant | `string` | 本地门禁短语，当前为“扭曲时空密码” | App Shell | UI/apply action | implemented |
 | `profileSceneConsistency` | cognitive module output | `ProfileSceneConsistencyResult` | 人物档案和场景的匹配结果、冲突理由、是否需要门禁 | Profile Scene Consistency | App Shell | implemented |
 | `pipelineTrace` | `ChatMessage` | `PipelineTrace` | 一轮对话所有中间结果 | conversationPipeline | Pipeline Debug Panel | implemented |
+| `pipelineTrace.sceneContext` | `PipelineTrace` | `TemporalSceneProgression` | Event 后、Appraisal 前的时空场景推进结果 | temporalSceneProgression | Pipeline Debug Panel/audit | implemented |
 | `prompt` | `ExpressionLlmRequest` | `string` | 交给 Reply LLM 的自然语言上下文 | promptGenerator | llmClient/UI | implemented |
 | `outputContract` | `CognitiveModuleRequest` | `string` | 认知模块结构化输出约束，不进入 Reply LLM prompt | cognitive modules | cognitiveModuleClient/backend | implemented |
 | `appraisal.narrative` | `AppraisalResult` | `string?` | Appraisal LLM 输出的可选自然语言叙事说明 | appraisal | Pipeline Debug Panel/downstream cognitive context | implemented |
@@ -297,6 +312,7 @@
 | `appraisal.composureRisk` | `AppraisalResult` | object | 判断角色是否会失态、失态强度和原因 | appraisal | Response Decision/Prompt Generator | implemented |
 | `appraisal.personaBreakRisk` | `AppraisalResult` | object | 判断是否短暂突破平常人设外壳进行失控式反应、强度和原因 | appraisal | Response Decision/Prompt Generator | implemented |
 | `replyRhythm` | Core Types | `ReplyRhythm` | 回复节奏枚举：`none` 不回应、`single` 单条回应、`multi_turn` 连续多条、`burst` 短句爆发 | Appraisal/Response Decision | Prompt Generator/Reply LLM context | implemented |
+| `replyOutput.segments` | `ReplyOutput` | `string[]?` | Reply LLM 自然语言结果的本地分段；App Shell 用它生成多条角色消息 | llmClient | App Shell/State Updater | implemented |
 | `memoryRecall.narrative` | `MemoryRecallResult` | `string?` | Memory Recall LLM 输出的可选自然语言叙事说明 | memoryRetrieval | Pipeline Debug Panel/downstream cognitive context | implemented |
 | `responseDecision.narrative` | `ResponseDecision` | `string?` | Response Decision LLM 输出的可选自然语言叙事说明 | responseDecision | Pipeline Debug Panel/downstream cognitive context | implemented |
 | `responseDecision.replyRhythm` | `ResponseDecision` | `ReplyRhythm` | 最终回复节奏路由，决定 Reply Prompt 中描述为沉默、单条、连续多条或短句爆发 | responseDecision | Prompt Generator/LLM Client | implemented |

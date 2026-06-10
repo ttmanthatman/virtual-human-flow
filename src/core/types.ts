@@ -178,11 +178,11 @@ export interface CharacterLocation {
     nearbyPlaces: string[];
     nearbyBuildings: string[];
     environmentSummary: string;
-    source: "seed" | "manual" | "map_service";
+    source: "seed" | "manual" | "map_service" | "temporal_progression";
     resolvedAt: string;
   };
   updatedAt: string;
-  source: "seed" | "manual" | "map_service";
+  source: "seed" | "manual" | "map_service" | "temporal_progression";
 }
 
 export interface CharacterState {
@@ -233,6 +233,17 @@ export interface EventInput {
   roomId?: string;
   content: string;
   metadata?: Record<string, unknown>;
+}
+
+export interface TemporalSceneProgression {
+  changed: boolean;
+  localTimeLabel: string;
+  timezone: string;
+  schedulePhase: "sleep" | "home" | "work" | "commute" | "errand" | "blocked";
+  reason: string;
+  previousSceneTitle?: string;
+  nextSceneTitle?: string;
+  locationPlausibility: string;
 }
 
 export interface AppraisalResult {
@@ -371,6 +382,7 @@ export interface ExpressionLlmRequest {
 
 export interface ReplyOutput {
   reply: string;
+  segments?: string[];
 }
 
 export interface StateUpdatePlan {
@@ -419,6 +431,7 @@ export interface StateDelta {
 
 export interface PipelineTrace {
   event: EventInput;
+  sceneContext: TemporalSceneProgression;
   appraisal: CognitiveModuleTrace<AppraisalResult>;
   memoryRecall: CognitiveModuleTrace<MemoryRecallResult>;
   decision: CognitiveModuleTrace<ResponseDecision>;

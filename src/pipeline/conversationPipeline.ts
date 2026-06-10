@@ -6,6 +6,7 @@ import { generateNaturalPromptRequest } from "./promptBuilder";
 import { runLlm } from "./llmClient";
 import { applyStateUpdates } from "./stateUpdater";
 import { applyRuntimeSignalEvaluation, evaluateRuntimeSignals } from "./runtimeSignalEvaluator";
+import { advanceSceneForCurrentTime } from "./temporalScene";
 
 interface RunConversationPipelineInput {
   content: string;
@@ -35,8 +36,17 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
 
   emit({ step: "event", status: "completed", input: summarizeText(content), output: `${speaker.name}说：「${content}」`, transport: "local" });
 
+  const { nextState: sceneAwareState, progression: sceneContext } = advanceSceneForCurrentTime(state, event);
+  emit({
+    step: "sceneContext",
+    status: "completed",
+    input: "当前人物、原场景、物理位置和当地真实时间",
+    output: formatSceneContext(sceneContext),
+    transport: "local",
+  });
+
   emit({ step: "appraisal", status: "running", input: "事件评估模块输入\n\n" + summarizeText(event.content), output: "等待模型输出..." });
-  const appraisal = await runAppraisal(event, state, llmConfig, (output) =>
+  const appraisal = await runAppraisal(event, sceneAwareState, llmConfig, (output) =>
     emit({ step: "appraisal", status: "streaming", output: summarizeText(output) }),
   );
   const appraisalNarrative = appraisal.output.narrative || "";
@@ -54,7 +64,7 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     input: "记忆召回模块输入\n\n情境：" + summarizeText(appraisalNarrative),
     output: "等待模型输出...",
   });
-  const memoryRecall = await retrieveMemory(event, appraisalNarrative, state, llmConfig, (output) =>
+  const memoryRecall = await retrieveMemory(event, appraisalNarrative, sceneAwareState, llmConfig, (output) =>
     emit({ step: "memoryRecall", status: "streaming", output: summarizeText(output) }),
   );
   const memoryNarrative = memoryRecall.output.narrative || "";
@@ -67,7 +77,7 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
   });
 
   emit({ step: "decision", status: "running", input: "回应决策模块输入\n\n" + summarizeText([appraisalNarrative, memoryNarrative].filter(Boolean).join("\n")), output: "等待模型输出..." });
-  const decision = await decideResponse(event, appraisal.output, memoryNarrative, state, llmConfig, (output) =>
+  const decision = await decideResponse(event, appraisal.output, memoryNarrative, sceneAwareState, llmConfig, (output) =>
     emit({ step: "decision", status: "streaming", output: summarizeText(output) }),
   );
   const decisionNarrative = formatDecisionNarrative(decision.output);
@@ -81,7 +91,7 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
 
   const llmRequest = generateNaturalPromptRequest(
     event,
-    state,
+    sceneAwareState,
     appraisalNarrative,
     memoryNarrative,
     decisionNarrative,
@@ -97,7 +107,7 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
   });
 
   emit({ step: "llmOutput", status: "running", input: summarizeText(llmRequest.prompt), output: "等待角色回复..." });
-  const llmOutput = await runLlm(llmRequest, llmConfig, { event, state, decision: decision.output }, (output) =>
+  const llmOutput = await runLlm(llmRequest, llmConfig, { event, state: sceneAwareState, decision: decision.output }, (output) =>
     emit({ step: "llmOutput", status: "streaming", output: summarizeText(output) }),
   );
   emit({ step: "llmOutput", status: "completed", output: llmOutput.reply || "（林安看见了，但没有回复。）", transport: "external_llm" });
@@ -109,7 +119,7 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     output: "等待模型输出...",
   });
   const { nextState: stateAfterUpdate, stateDelta: deltaAfterUpdate, stateUpdate } = await applyStateUpdates(
-    state,
+    sceneAwareState,
     event,
     llmOutput,
     {
@@ -143,12 +153,20 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
   );
   emit({ step: "runtimeSignalEvaluation", status: "completed", output: formatCognitiveTraceOutput(runtimeSignalEvaluation), transport: runtimeSignalEvaluation.transport });
   const { nextState, stateDelta } = applyRuntimeSignalEvaluation(stateAfterUpdate, deltaAfterUpdate, runtimeSignalEvaluation.output);
-  emit({ step: "stateDelta", status: "completed", input: "确定性写回输入\n\n状态更新和信号评估已完成", output: formatStateDelta(stateDelta), transport: "local" });
+  const finalStateDelta = {
+    ...stateDelta,
+    runtimeChanges: [
+      ...stateDelta.runtimeChanges,
+      `场景推进：${sceneContext.reason}；${sceneContext.locationPlausibility}`,
+    ],
+  };
+  emit({ step: "stateDelta", status: "completed", input: "确定性写回输入\n\n状态更新、信号评估和场景推进已完成", output: formatStateDelta(finalStateDelta), transport: "local" });
 
   return {
     nextState,
     trace: {
       event,
+      sceneContext,
       appraisal,
       memoryRecall,
       decision,
@@ -156,7 +174,7 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
       llmOutput,
       stateUpdate,
       runtimeSignalEvaluation,
-      stateDelta,
+      stateDelta: finalStateDelta,
     },
   };
 }
@@ -190,6 +208,16 @@ function formatDecisionNarrative(decision: PipelineTrace["decision"]["output"]) 
   const personaNarrative = decision.shouldBreakPersona ? "她可能短暂突破平常维持的人设外壳，露出更底层、更真实、更失控的反应。" : "不需要突破平常人设外壳。";
 
   return [decision.narrative || decision.rationale, rhythmNarrative, composureNarrative, personaNarrative].filter(Boolean).join("\n");
+}
+
+function formatSceneContext(sceneContext: PipelineTrace["sceneContext"]) {
+  return [
+    `当地时间：${sceneContext.localTimeLabel}（${sceneContext.timezone}）`,
+    `生活阶段：${sceneContext.schedulePhase}`,
+    `场景：${sceneContext.previousSceneTitle ?? "未记录"} -> ${sceneContext.nextSceneTitle ?? "未记录"}`,
+    `原因：${sceneContext.reason}`,
+    `地理约束：${sceneContext.locationPlausibility}`,
+  ].join("\n");
 }
 
 function formatStateDelta(stateDelta: PipelineTrace["stateDelta"]) {

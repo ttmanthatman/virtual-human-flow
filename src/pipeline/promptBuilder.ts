@@ -86,6 +86,7 @@ export function generateNaturalPromptRequest(
     memoryNarrative,
     recentConversationNarrative,
     `综合她的性格、场景、关系、记忆和当下状态，${responseModeNarrative}`,
+    `如果她此刻真的会连续补充、追问、解释或短句失控，就让屏幕上的话像真实聊天那样自然分成几条，每条另起一行；如果她已经崩溃或被击穿，不要把反应压缩成一句礼貌短答。`,
     `最终出现在屏幕上的，只是 ${state.profile.name} 此刻会自然说出口的话；分析、标签和背景说明都留在她没有说出口的内在过程里。`,
   ].join("\n\n");
 

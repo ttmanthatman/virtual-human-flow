@@ -30,7 +30,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { ChatMessage, CharacterState, GenerationMonitorStep, LlmConfig, PersonaDossier, PipelineStepProgress, PipelineTrace, ProfileSceneConsistencyResult } from "./core/types";
+import { ChatMessage, CharacterState, GenerationMonitorStep, LlmConfig, PersonaDossier, PipelineStepProgress, PipelineTrace, ProfileSceneConsistencyResult, ReplyOutput } from "./core/types";
 import { makeId, nowIso } from "./core/utils";
 import { defaultLlmConfig, seedMessages, seedState } from "./data/seedState";
 import { runConversationPipeline } from "./pipeline/conversationPipeline";
@@ -43,6 +43,7 @@ const appVersionLabel = `v${packageInfo.version}`;
 
 const traceSteps: { key: keyof PipelineTrace; label: string; icon: typeof Activity }[] = [
   { key: "event", label: "事件", icon: Play },
+  { key: "sceneContext", label: "时空场景", icon: MapPin },
   { key: "appraisal", label: "评估", icon: Brain },
   { key: "memoryRecall", label: "记忆召回", icon: Database },
   { key: "decision", label: "回应决策", icon: ChevronsRight },
@@ -197,6 +198,12 @@ function writeStoredConversationHistory(historyKey: string, messages: ChatMessag
   } catch {
     // History persistence is best-effort; the active in-memory history still updates.
   }
+}
+
+function normalizeReplySegments(output: ReplyOutput) {
+  const segments = output.segments?.map((segment) => segment.trim()).filter(Boolean);
+  if (segments?.length) return segments;
+  return [output.reply.trim()].filter(Boolean);
 }
 
 function createConversationAuditExportFilename(payload: ConversationAuditExportPayload) {
@@ -1176,16 +1183,17 @@ export function App() {
       setActiveTrace(result.trace);
 
       const reply = result.trace.llmOutput.reply || "（林安看见了，但没有回复。）";
-      const replyMessage: ChatMessage = {
+      const replySegments = result.trace.llmOutput.reply ? normalizeReplySegments(result.trace.llmOutput) : [reply];
+      const replyMessages: ChatMessage[] = replySegments.map((segment, index) => ({
         id: makeId("msg"),
         speaker: result.trace.llmOutput.reply ? "persona" : "system",
         speakerName: result.trace.llmOutput.reply ? result.nextState.profile.name : "沉默",
-        content: reply,
+        content: segment,
         timestamp: nowIso(),
-        trace: result.trace,
-      };
-      setMessagesForHistory(sendingHistoryKey, (items) => [...items, replyMessage]);
-      await persistConversationHistoryMessages(sendingDossierId, [userMessage, replyMessage]);
+        trace: index === 0 ? result.trace : undefined,
+      }));
+      setMessagesForHistory(sendingHistoryKey, (items) => [...items, ...replyMessages]);
+      await persistConversationHistoryMessages(sendingDossierId, [userMessage, ...replyMessages]);
       await syncConversationState(result.nextState, {
         userInput: userMessage.content,
         personaOutput: reply,
@@ -2163,6 +2171,16 @@ function buildCompletedTraceProgress(step: keyof PipelineTrace, trace: PipelineT
       status: "completed",
       input: trace.event.content,
       output: JSON.stringify(trace.event, null, 2),
+      transport: "local",
+    };
+  }
+
+  if (step === "sceneContext") {
+    return {
+      step,
+      status: "completed",
+      input: JSON.stringify({ event: trace.event, previousSceneTitle: trace.sceneContext.previousSceneTitle }, null, 2),
+      output: trace.sceneContext,
       transport: "local",
     };
   }
