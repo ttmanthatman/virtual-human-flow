@@ -93,6 +93,7 @@
 | Builtin Persona Dossiers | `builtinPersonaDossiers.mjs` | 提供“马可福音10”和“郑州市”全局初始人物/场景/位置档案，并登记生平事件、社会人格位置和熟人关系 | 无 | `PersonaDossier[]` | Server Support | 无 |
 | Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport/fallbackReason | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Appraisal/Memory/Decision/State Update | 外部 LLM endpoint |
 | Cognitive Module Fallback Verification | `scripts/verify-cognitive-module-fallback.mjs` | 伪造未闭合 SSE JSON，验证认知模块会 fallback 而不是抛错卡住 | 无 | pass/fail | npm script | TypeScript compiler |
+| Update Button Clickable Verification | `scripts/verify-update-button-clickable.mjs` | 用 Playwright mock 有新版本状态，验证未登录时“更新服务器”按钮仍可点击并进入权限反馈路径 | 无 | pass/fail | npm script | App Shell |
 | Appraisal | `src/pipeline/appraisal.ts` | 通过 LLM 判断事件触发的关切、危险状态、清醒程度、回应必要性、回复节奏、触动强度、失态风险和突破人设外壳风险 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | Conversation Pipeline | Cognitive Module Client |
 | Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 用自然语言候选清单和 LLM 复判判断哪些记忆会浮现；LLM 只选择 ID，完整记忆由本地回填；召回不能退化为敏感词过滤 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` | Conversation Pipeline | Cognitive Module Client |
 | Response Decision | `src/pipeline/responseDecision.ts` | 通过 LLM 消费结构化评估和记忆，决定是否回应、回应模式、单条/连续/爆发节奏、是否失态和是否突破人设外壳 | appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | Conversation Pipeline | Cognitive Module Client |

@@ -1,6 +1,6 @@
 {
   "name": "virtual-human-flow",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,8 @@
     "verify:conversation-message-history": "node scripts/verify-conversation-message-history.mjs",
     "verify:user-relationship-memory": "node scripts/verify-user-relationship-memory.mjs",
     "verify:admin-history-and-module-audit": "node scripts/verify-admin-history-and-module-audit.mjs",
-    "verify:audit-modal-scroll": "node scripts/verify-audit-modal-scroll.mjs"
+    "verify:audit-modal-scroll": "node scripts/verify-audit-modal-scroll.mjs",
+    "verify:update-button-clickable": "node scripts/verify-update-button-clickable.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^6.0.2",

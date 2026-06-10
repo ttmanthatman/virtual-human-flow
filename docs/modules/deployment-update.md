@@ -34,4 +34,5 @@ Deployment Update 负责 GitHub 推送后的站内手动更新路径、生产服
 ## 验证
 
 - 更新 UI/API 改动：`npm run build`
+- 更新按钮可点击性：`npm run verify:update-button-clickable`
 - 文档-only 部署规则改动：`git diff --check`

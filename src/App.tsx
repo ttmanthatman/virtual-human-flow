@@ -1953,7 +1953,7 @@ export function App() {
               <button className="secondary-button" type="button" onClick={checkAppUpdate} disabled={isCheckingUpdate || isUpdatingApp}>
                 <RefreshCcw size={15} /> {isCheckingUpdate ? "检查中" : "重新检查"}
               </button>
-              <button className="primary-button" type="button" onClick={handleRunAppUpdate} disabled={!isAdmin || !appUpdateStatus?.available || isUpdatingApp}>
+              <button className="primary-button" type="button" onClick={handleRunAppUpdate} disabled={!appUpdateStatus?.available || isUpdatingApp}>
                 <RefreshCcw size={15} /> {isUpdatingApp ? "更新中" : "更新服务器"}
               </button>
             </div>
