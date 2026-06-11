@@ -295,8 +295,8 @@
 | `ensureDossierPreview` | `dossier` | 生成缺失的短预览。 | 调 `/api/deepseek-chat` 流式生成，再 POST `/preview` 全局保存。 |
 | `syncConversationState` | `nextState`, `interaction` | 对话后保存当前人物的全局运行态。 | POST `/conversation-state`，服务端写 `.conversation-states.local.json`。 |
 | `loadConversationHistory` | `dossierId`, `historyKey`, `cachedMessages?` | 切换人物或登录后读取消息历史。 | GET `/conversation-history`，必要时回填缓存。 |
-| `loadAdminConversationHistorySummaries` | `dossierId` | 管理员读取当前人物下所有用户历史摘要。 | GET `/api/admin/conversation-histories?dossierId=...`。生产服务已实现；开发代理需复核是否同步。 |
-| `handleSelectAdminHistoryKey` | `historyKey` | 管理员选择某个用户历史。 | GET `dossierId + key`，写只读历史桶。生产服务已实现；开发代理需复核是否同步。 |
+| `loadSharedConversationHistorySummaries` | `dossierId` | 登录用户读取当前人物下所有用户历史摘要。 | GET `/api/conversation-histories?dossierId=...`。生产服务和开发代理均已实现；旧 `/api/admin/conversation-histories` 保留兼容。 |
+| `handleSelectSharedHistoryKey` | `historyKey`, `forceReload?` | 登录用户选择某个用户历史，只读查看其当前人物消息；本地空缓存但摘要非空时会重新拉取。 | GET `dossierId + key`，写共享只读历史桶。 |
 | `persistConversationHistoryMessages` | `dossierId`, `messagesToSave` | 对话后保存中间栏消息。 | POST `/conversation-history`。 |
 | `handleLogin` | form event | POST `/api/auth/login`，保存 token 和用户。 | localStorage + React auth state。 |
 | `handleLogout` | 无 | POST `/api/auth/logout` 并清理本地登录态。 | 清空 auth state。 |
@@ -606,7 +606,7 @@
 
 ### Vite Dev Proxy: `vite.config.ts`
 
-开发代理复用大部分生产 API 和 DeepSeek proxy 参数。当前文件包含 auth、persona dossiers、conversation state/history、conversation audits、DeepSeek config、app update、DeepSeek chat 等路由。需要人工复核的一点：生产服务有 `/api/admin/conversation-histories`，当前开发代理文件中未检索到同名路由；如果本地开发也需要管理员历史查看，应补齐或确认由其他层处理。
+开发代理复用大部分生产 API 和 DeepSeek proxy 参数。当前文件包含 auth、persona dossiers、conversation state/history、shared conversation histories、conversation audits、DeepSeek config、app update、DeepSeek chat 等路由。生产服务和开发代理都提供 `/api/conversation-histories`，并保留 `/api/admin/conversation-histories` 作为兼容别名。
 
 DeepSeek proxy 参数：
 
@@ -641,7 +641,7 @@ DeepSeek proxy 参数：
 | `scripts/verify-cognitive-module-fallback.mjs` | 无 | 结构化 SSE JSON 截断时认知模块 fallback。 |
 | `scripts/verify-global-conversation-state.mjs` | 无 | 用户 A 写入角色运行态后，用户 B 和全局读取都能承接；中间栏消息仍按用户隔离。 |
 | `scripts/verify-conversation-message-history.mjs` | 无 | 消息历史按用户和档案保存读取。 |
-| `scripts/verify-admin-history-and-module-audit.mjs` | 无 | 管理员历史查看和模块审计记录。 |
+| `scripts/verify-admin-history-and-module-audit.mjs` | 无 | 共享角色历史查看和管理员模块审计记录。 |
 | `scripts/verify-user-relationship-memory.mjs` | 无 | 当前用户关系印象记忆写入和回填关系备注。 |
 
 ## 参数级数据流
@@ -710,4 +710,4 @@ DeepSeek proxy 参数：
 | 生成档案是否照抄原文 | `compactText/isRawCopy`、`displaySummary/background/fullLifeStory`。 |
 | 场景和人物是否同世界观 | `ProfileSceneConsistencyResult.severity/requiresDistortionPassword`。 |
 | 审计是否能复盘模块链 | `PipelineTrace`、`ConversationModuleCall.input/output/status/transport`。 |
-| 开发和生产 API 是否同步 | `server.mjs` 与 `vite.config.ts` 路由表，尤其管理员历史接口。 |
+| 开发和生产 API 是否同步 | `server.mjs` 与 `vite.config.ts` 路由表，尤其共享角色历史和管理员审计接口。 |

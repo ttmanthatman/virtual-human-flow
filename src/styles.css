@@ -878,7 +878,7 @@ textarea {
   padding: 5px 9px;
 }
 
-.admin-history-toolbar {
+.shared-history-toolbar {
   align-items: center;
   background: #f7fbfa;
   border: 1px solid #d7e9e6;
@@ -889,20 +889,20 @@ textarea {
   padding: 9px 10px;
 }
 
-.admin-history-toolbar label {
+.shared-history-toolbar label {
   align-items: center;
   display: flex;
   gap: 8px;
   min-width: 0;
 }
 
-.admin-history-toolbar span,
-.admin-history-toolbar small {
+.shared-history-toolbar span,
+.shared-history-toolbar small {
   color: #66757d;
   font-size: 11px;
 }
 
-.admin-history-toolbar select {
+.shared-history-toolbar select {
   background: #fff;
   border: 1px solid #d7e0e4;
   border-radius: 7px;
@@ -912,7 +912,7 @@ textarea {
   padding: 0 8px;
 }
 
-.admin-history-toolbar small {
+.shared-history-toolbar small {
   line-height: 1.35;
   text-align: right;
 }

@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const tempRoot = mkdtempSync(resolve(tmpdir(), "virtual-human-flow-admin-history-"));
+const tempRoot = mkdtempSync(resolve(tmpdir(), "virtual-human-flow-shared-history-"));
 const originalCwd = process.cwd();
 
 try {
@@ -15,6 +15,7 @@ try {
     deleteConversationAudit,
     exportConversationAudits,
     readConversationAudits,
+    readConversationHistoryMessages,
     readConversationHistoryMessagesByKey,
     readConversationHistorySummaries,
     readPersonaDossiers,
@@ -23,8 +24,10 @@ try {
   } = await import(pathToFileURL(resolve(repoRoot, "serverSupport.mjs")).href);
 
   const qoo = { userId: 701, username: "Qoo", nickname: "Qoo", isAdmin: false };
+  const yuki = { userId: 702, username: "Yuki", nickname: "Yuki", isAdmin: false };
   const dossier = readPersonaDossiers(qoo)[0];
-  const marker = `qoo-admin-history-${Date.now()}`;
+  const marker = `qoo-shared-history-${Date.now()}`;
+  const yukiMarker = `yuki-shared-history-${Date.now()}`;
   const conversationEventId = "event_admin_audit_delete";
   const userMessageId = "qoo-user-message";
   const personaMessageId = "persona-reply-message";
@@ -48,16 +51,43 @@ try {
     ],
     qoo,
   );
+  appendConversationHistoryMessages(
+    dossier.id,
+    [
+      {
+        id: "yuki-user-message",
+        speaker: "user",
+        speakerName: "Yuki",
+        content: yukiMarker,
+        timestamp: new Date().toISOString(),
+      },
+    ],
+    yuki,
+  );
 
   const summaries = readConversationHistorySummaries(dossier.id);
   const qooSummary = summaries.find((summary) => summary.username === "Qoo");
+  const yukiSummary = summaries.find((summary) => summary.username === "Yuki");
   if (!qooSummary) {
     throw new Error("Expected admin history summaries to include Qoo.");
+  }
+  if (!yukiSummary) {
+    throw new Error("Expected shared character history summaries to include another user on the same dossier.");
   }
 
   const qooMessages = readConversationHistoryMessagesByKey(dossier.id, qooSummary.key);
   if (!JSON.stringify(qooMessages).includes(marker)) {
     throw new Error("Expected admin history reader to return Qoo messages for the dossier.");
+  }
+  if (JSON.stringify(qooMessages).includes(yukiMarker)) {
+    throw new Error("Expected shared character history reader to keep selected users in separate buckets.");
+  }
+  const yukiMessages = readConversationHistoryMessagesByKey(dossier.id, yukiSummary.key);
+  if (!JSON.stringify(yukiMessages).includes(yukiMarker)) {
+    throw new Error("Expected shared character history reader to return Yuki messages for the same dossier.");
+  }
+  if (JSON.stringify(readConversationHistoryMessages(dossier.id, qoo)).includes(yukiMarker)) {
+    throw new Error("Expected direct current-user history loading to remain private to that user.");
   }
 
   const stateWithDeletedEvent = {
@@ -174,7 +204,6 @@ try {
     qoo,
   );
 
-  const yuki = { userId: 702, username: "Yuki", nickname: "Yuki", isAdmin: false };
   appendConversationAudit(
     {
       dossierId: dossier.id,
@@ -301,7 +330,7 @@ try {
     throw new Error("Expected role reset to restore the dossier baseline state.");
   }
 
-  console.log("admin history and module audit verified");
+  console.log("shared history and module audit verified");
 } finally {
   process.chdir(originalCwd);
   rmSync(tempRoot, { recursive: true, force: true });

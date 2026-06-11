@@ -10,13 +10,13 @@
 
 当前系统已接入登录和权限边界。未登录用户可以看到完整工作台界面，但发送消息、切换档案、生成或应用档案、保存 DeepSeek 密钥、测试 DeepSeek、查看审计等操作会打开登录浮窗。登录账号来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室用户；本项目只调用 liao 聊天室 `/api/login` 校验用户名和密码，不保存密码，不修改聊天室数据。
 
-管理员权限沿用 liao 聊天室登录结果里的 `isAdmin`。只有管理员可以新增、保存、删除或应用共享多人档案，也可以修改档案分组；普通登录用户可以读取、选择和使用管理员保存的共享档案。用户对话时产生的中间栏消息仍按 `userId + dossierId` 隔离：前端切换人物时通过 `/api/persona-dossiers/:id/conversation-history` 加载中间栏消息，发送后写入 `.conversation-histories.local.json`。服务端角色运行态通过 `/api/persona-dossiers/:id/conversation-state` 按 `dossierId` 写入 `.conversation-states.local.json` 的全局角色条目；短期记忆、长期记忆、runtime 状态、关系变化、对各用户的关系印象、scene 和 location 都由同一个人物共享，不覆盖 `.persona-dossiers.local.json` 中的共享底稿。
+管理员权限沿用 liao 聊天室登录结果里的 `isAdmin`。只有管理员可以新增、保存、删除或应用共享多人档案，也可以修改档案分组；普通登录用户可以读取、选择和使用管理员保存的共享档案。用户对话时产生的中间栏消息仍按 `userId + dossierId` 写入：前端默认“我的历史”通过 `/api/persona-dossiers/:id/conversation-history` 加载当前用户消息，发送后也只写入当前用户消息桶。当前角色下的用户历史还会通过 `/api/conversation-histories` 以只读方式列出和读取，任一登录用户都可以查看其他用户与该角色的历史。服务端角色运行态通过 `/api/persona-dossiers/:id/conversation-state` 按 `dossierId` 写入 `.conversation-states.local.json` 的全局角色条目；短期记忆、长期记忆、runtime 状态、关系变化、对各用户的关系印象、scene 和 location 都由同一个人物共享，不覆盖 `.persona-dossiers.local.json` 中的共享底稿。
 
 系统启动时会合并 `builtinPersonaDossiers.mjs` 中的内置全局档案和 `.persona-dossiers.local.json` 中管理员保存的共享档案。当前内置 14 个档案：7 个“马可福音10”人物和 7 个“郑州市”人物；每个档案都包含人物、从小到大的关键经历、心理变化、关系变化、熟人关系、场景、分组和位置属性。管理员删除内置档案时不会改源码，而是在运行时存储里记录 tombstone。
 
 人物档案显示分成预览和详细。详细档案直接来自 `CharacterProfile` 的 `fullLifeStory`、`lifeEvents`、`personalityFacets` 和 `relationships`；预览短文由 DeepSeek 生成，不由源码手写。角色缺少 `personaDossier.previewSummary` 时，UI 显示“预览生成中”并在左侧档案卡显示扫光动画；登录用户打开该角色后，前端调用 DeepSeek 生成短预览，再通过 `/api/persona-dossiers/:id/preview` 全局保存。短预览生成和管理员人物/场景生成使用独立生成状态，不设置聊天 `isRunning`，因此生成过程中仍可发送对话。
 
-后台会记录每个登录用户的一次输入、虚拟人输出和本轮对话的模块调用记录，并在新审计记录里保存本轮 `conversationEventId` 和中间栏消息 ID，作为删除同轮运行态的锚点。审计记录写入 `.conversation-audits.local.json`，中间栏历史写入 `.conversation-histories.local.json`，角色全局对话运行态写入 `.conversation-states.local.json`，共享档案写入 `.persona-dossiers.local.json`；这些都是运行时文件，被 `.gitignore` 忽略。中间栏临时心理流来自 `PipelineStepProgress.mindFlow`，只在当前轮 streaming 展示和折叠，不写入后台历史。只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计，也可以通过 `/api/conversation-audits/export` 导出所选记录或完整导出所有用户的所有输入输出审计记录；删除审计时会级联清理同轮中间栏消息、短期记忆、长期记忆和关系记忆片段，前端同步清理当前消息桶和 localStorage，避免旧缓存回填。管理员还可以通过 `/api/admin/conversation-histories` 按人物查看各用户中间栏历史，并通过 `/api/persona-dossiers/:id/reset-conversation` 将当前角色恢复到共享档案底稿，同时清理该角色所有用户历史、全局运行态和对应审计。
+后台会记录每个登录用户的一次输入、虚拟人输出和本轮对话的模块调用记录，并在新审计记录里保存本轮 `conversationEventId` 和中间栏消息 ID，作为删除同轮运行态的锚点。审计记录写入 `.conversation-audits.local.json`，中间栏历史写入 `.conversation-histories.local.json`，角色全局对话运行态写入 `.conversation-states.local.json`，共享档案写入 `.persona-dossiers.local.json`；这些都是运行时文件，被 `.gitignore` 忽略。中间栏临时心理流来自 `PipelineStepProgress.mindFlow`，只在当前轮 streaming 展示和折叠，不写入后台历史。只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计，也可以通过 `/api/conversation-audits/export` 导出所选记录或完整导出所有用户的所有输入输出审计记录；删除审计时会级联清理同轮中间栏消息、短期记忆、长期记忆和关系记忆片段，前端同步清理当前消息桶和 localStorage，避免旧缓存回填。所有登录用户可以通过 `/api/conversation-histories` 按人物只读查看各用户中间栏历史；旧 `/api/admin/conversation-histories` 路由保留兼容但同样只要求登录。管理员还可以通过 `/api/persona-dossiers/:id/reset-conversation` 将当前角色恢复到共享档案底稿，同时清理该角色所有用户历史、全局运行态和对应审计。
 
 重要约束：Reply LLM 只接收自然语言上下文，只生成角色说出口的话。不能把 JSON、字段名、输出契约、工程术语或类似编程语言的内容混进这一步。
 
@@ -257,15 +257,15 @@ flowchart TD
     TOMBSTONE --> STORE
     USERSTORE[.conversation-states.local.json] --> OVERLAY[叠加角色全局运行态]
     HISTSTORE[.conversation-histories.local.json] --> CHATLOAD[加载当前用户当前人物历史]
-    HISTSTORE --> ADMINHIST[管理员按人物列出/读取用户历史]
+    HISTSTORE --> SHAREDHIST[登录用户按人物列出/读取用户历史]
     MERGE --> READ[登录用户读取全局可用档案]
     READ --> OVERLAY
     OVERLAY --> D
     D --> H[左栏人物/场景/位置输入同步切换]
     D --> CHATLOAD
-    D --> ADMINHIST
+    D --> SHAREDHIST
     CHATLOAD --> CHATUI[中间栏对话历史]
-    ADMINHIST --> CHATUI
+    SHAREDHIST --> CHATUI
     H --> I[聊天室后续使用当前档案状态]
     I --> J[对话 pipeline 产出 nextState]
     I --> SAVEHIST[POST /api/persona-dossiers/:id/conversation-history]
@@ -277,7 +277,7 @@ flowchart TD
     N --> USERSTORE
 ```
 
-内置档案和管理员保存的多人档案都是全局可用共享底稿。普通用户选择它之后可以对话使用；中间栏消息会保存到 `.conversation-histories.local.json` 中当前 `userId + dossierId` 条目，切换人物时重新读取。登录用户历史以服务端返回为准；如果服务端返回空历史，前端必须清空内存消息桶和 localStorage，不能把旧缓存再写回服务器。对话产生的短期记忆、长期记忆、runtime 状态、关系变化、场景和位置会写回 `.conversation-states.local.json` 中当前 `dossierId` 的全局角色条目。系统不让不同用户共享中间栏聊天历史，但会让所有用户读取同一人物的同一份角色记忆和场景状态。为了让熟人关系在角色网络中产生影响，后台把压缩后的关系余波写给全局运行态里相关人物，不把用户原始长对话全文扩散给其他用户的中间栏历史或共享底稿。
+内置档案和管理员保存的多人档案都是全局可用共享底稿。普通用户选择它之后可以对话使用；中间栏消息会保存到 `.conversation-histories.local.json` 中当前 `userId + dossierId` 条目，切换人物时重新读取。登录用户历史以服务端返回为准；如果服务端返回空历史，前端必须清空内存消息桶和 localStorage，不能把旧缓存再写回服务器。对话产生的短期记忆、长期记忆、runtime 状态、关系变化、场景和位置会写回 `.conversation-states.local.json` 中当前 `dossierId` 的全局角色条目。同一角色现在全局对应多个用户历史：登录用户默认只写自己的消息桶，也可以通过只读选择器查看其他用户与该角色的中间栏历史；查看其他用户历史时不能发送。所有用户也会读取同一人物的同一份角色记忆和场景状态。为了让熟人关系在角色网络中产生影响，后台把压缩后的关系余波写给全局运行态里相关人物，不把用户原始长对话全文扩散到共享档案底稿。
 
 ## 对话审计路径
 
@@ -783,7 +783,7 @@ flowchart LR
     LEFT --> MONITOR[右侧生成监视]
     MONITOR --> GENJSON[人物短预览/人物档案/场景生成输入输出状态]
     TRACE --> AUDIT[管理员输入输出和模块调用审计]
-    CHAT --> ADMINHIST[管理员用户历史选择器]
+    CHAT --> SHAREDHIST[共享用户历史选择器]
     TOP --> LOGIN[登录浮窗]
     TOP --> UPDATE[服务器更新浮窗]
     LEFT --> DOS[多人档案: 分组/新建/切换/删除]
@@ -830,10 +830,10 @@ flowchart LR
 | 内置人物档案 | initialized | `builtinPersonaDossiers.mjs` 提供 7 个“马可福音10”和 7 个“郑州市”全局初始档案 |
 | 人物位置属性 | initialized | `CharacterState.location` 支持当前位置、速度、方向和周边地图上下文；初始来自 seed/manual，对话运行态可由 `temporalSceneProgression` 按真实当地时间推进 |
 | 登录机制 | initialized | 用户来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室登录接口；未登录可看界面但操作会弹登录浮窗 |
-| 权限控制 | initialized | `isAdmin` 用户可维护共享档案和查看审计；普通登录用户只可选择共享档案并对话 |
+| 权限控制 | initialized | `isAdmin` 用户可维护共享档案和查看审计；普通登录用户可选择共享档案、对话并只读查看当前角色下其他用户历史 |
 | 共享多人档案 | initialized | 管理员保存到 `.persona-dossiers.local.json`，所有登录用户可读取和使用 |
-| 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`，切换人物时加载对应中间栏历史；连续回复会按 `replyOutput.segments` 写成多条角色消息；`mindFlow` 临时心理流会在当前轮折叠，不进入历史文件 |
-| 管理员用户历史查看 | initialized | 管理员可在当前人物下列出所有用户历史摘要，并选择某个用户以只读方式查看该用户与该人物的中间栏历史 |
+| 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`，默认“我的历史”加载当前用户中间栏历史；连续回复会按 `replyOutput.segments` 写成多条角色消息；`mindFlow` 临时心理流会在当前轮折叠，不进入历史文件 |
+| 共享角色历史查看 | initialized | 登录用户可在当前人物下列出所有用户历史摘要，并选择某个用户以只读方式查看该用户与该人物的中间栏历史；查看时禁用发送 |
 | 角色全局对话运行态 | initialized | 登录用户对话后按 `dossierId` 写入 `.conversation-states.local.json`，读取档案时叠加同一人物的全局记忆、runtime、scene 和 location |
 | 当前角色重置 | initialized | 管理员通过 `/api/persona-dossiers/:id/reset-conversation` 清理该档案全部用户历史、全局运行态和对应审计；共享档案底稿不变，前端同步清理消息桶和 localStorage |
 | 用户关系印象记忆 | initialized | `CharacterState.relationshipMemory` 作为长期记忆中的关系记忆区，按当前说话用户保存自然语言印象、关系总结、证据和最近互动，并进入召回、回复提示词和右侧展示 |

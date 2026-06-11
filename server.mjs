@@ -182,8 +182,8 @@ createServer(async (request, response) => {
       return;
     }
 
-    if (pathname === "/api/admin/conversation-histories" && request.method === "GET") {
-      if (!requireAdminSession(request, response)) return;
+    if ((pathname === "/api/conversation-histories" || pathname === "/api/admin/conversation-histories") && request.method === "GET") {
+      if (!requireSession(request, response)) return;
       const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
       const dossierId = url.searchParams.get("dossierId") || "";
       const key = url.searchParams.get("key") || "";

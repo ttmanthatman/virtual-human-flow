@@ -194,8 +194,8 @@ function createConversationSpeaker(user: AuthUser | undefined) {
   return { id: stableId, name: displayName };
 }
 
-function createAdminConversationHistoryKey(historyKey: string) {
-  return `admin-history::${historyKey}`;
+function createSharedConversationHistoryKey(historyKey: string) {
+  return `shared-history::${historyKey}`;
 }
 
 function readStoredConversationHistory(historyKey: string) {
@@ -383,9 +383,9 @@ export function App() {
   const [selectedAuditIds, setSelectedAuditIds] = useState<string[]>([]);
   const [auditPanelOpen, setAuditPanelOpen] = useState(false);
   const [auditStatus, setAuditStatus] = useState("管理员可查看用户输入输出");
-  const [adminHistorySummaries, setAdminHistorySummaries] = useState<ConversationHistorySummary[]>([]);
-  const [selectedAdminHistoryKey, setSelectedAdminHistoryKey] = useState("");
-  const [adminHistoryStatus, setAdminHistoryStatus] = useState("管理员可查看当前人物下各用户历史");
+  const [sharedHistorySummaries, setSharedHistorySummaries] = useState<ConversationHistorySummary[]>([]);
+  const [selectedSharedHistoryKey, setSelectedSharedHistoryKey] = useState("");
+  const [sharedHistoryStatus, setSharedHistoryStatus] = useState("登录后可查看当前角色下各用户历史");
   const [appUpdateStatus, setAppUpdateStatus] = useState<AppUpdateStatus | undefined>();
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [updatePanelOpen, setUpdatePanelOpen] = useState(false);
@@ -411,10 +411,10 @@ export function App() {
     () => (state.relationshipMemory ?? []).find((memory) => memory.targetUserId === activeConversationSpeaker.id),
     [activeConversationSpeaker.id, state.relationshipMemory],
   );
-  const displayedConversationHistoryKey = selectedAdminHistoryKey ? createAdminConversationHistoryKey(selectedAdminHistoryKey) : activeConversationHistoryKey;
-  const isViewingAdminUserHistory = Boolean(selectedAdminHistoryKey);
-  const messages = conversationHistories[displayedConversationHistoryKey] ?? (isViewingAdminUserHistory ? [] : seedMessages);
-  const selectedAdminHistorySummary = adminHistorySummaries.find((summary) => summary.key === selectedAdminHistoryKey);
+  const displayedConversationHistoryKey = selectedSharedHistoryKey ? createSharedConversationHistoryKey(selectedSharedHistoryKey) : activeConversationHistoryKey;
+  const isViewingSharedUserHistory = Boolean(selectedSharedHistoryKey);
+  const messages = conversationHistories[displayedConversationHistoryKey] ?? (isViewingSharedUserHistory ? [] : seedMessages);
+  const selectedSharedHistorySummary = sharedHistorySummaries.find((summary) => summary.key === selectedSharedHistoryKey);
   const globalSceneStatus = useMemo(() => formatGlobalSceneStatus(state), [state]);
   const groupedDossiers = useMemo(() => {
     const groups = new Map<string, PersonaDossier[]>();
@@ -449,12 +449,12 @@ export function App() {
   }, [activeConversationHistoryKey, activeDossierId, isAuthenticated]);
 
   useEffect(() => {
-    setSelectedAdminHistoryKey("");
-    setAdminHistorySummaries([]);
-    if (isAdmin && activeDossierId) {
-      void loadAdminConversationHistorySummaries(activeDossierId);
+    setSelectedSharedHistoryKey("");
+    setSharedHistorySummaries([]);
+    if (isAuthenticated && activeDossierId) {
+      void loadSharedConversationHistorySummaries(activeDossierId);
     }
-  }, [activeDossierId, isAdmin]);
+  }, [activeDossierId, isAuthenticated]);
 
   useEffect(() => {
     if (!activeDossier || !isAuthenticated || !deepseekConnected) return;
@@ -538,6 +538,9 @@ export function App() {
     setAuthUser(undefined);
     setLlmConfig((current) => ({ ...current, authToken: "" }));
     setDossierSyncStatus("登录后读取后台共享档案");
+    setSelectedSharedHistoryKey("");
+    setSharedHistorySummaries([]);
+    setSharedHistoryStatus("登录后可查看当前角色下各用户历史");
   }
 
   function requireLogin(action: string) {
@@ -728,31 +731,33 @@ export function App() {
     });
   }
 
-  async function loadAdminConversationHistorySummaries(dossierId: string) {
-    setAdminHistoryStatus("正在读取当前人物的用户历史...");
-    const response = await fetch(`/api/admin/conversation-histories?dossierId=${encodeURIComponent(dossierId)}`, { headers: authHeaders() }).catch(() => undefined);
+  async function loadSharedConversationHistorySummaries(dossierId: string) {
+    setSharedHistoryStatus("正在读取当前角色的用户历史...");
+    const response = await fetch(`/api/conversation-histories?dossierId=${encodeURIComponent(dossierId)}`, { headers: authHeaders() }).catch(() => undefined);
     if (!response?.ok) {
-      setAdminHistoryStatus("用户历史读取失败");
+      setSharedHistoryStatus("用户历史读取失败");
       return;
     }
     const data = (await response.json()) as { summaries?: ConversationHistorySummary[] };
     const summaries = Array.isArray(data.summaries) ? data.summaries : [];
-    setAdminHistorySummaries(summaries);
-    setAdminHistoryStatus(summaries.length ? `可查看 ${summaries.length} 个用户的历史` : "当前人物还没有用户历史");
+    setSharedHistorySummaries(summaries);
+    setSharedHistoryStatus(summaries.length ? `可查看 ${summaries.length} 个用户的历史` : "当前角色还没有用户历史");
   }
 
-  async function handleSelectAdminHistoryKey(historyKey: string, forceReload = false) {
-    setSelectedAdminHistoryKey(historyKey);
+  async function handleSelectSharedHistoryKey(historyKey: string, forceReload = false) {
+    setSelectedSharedHistoryKey(historyKey);
     if (!historyKey) return;
-    const localKey = createAdminConversationHistoryKey(historyKey);
-    if (conversationHistories[localKey] && !forceReload) return;
+    const localKey = createSharedConversationHistoryKey(historyKey);
+    const cachedMessages = conversationHistories[localKey];
+    const summary = sharedHistorySummaries.find((item) => item.key === historyKey);
+    if (cachedMessages && !forceReload && (cachedMessages.length > 0 || (summary?.messageCount ?? 0) === 0)) return;
 
-    setAdminHistoryStatus("正在加载用户历史...");
-    const response = await fetch(`/api/admin/conversation-histories?dossierId=${encodeURIComponent(activeDossierId)}&key=${encodeURIComponent(historyKey)}`, {
+    setSharedHistoryStatus("正在加载用户历史...");
+    const response = await fetch(`/api/conversation-histories?dossierId=${encodeURIComponent(activeDossierId)}&key=${encodeURIComponent(historyKey)}`, {
       headers: authHeaders(),
     }).catch(() => undefined);
     if (!response?.ok) {
-      setAdminHistoryStatus("用户历史加载失败");
+      setSharedHistoryStatus("用户历史加载失败");
       return;
     }
     const data = (await response.json()) as { messages?: ChatMessage[] };
@@ -760,7 +765,7 @@ export function App() {
       ...current,
       [localKey]: Array.isArray(data.messages) ? data.messages : [],
     }));
-    setAdminHistoryStatus("已加载用户历史");
+    setSharedHistoryStatus("已加载用户历史");
   }
 
   async function persistConversationHistoryMessages(dossierId: string, messagesToSave: ChatMessage[]) {
@@ -934,8 +939,8 @@ export function App() {
     if (deletedEntry?.dossierId === activeDossierId) {
       await loadSharedDossiers(authToken, activeDossierId);
       await loadConversationHistory(activeDossierId, activeConversationHistoryKey, []);
-      if (selectedAdminHistoryKey) await handleSelectAdminHistoryKey(selectedAdminHistoryKey, true);
-      if (isAdmin) await loadAdminConversationHistorySummaries(activeDossierId);
+      if (selectedSharedHistoryKey) await handleSelectSharedHistoryKey(selectedSharedHistoryKey, true);
+      if (isAuthenticated) await loadSharedConversationHistorySummaries(activeDossierId);
     }
     setAuditStatus(removedCount ? `已删除一条记录，并清理 ${removedCount} 条关联历史/记忆` : "已删除一条用户输入输出记录");
   }
@@ -956,8 +961,8 @@ export function App() {
     for (const entry of entriesToClear) syncConversationHistoriesAfterAuditDeletion(entry);
     await loadSharedDossiers(authToken, activeDossierId);
     await loadConversationHistory(activeDossierId, activeConversationHistoryKey, []);
-    if (selectedAdminHistoryKey) await handleSelectAdminHistoryKey(selectedAdminHistoryKey, true);
-    if (isAdmin) await loadAdminConversationHistorySummaries(activeDossierId);
+    if (selectedSharedHistoryKey) await handleSelectSharedHistoryKey(selectedSharedHistoryKey, true);
+    if (isAuthenticated) await loadSharedConversationHistorySummaries(activeDossierId);
     setAuditEntries([]);
     setSelectedAuditIds([]);
     setAuditStatus("已清空用户输入输出记录");
@@ -993,8 +998,8 @@ export function App() {
       setSceneDescription(data.dossier.sceneDescription);
     }
     clearConversationHistoriesForDossier(activeDossierId);
-    setSelectedAdminHistoryKey("");
-    setAdminHistorySummaries([]);
+    setSelectedSharedHistoryKey("");
+    setSharedHistorySummaries([]);
     setAuditEntries((items) => items.filter((entry) => entry.dossierId !== activeDossierId));
     setSelectedAuditIds((items) => items.filter((id) => auditEntries.some((entry) => entry.id === id && entry.dossierId !== activeDossierId)));
     setActiveTrace(undefined);
@@ -1346,7 +1351,7 @@ export function App() {
   async function handleSend(event: FormEvent) {
     event.preventDefault();
     if (!requireLogin("发送消息")) return;
-    if (isViewingAdminUserHistory) {
+    if (isViewingSharedUserHistory) {
       setError("正在查看其他用户历史；切回“我的历史”后再发送。");
       return;
     }
@@ -1922,13 +1927,13 @@ export function App() {
             ))}
           </div>
 
-          {isAdmin ? (
-            <div className="admin-history-toolbar">
+          {isAuthenticated ? (
+            <div className="shared-history-toolbar">
               <label>
                 <span>查看用户历史</span>
-                <select value={selectedAdminHistoryKey} onChange={(event) => void handleSelectAdminHistoryKey(event.target.value)}>
+                <select value={selectedSharedHistoryKey} onChange={(event) => void handleSelectSharedHistoryKey(event.target.value)}>
                   <option value="">我的历史</option>
-                  {adminHistorySummaries.map((summary) => (
+                  {sharedHistorySummaries.map((summary) => (
                     <option key={summary.key} value={summary.key}>
                       {(summary.nickname || summary.username || `用户 ${summary.userId}`) + ` · ${summary.messageCount} 条`}
                     </option>
@@ -1936,9 +1941,9 @@ export function App() {
                 </select>
               </label>
               <small>
-                {selectedAdminHistorySummary
-                  ? `正在查看 ${selectedAdminHistorySummary.nickname || selectedAdminHistorySummary.username} 与 ${activeDossier?.title ?? state.profile.name} 的历史`
-                  : adminHistoryStatus}
+                {selectedSharedHistorySummary
+                  ? `正在查看 ${selectedSharedHistorySummary.nickname || selectedSharedHistorySummary.username} 与 ${activeDossier?.title ?? state.profile.name} 的历史`
+                  : sharedHistoryStatus}
               </small>
             </div>
           ) : null}
@@ -1962,10 +1967,10 @@ export function App() {
               onFocus={() => {
                 if (!isAuthenticated) setLoginModalOpen(true);
               }}
-              placeholder={isViewingAdminUserHistory ? "正在查看其他用户历史" : "输入一句话，观察多模块语言模型数据流"}
-              disabled={isViewingAdminUserHistory}
+              placeholder={isViewingSharedUserHistory ? "正在查看其他用户历史" : "输入一句话，观察多模块语言模型数据流"}
+              disabled={isViewingSharedUserHistory}
             />
-            <button type="submit" disabled={isRunning || isViewingAdminUserHistory}>
+            <button type="submit" disabled={isRunning || isViewingSharedUserHistory}>
               <Send size={17} /> {isRunning ? "运行中" : "发送"}
             </button>
           </form>
