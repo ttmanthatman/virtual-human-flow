@@ -107,6 +107,20 @@ type ConversationAuditEntry = {
   error?: string;
   moduleCalls?: ConversationModuleCall[];
 };
+type AuditArtifactDeletionSummary = {
+  historyMessagesRemoved?: number;
+  shortTermMemoriesRemoved?: number;
+  longTermMemoriesRemoved?: number;
+  relationshipMemoriesRemoved?: number;
+  relationshipHistoryItemsRemoved?: number;
+  relationshipEvidenceRemoved?: number;
+};
+type DossierResetSummary = {
+  historyEntriesRemoved?: number;
+  historyMessagesRemoved?: number;
+  stateEntriesRemoved?: number;
+  auditsRemoved?: number;
+};
 type ConversationAuditExportPayload = {
   schema: string;
   exportedAt: string;
@@ -200,6 +214,94 @@ function writeStoredConversationHistory(historyKey: string, messages: ChatMessag
     localStorage.setItem(`${conversationHistoryStoragePrefix}:${historyKey}`, JSON.stringify(filterPersistableConversationMessages(messages).slice(-maxConversationHistoryMessages)));
   } catch {
     // History persistence is best-effort; the active in-memory history still updates.
+  }
+}
+
+function removeStoredConversationHistory(historyKey: string) {
+  try {
+    localStorage.removeItem(`${conversationHistoryStoragePrefix}:${historyKey}`);
+  } catch {
+    // Local cache cleanup is best-effort; the backend remains authoritative.
+  }
+}
+
+function compactComparableText(value: unknown) {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+function createAuditTextFragments(entry: ConversationAuditEntry) {
+  const fragments = new Set<string>();
+  for (const value of [entry.userInput, entry.personaOutput]) {
+    const compact = compactComparableText(value);
+    if (compact) fragments.add(compact);
+    if (typeof value === "string") {
+      value
+        .split(/\n+/)
+        .map(compactComparableText)
+        .filter(Boolean)
+        .forEach((item) => fragments.add(item));
+    }
+  }
+  return fragments;
+}
+
+function isWithinAuditDeleteWindow(candidateTime: string, auditTime: string) {
+  const candidateMs = Date.parse(candidateTime || "");
+  const auditMs = Date.parse(auditTime || "");
+  if (!Number.isFinite(candidateMs) || !Number.isFinite(auditMs)) return true;
+  return Math.abs(candidateMs - auditMs) <= 30 * 60 * 1000;
+}
+
+function shouldRemoveMessageForDeletedAudit(message: ChatMessage, entry: ConversationAuditEntry) {
+  const targetIds = new Set(Array.isArray(entry.conversationHistoryMessageIds) ? entry.conversationHistoryMessageIds : []);
+  if (targetIds.has(message.id)) return true;
+  if (!isWithinAuditDeleteWindow(message.timestamp, entry.createdAt)) return false;
+  const content = compactComparableText(message.content);
+  if (!content) return false;
+  const fragments = createAuditTextFragments(entry);
+  if (message.speaker === "user" && content === compactComparableText(entry.userInput)) return true;
+  if (message.speaker === "persona" && fragments.has(content)) return true;
+  return false;
+}
+
+function filterMessagesForDeletedAudit(messages: ChatMessage[], entry: ConversationAuditEntry) {
+  return messages.filter((message) => !shouldRemoveMessageForDeletedAudit(message, entry));
+}
+
+function isStoredHistoryKeyForDossier(storageKey: string, dossierId: string) {
+  const prefix = `${conversationHistoryStoragePrefix}:`;
+  if (!storageKey.startsWith(prefix)) return false;
+  const historyKey = storageKey.slice(prefix.length);
+  return historyKey.includes(`::dossier-${dossierId}`) || historyKey.includes(`::dossier:${dossierId}`);
+}
+
+function purgeStoredConversationHistoriesForDossier(dossierId: string) {
+  try {
+    const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)).filter((key): key is string => Boolean(key));
+    for (const key of keys) {
+      if (isStoredHistoryKeyForDossier(key, dossierId)) localStorage.removeItem(key);
+    }
+  } catch {
+    // Local cache cleanup is best-effort; the backend remains authoritative.
+  }
+}
+
+function syncStoredConversationHistoriesAfterAuditDeletion(entry: ConversationAuditEntry) {
+  try {
+    const prefix = `${conversationHistoryStoragePrefix}:`;
+    const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)).filter((key): key is string => Boolean(key?.startsWith(prefix)));
+    for (const key of keys) {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) continue;
+      const filtered = filterMessagesForDeletedAudit(parsed as ChatMessage[], entry);
+      if (filtered.length === parsed.length) continue;
+      if (filtered.length) localStorage.setItem(key, JSON.stringify(filtered));
+      else localStorage.removeItem(key);
+    }
+  } catch {
+    // Local cache cleanup is best-effort; the backend remains authoritative.
   }
 }
 
@@ -453,7 +555,7 @@ export function App() {
     return false;
   }
 
-  async function loadSharedDossiers(token = authToken) {
+  async function loadSharedDossiers(token = authToken, preferredDossierId = activeDossierId) {
     if (!token) return;
     setDossierSyncStatus("正在读取后台共享档案...");
     try {
@@ -465,7 +567,7 @@ export function App() {
       const data = (await response.json()) as { dossiers?: PersonaDossier[] };
       if (Array.isArray(data.dossiers) && data.dossiers.length > 0) {
         setDossiers(data.dossiers);
-        const nextActive = data.dossiers[0];
+        const nextActive = data.dossiers.find((dossier) => dossier.id === preferredDossierId) ?? data.dossiers[0];
         setActiveDossierId(nextActive.id);
         setState(nextActive.state);
         setDossierDescription(nextActive.dossierDescription);
@@ -595,9 +697,35 @@ export function App() {
       setMessagesForHistory(historyKey, remoteMessages);
       return;
     }
-    if (cachedMessages && cachedMessages.length > 0 && cachedMessages !== seedMessages) {
-      void persistConversationHistoryMessages(dossierId, cachedMessages);
-    }
+    setMessagesForHistory(historyKey, []);
+  }
+
+  function syncConversationHistoriesAfterAuditDeletion(entry: ConversationAuditEntry) {
+    syncStoredConversationHistoriesAfterAuditDeletion(entry);
+    setConversationHistories((current) => {
+      const next: ConversationHistoryMap = {};
+      for (const [historyKey, messages] of Object.entries(current)) {
+        const filtered = filterMessagesForDeletedAudit(messages, entry);
+        next[historyKey] = filtered;
+        if (filtered.length !== messages.length) {
+          if (filtered.length) writeStoredConversationHistory(historyKey, filtered);
+          else removeStoredConversationHistory(historyKey);
+        }
+      }
+      return next;
+    });
+  }
+
+  function clearConversationHistoriesForDossier(dossierId: string) {
+    purgeStoredConversationHistoriesForDossier(dossierId);
+    setConversationHistories((current) => {
+      const next: ConversationHistoryMap = {};
+      for (const [historyKey, messages] of Object.entries(current)) {
+        const matchesDossier = historyKey.includes(`::dossier-${dossierId}`) || historyKey.includes(`::dossier:${dossierId}`);
+        next[historyKey] = matchesDossier ? [] : messages;
+      }
+      return next;
+    });
   }
 
   async function loadAdminConversationHistorySummaries(dossierId: string) {
@@ -613,11 +741,11 @@ export function App() {
     setAdminHistoryStatus(summaries.length ? `可查看 ${summaries.length} 个用户的历史` : "当前人物还没有用户历史");
   }
 
-  async function handleSelectAdminHistoryKey(historyKey: string) {
+  async function handleSelectAdminHistoryKey(historyKey: string, forceReload = false) {
     setSelectedAdminHistoryKey(historyKey);
     if (!historyKey) return;
     const localKey = createAdminConversationHistoryKey(historyKey);
-    if (conversationHistories[localKey]) return;
+    if (conversationHistories[localKey] && !forceReload) return;
 
     setAdminHistoryStatus("正在加载用户历史...");
     const response = await fetch(`/api/admin/conversation-histories?dossierId=${encodeURIComponent(activeDossierId)}&key=${encodeURIComponent(historyKey)}`, {
@@ -782,6 +910,7 @@ export function App() {
 
   async function deleteConversationAuditEntry(auditId: string) {
     if (!requireAdmin("删除审计记录")) return;
+    const deletedEntry = auditEntries.find((entry) => entry.id === auditId);
     const response = await fetch(`/api/conversation-audits/${encodeURIComponent(auditId)}`, {
       method: "DELETE",
       headers: authHeaders(),
@@ -791,17 +920,30 @@ export function App() {
       setAuditStatus(`审计删除失败：${detail.slice(0, 80)}`);
       return;
     }
-    const data = (await response.json()) as { artifacts?: { historyMessagesRemoved?: number; shortTermMemoriesRemoved?: number; longTermMemoriesRemoved?: number } };
+    const data = (await response.json()) as { artifacts?: AuditArtifactDeletionSummary };
+    if (deletedEntry) syncConversationHistoriesAfterAuditDeletion(deletedEntry);
     setAuditEntries((items) => items.filter((entry) => entry.id !== auditId));
     setSelectedAuditIds((items) => items.filter((id) => id !== auditId));
     const removedCount =
-      (data.artifacts?.historyMessagesRemoved ?? 0) + (data.artifacts?.shortTermMemoriesRemoved ?? 0) + (data.artifacts?.longTermMemoriesRemoved ?? 0);
+      (data.artifacts?.historyMessagesRemoved ?? 0) +
+      (data.artifacts?.shortTermMemoriesRemoved ?? 0) +
+      (data.artifacts?.longTermMemoriesRemoved ?? 0) +
+      (data.artifacts?.relationshipMemoriesRemoved ?? 0) +
+      (data.artifacts?.relationshipHistoryItemsRemoved ?? 0) +
+      (data.artifacts?.relationshipEvidenceRemoved ?? 0);
+    if (deletedEntry?.dossierId === activeDossierId) {
+      await loadSharedDossiers(authToken, activeDossierId);
+      await loadConversationHistory(activeDossierId, activeConversationHistoryKey, []);
+      if (selectedAdminHistoryKey) await handleSelectAdminHistoryKey(selectedAdminHistoryKey, true);
+      if (isAdmin) await loadAdminConversationHistorySummaries(activeDossierId);
+    }
     setAuditStatus(removedCount ? `已删除一条记录，并清理 ${removedCount} 条关联历史/记忆` : "已删除一条用户输入输出记录");
   }
 
   async function clearConversationAuditEntries() {
     if (!requireAdmin("清空审计记录")) return;
     if (auditEntries.length > 0 && !window.confirm("确定清空所有用户输入输出记录吗？")) return;
+    const entriesToClear = auditEntries;
     const response = await fetch("/api/conversation-audits", {
       method: "DELETE",
       headers: authHeaders(),
@@ -811,9 +953,56 @@ export function App() {
       setAuditStatus(`审计清空失败：${detail.slice(0, 80)}`);
       return;
     }
+    for (const entry of entriesToClear) syncConversationHistoriesAfterAuditDeletion(entry);
+    await loadSharedDossiers(authToken, activeDossierId);
+    await loadConversationHistory(activeDossierId, activeConversationHistoryKey, []);
+    if (selectedAdminHistoryKey) await handleSelectAdminHistoryKey(selectedAdminHistoryKey, true);
+    if (isAdmin) await loadAdminConversationHistorySummaries(activeDossierId);
     setAuditEntries([]);
     setSelectedAuditIds([]);
     setAuditStatus("已清空用户输入输出记录");
+  }
+
+  async function resetActiveDossierConversation() {
+    if (!activeDossierId || !requireAdmin("重置当前角色")) return;
+    const targetTitle = activeDossier?.title ?? state.profile.name;
+    if (!window.confirm(`确定重置「${targetTitle}」吗？这会清空该角色所有用户历史、运行态记忆和对应审计记录。`)) return;
+    setDossierSyncStatus("正在重置当前角色...");
+    const response = await fetch(`/api/persona-dossiers/${encodeURIComponent(activeDossierId)}/reset-conversation`, {
+      method: "POST",
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      setDossierSyncStatus(`角色重置失败：${detail.slice(0, 80)}`);
+      return;
+    }
+    const data = (await response.json()) as { dossier?: PersonaDossier; dossiers?: PersonaDossier[]; artifacts?: DossierResetSummary };
+    if (Array.isArray(data.dossiers) && data.dossiers.length > 0) {
+      setDossiers(data.dossiers);
+      const resetDossier = data.dossiers.find((dossier) => dossier.id === activeDossierId) ?? data.dossier;
+      if (resetDossier) {
+        setState(resetDossier.state);
+        setDossierDescription(resetDossier.dossierDescription);
+        setSceneDescription(resetDossier.sceneDescription);
+      }
+    } else if (data.dossier) {
+      setDossiers((items) => items.map((item) => (item.id === data.dossier?.id ? data.dossier : item)));
+      setState(data.dossier.state);
+      setDossierDescription(data.dossier.dossierDescription);
+      setSceneDescription(data.dossier.sceneDescription);
+    }
+    clearConversationHistoriesForDossier(activeDossierId);
+    setSelectedAdminHistoryKey("");
+    setAdminHistorySummaries([]);
+    setAuditEntries((items) => items.filter((entry) => entry.dossierId !== activeDossierId));
+    setSelectedAuditIds((items) => items.filter((id) => auditEntries.some((entry) => entry.id === id && entry.dossierId !== activeDossierId)));
+    setActiveTrace(undefined);
+    setLiveTrace({});
+    setActiveStep("event");
+    const removedCount =
+      (data.artifacts?.historyMessagesRemoved ?? 0) + (data.artifacts?.stateEntriesRemoved ?? 0) + (data.artifacts?.auditsRemoved ?? 0);
+    setDossierSyncStatus(removedCount ? `已重置当前角色，清理 ${removedCount} 条历史/运行态/审计` : "已重置当前角色");
   }
 
   async function checkAppUpdate() {
@@ -1565,6 +1754,9 @@ export function App() {
               </label>
               <button className="secondary-button" type="button" onClick={() => persistPersonaDossier()} disabled={!activeDossierId}>
                 <Save size={15} /> 保存后台档案
+              </button>
+              <button className="secondary-button" type="button" onClick={resetActiveDossierConversation} disabled={!activeDossierId}>
+                <RefreshCcw size={15} /> 重置当前角色
               </button>
               <button className="secondary-button danger-button" type="button" onClick={() => handleDeleteDossier(activeDossierId)} disabled={!activeDossierId}>
                 <Trash2 size={15} /> 删除当前档案

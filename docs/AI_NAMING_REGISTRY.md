@@ -67,6 +67,7 @@
 | 管理员用户历史查看 | `adminConversationHistoryAccess` | admin workflow | 管理员在当前人物下选择用户并查看该用户与该人物的中间栏历史 | `globalAdminChat`, `impersonation` |
 | 对话审计删除 | `conversationAuditDeletion` | admin action | 管理员删除单条或清空用户输入输出审计记录 | `logCleanup`, `chatPurge` |
 | 对话审计导出 | `conversationAuditExport` | admin workflow | 管理员将所选用户输入输出记录或全部用户全部输入输出记录导出为 JSON 文件 | `logDownload`, `chatBackup` |
+| 当前角色重置 | `activeDossierConversationReset` | admin workflow | 管理员清空当前档案对应的所有用户历史、角色全局运行态和审计记录，让角色回到共享档案底稿 | `deleteCharacter`, `resetApp` |
 | 人物场景一致性 | `profileSceneConsistency` | cognitive module | 判断人物档案和场景是否处于同一世界观、时代和社会语境 | `settingMatch`, `sceneFit` |
 | 扭曲时空密码 | `distortionPassword` | permission gate | 人物和场景硬冲突时允许继续应用的本地门禁短语 | `overrideCode`, `adminPassword` |
 | 混合记忆召回 | `hybridMemoryRetrieval` | pipeline design | 记忆召回同时参考自然语言相关度、关切关联、关系关联、情绪显著、近期性和词面线索 | `keywordMemorySearch`, `sensitiveWordRecall` |
@@ -225,6 +226,8 @@
 | `deleteConversationAuditEntry` | `src/App.tsx` | 管理员在审计浮层删除单条用户输入输出记录 | auditId | Promise<void> | 调用审计删除 API 并更新 App state | implemented |
 | `clearConversationAuditEntries` | `src/App.tsx` | 管理员在审计浮层清空用户输入输出记录 | 无 | Promise<void> | 调用审计清空 API 并更新 App state | implemented |
 | `exportConversationAuditEntries` | `src/App.tsx` | 管理员导出所选或全部用户输入输出记录 | scope | Promise<void> | 调用 `/api/conversation-audits/export` 并下载 JSON 文件 | implemented |
+| `resetActiveDossierConversation` | `src/App.tsx` | 管理员重置当前角色的历史、运行态和对应审计，并同步清理当前消息桶与浏览器缓存 | 无 | Promise<void> | 调用 `/api/persona-dossiers/:id/reset-conversation` | implemented |
+| `syncConversationHistoriesAfterAuditDeletion` | `src/App.tsx` | 审计删除后过滤前端内存消息桶和 localStorage 中同轮消息，防止旧缓存回填 | conversationAuditEntry | void | 更新 App state 和 localStorage | implemented |
 | `checkAppUpdate` | `src/App.tsx` | 左上角自动检查服务器是否落后于 GitHub 远端 | 无 | Promise<void> | 调用 `/api/app-update/status` 并更新 UI 状态 | implemented |
 | `handleRunAppUpdate` | `src/App.tsx` | 管理员触发 VPS 手动更新并读取 SSE 日志 | 无 | Promise<void> | 调用 `/api/app-update/run`，显示进度和日志 | implemented |
 | `consumeUpdateEvent` | `src/App.tsx` | 解析更新 SSE data 事件 | event text | void | 更新进度条和日志窗口 | implemented |
@@ -263,6 +266,7 @@
 | `deleteConversationArtifactsForAudit` | `serverSupport.mjs` | 删除审计记录对应的中间栏历史、短期记忆、长期记忆和关系记忆片段 | conversationAuditEntry | auditArtifactDeletionResult | 写 `.conversation-histories.local.json` 和 `.conversation-states.local.json` | implemented |
 | `deleteConversationAudit` | `serverSupport.mjs` | 管理员删除单条用户输入输出审计记录并级联清理同轮历史/记忆 | auditId | deleted flag + artifact cleanup summary | 写 runtime JSON | implemented |
 | `clearConversationAudits` | `serverSupport.mjs` | 管理员清空用户输入输出审计记录并级联清理关联历史/记忆 | 无 | deleted flag + artifact cleanup summary | 写 runtime JSON | implemented |
+| `resetPersonaDossierConversationArtifacts` | `serverSupport.mjs` | 管理员按档案清理所有用户历史、角色全局运行态和对应审计记录，并返回共享档案底稿 | dossierId | dossier/dossiers + reset summary | 写 `.conversation-histories.local.json`、`.conversation-states.local.json` 和 `.conversation-audits.local.json` | implemented |
 | `readAppUpdateStatus` | `serverSupport.mjs` | 检查本机 git 工作树当前提交和远端分支提交是否一致，并读取待更新提交摘要 | 无 | appUpdateStatus | 调用 git 命令读取本机、远端状态和提交说明 | implemented |
 | `readPendingUpdateChanges` | `serverSupport.mjs` | 读取服务器当前提交到远端提交之间的提交数量、标题和正文摘要 | workdir, branch, currentCommit, remoteCommit | appUpdateChangeSummary | 调用 git fetch/rev-list/log | implemented |
 | `streamAppUpdate` | `serverSupport.mjs` | 管理员触发 git pull、npm ci、npm run build 和重启命令，并通过 SSE 返回进度 | HTTP response | text/event-stream | 在 `APP_UPDATE_WORKDIR` 执行更新命令 | implemented |
@@ -416,6 +420,7 @@
 | `/api/persona-dossiers/:id/conversation-history` | POST | 登录用户追加保存自己在某个人物上的中间栏消息历史 | 需要登录会话；写 `.conversation-histories.local.json` | implemented |
 | `/api/admin/conversation-histories` | GET | 管理员按 `dossierId` 列出用户历史摘要，或按 `dossierId + key` 读取某用户消息 | 需要管理员会话；只读 `.conversation-histories.local.json` | implemented |
 | `/api/persona-dossiers/:id/conversation-state` | POST | 登录用户对话完成后写回该角色全局运行态，并向全局相关人物传播关系余波 | 需要登录会话；写入该人物共享记忆、runtime、scene 和 location | implemented |
+| `/api/persona-dossiers/:id/reset-conversation` | POST | 管理员重置当前角色对话运行态，清理该档案全部用户历史、全局运行态和对应审计 | 需要管理员会话；不改共享档案底稿 | implemented |
 | `/api/persona-dossiers/:id` | DELETE | 管理员删除后台共享多人档案 | 需要管理员会话；写 `.persona-dossiers.local.json` | implemented |
 | `/api/conversation-audits` | POST | 登录用户记录一次输入输出和模块调用记录 | 需要登录会话；写 `.conversation-audits.local.json` | implemented |
 | `/api/conversation-audits` | GET | 管理员读取所有用户输入输出和模块调用记录 | 需要管理员会话 | implemented |

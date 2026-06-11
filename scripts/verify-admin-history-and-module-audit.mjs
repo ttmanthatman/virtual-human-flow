@@ -18,6 +18,7 @@ try {
     readConversationHistoryMessagesByKey,
     readConversationHistorySummaries,
     readPersonaDossiers,
+    resetPersonaDossierConversationArtifacts,
     updatePersonaDossierConversationState,
   } = await import(pathToFileURL(resolve(repoRoot, "serverSupport.mjs")).href);
 
@@ -228,6 +229,76 @@ try {
   }
   if (JSON.stringify(stateAfterDelete?.relationshipMemory ?? []).includes(marker)) {
     throw new Error("Expected deleted audit event to be removed from relationship memory.");
+  }
+
+  const resetMarker = `role-reset-${Date.now()}`;
+  appendConversationHistoryMessages(
+    dossier.id,
+    [
+      {
+        id: "reset-user-message",
+        speaker: "user",
+        speakerName: "Yuki",
+        content: resetMarker,
+        timestamp: new Date().toISOString(),
+      },
+    ],
+    yuki,
+  );
+  updatePersonaDossierConversationState(
+    dossier.id,
+    {
+      ...stateAfterDelete,
+      shortTermMemory: [
+        ...(stateAfterDelete.shortTermMemory ?? []),
+        {
+          id: "stm-role-reset",
+          timestamp: new Date().toISOString(),
+          speakerId: "user:702",
+          speakerName: "Yuki",
+          content: resetMarker,
+          eventId: "event_role_reset",
+        },
+      ],
+    },
+    { userInput: resetMarker, personaOutput: "" },
+    yuki,
+  );
+  appendConversationAudit(
+    {
+      dossierId: dossier.id,
+      dossierTitle: dossier.title,
+      conversationHistoryMessageIds: ["reset-user-message"],
+      userInput: resetMarker,
+      personaOutput: "",
+      status: "completed",
+      moduleCalls: [],
+    },
+    yuki,
+  );
+
+  const resetResult = resetPersonaDossierConversationArtifacts(dossier.id);
+  if (resetResult.error) {
+    throw new Error(`Expected role reset to succeed: ${resetResult.error}`);
+  }
+  if ((resetResult.artifacts?.historyMessagesRemoved ?? 0) < 1) {
+    throw new Error("Expected role reset to remove persisted conversation history messages.");
+  }
+  if ((resetResult.artifacts?.stateEntriesRemoved ?? 0) < 1) {
+    throw new Error("Expected role reset to remove global conversation state entry.");
+  }
+  if ((resetResult.artifacts?.auditsRemoved ?? 0) < 1) {
+    throw new Error("Expected role reset to remove audits for the dossier.");
+  }
+  if (readConversationHistorySummaries(dossier.id).length !== 0) {
+    throw new Error("Expected role reset to remove admin-readable histories for the dossier.");
+  }
+  if (readConversationAudits(20).some((entry) => entry.dossierId === dossier.id)) {
+    throw new Error("Expected role reset to remove audits for the dossier.");
+  }
+  const dossierAfterReset = readPersonaDossiers(qoo).find((item) => item.id === dossier.id);
+  if (JSON.stringify(dossierAfterReset?.state ?? {}).includes(resetMarker)) {
+    throw new Error("Expected role reset to restore the dossier baseline state.");
   }
 
   console.log("admin history and module audit verified");

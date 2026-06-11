@@ -16,11 +16,14 @@ import {
   loginWithLiaoChatroom,
   readConversationAudits,
   readConversationHistoryMessages,
+  readConversationHistoryMessagesByKey,
+  readConversationHistorySummaries,
   readAppUpdateStatus,
   readJsonBody,
   readPersonaDossiers,
   requireAdminSession,
   requireSession,
+  resetPersonaDossierConversationArtifacts,
   sendJson,
   streamAppUpdate,
   updatePersonaDossierConversationState,
@@ -125,6 +128,18 @@ function deepseekProxyPlugin(): Plugin {
           return;
         }
 
+        if (pathname?.startsWith("/api/persona-dossiers/") && pathname.endsWith("/reset-conversation") && request.method === "POST") {
+          if (!requireAdminSession(request, response)) return;
+          const dossierId = decodeURIComponent(pathname.replace("/api/persona-dossiers/", "").replace("/reset-conversation", ""));
+          const result = resetPersonaDossierConversationArtifacts(dossierId);
+          if (result.error) {
+            sendJson(response, 404, { error: result.error });
+            return;
+          }
+          sendJson(response, 200, result);
+          return;
+        }
+
         if (pathname?.startsWith("/api/persona-dossiers/") && pathname.endsWith("/conversation-history") && request.method === "GET") {
           const session = requireSession(request, response);
           if (!session) return;
@@ -144,6 +159,23 @@ function deepseekProxyPlugin(): Plugin {
             return;
           }
           sendJson(response, 200, result);
+          return;
+        }
+
+        if (pathname === "/api/admin/conversation-histories" && request.method === "GET") {
+          if (!requireAdminSession(request, response)) return;
+          const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+          const dossierId = url.searchParams.get("dossierId") || "";
+          const key = url.searchParams.get("key") || "";
+          if (!dossierId) {
+            sendJson(response, 400, { error: "缺少 dossierId" });
+            return;
+          }
+          if (key) {
+            sendJson(response, 200, { messages: readConversationHistoryMessagesByKey(dossierId, key) });
+            return;
+          }
+          sendJson(response, 200, { summaries: readConversationHistorySummaries(dossierId) });
           return;
         }
 

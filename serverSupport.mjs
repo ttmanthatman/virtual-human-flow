@@ -208,6 +208,51 @@ export function updatePersonaDossierConversationState(dossierId, nextState, inte
   return { dossier: propagated[index], dossiers: propagated };
 }
 
+export function resetPersonaDossierConversationArtifacts(dossierId) {
+  const baseDossiers = readBasePersonaDossiers();
+  const baseDossier = baseDossiers.find((item) => item.id === dossierId);
+  if (!baseDossier) return { error: "找不到档案" };
+
+  const artifacts = createEmptyDossierResetResult();
+  const stateStore = readConversationStateStore();
+  const retainedStateEntries = stateStore.entries.filter((entry) => {
+    if (!entry || entry.dossierId !== dossierId) return true;
+    artifacts.stateEntriesRemoved += 1;
+    return false;
+  });
+  if (retainedStateEntries.length !== stateStore.entries.length) {
+    writeJsonFile(conversationStateStorePath, { entries: retainedStateEntries });
+  }
+
+  const historyStore = readConversationHistoryStore();
+  const retainedHistoryEntries = historyStore.entries.filter((entry) => {
+    if (!entry || entry.dossierId !== dossierId) return true;
+    artifacts.historyEntriesRemoved += 1;
+    artifacts.historyMessagesRemoved += Array.isArray(entry.messages) ? entry.messages.length : 0;
+    return false;
+  });
+  if (retainedHistoryEntries.length !== historyStore.entries.length) {
+    writeJsonFile(conversationHistoryStorePath, { entries: retainedHistoryEntries });
+  }
+
+  const auditStore = readJsonFile(conversationAuditStorePath, { entries: [] });
+  const auditEntries = Array.isArray(auditStore.entries) ? auditStore.entries : [];
+  const retainedAuditEntries = auditEntries.filter((entry) => {
+    if (!entry || entry.dossierId !== dossierId) return true;
+    artifacts.auditsRemoved += 1;
+    return false;
+  });
+  if (retainedAuditEntries.length !== auditEntries.length) {
+    writeJsonFile(conversationAuditStorePath, { entries: retainedAuditEntries });
+  }
+
+  return {
+    dossier: baseDossier,
+    dossiers: readPersonaDossiers(),
+    artifacts,
+  };
+}
+
 export function readConversationHistoryMessages(dossierId, user) {
   const key = createConversationHistoryEntryKey(dossierId, user);
   if (!key) return [];
@@ -858,6 +903,15 @@ function createEmptyAuditArtifactDeletionResult() {
     relationshipMemoriesRemoved: 0,
     relationshipHistoryItemsRemoved: 0,
     relationshipEvidenceRemoved: 0,
+  };
+}
+
+function createEmptyDossierResetResult() {
+  return {
+    historyEntriesRemoved: 0,
+    historyMessagesRemoved: 0,
+    stateEntriesRemoved: 0,
+    auditsRemoved: 0,
   };
 }
 

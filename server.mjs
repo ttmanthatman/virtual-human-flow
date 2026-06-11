@@ -21,6 +21,7 @@ import {
   readPersonaDossiers,
   requireAdminSession,
   requireSession,
+  resetPersonaDossierConversationArtifacts,
   sendJson,
   streamAppUpdate,
   updatePersonaDossierConversationState,
@@ -141,6 +142,18 @@ createServer(async (request, response) => {
       const result = updatePersonaDossierConversationState(dossierId, body.state, body.interaction, session.user);
       if (result.error) {
         sendJson(response, result.error === "找不到档案" ? 404 : 400, { error: result.error });
+        return;
+      }
+      sendJson(response, 200, result);
+      return;
+    }
+
+    if (pathname.startsWith("/api/persona-dossiers/") && pathname.endsWith("/reset-conversation") && request.method === "POST") {
+      if (!requireAdminSession(request, response)) return;
+      const dossierId = decodeURIComponent(pathname.replace("/api/persona-dossiers/", "").replace("/reset-conversation", ""));
+      const result = resetPersonaDossierConversationArtifacts(dossierId);
+      if (result.error) {
+        sendJson(response, 404, { error: result.error });
         return;
       }
       sendJson(response, 200, result);
