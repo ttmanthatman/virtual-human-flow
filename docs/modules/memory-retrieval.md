@@ -2,7 +2,7 @@
 
 ## 边界
 
-Memory Retrieval 负责把事件、自然语言评估、说话者关系和记忆库转成自然语言候选清单，再交给 Memory Recall LLM 复判记忆 ID。它不负责最终是否回应、角色台词生成或状态写回。
+Memory Retrieval 负责把事件、自然语言评估、最近 6 小时短期对话、过去 6 小时关系/状态/场景摘要和长期/关系记忆候选转成自然语言召回语境，再交给 Memory Recall LLM 判断哪些记忆会自然浮现。它不负责最终是否回应、角色台词生成或状态写回。
 
 ## 相关文件
 
@@ -16,21 +16,22 @@ Memory Retrieval 负责把事件、自然语言评估、说话者关系和记忆
 ## 输入输出
 
 - 输入：`EventInput`、`appraisalNarrative`、`CharacterState`、`LlmConfig`。
-- 内部派生：`naturalLanguageQuery`、`MemoryRetrievalContext`、自然语言候选清单、`MemoryCandidate`。
-- 输出：归一化后的 `MemoryRecallResult`，包含被选短期/长期记忆和召回理由。
+- 内部派生：`naturalLanguageQuery`、最近 6 小时短期上下文、过去 6 小时关系/状态/场景摘要、长期/关系记忆候选清单。
+- 输出：`MemoryRecallResult`，其中 `narrative` 是 LLM 的自然语言召回判断；`shortTermContext` 保留最近 6 小时最多 10 条对话；`longTermMemories` 是供审计/UI 展示的候选，不再代表 JSON ID 复判结果。
 
 ## 不变量
 
 - Memory Recall 不是敏感词召回；本地不再用词面或六因子公式排序记忆。
-- 候选清单必须以自然语言呈现短期上下文和长期/关系记忆候选，让 LLM 判断哪些会自然浮现。
-- Memory Recall LLM 只选择记忆 ID，完整记忆内容由本地候选表回填。
+- 候选清单必须以自然语言呈现短期上下文、过去 6 小时关系/状态/场景摘要和长期/关系记忆候选，让 LLM 判断哪些会自然浮现。
+- Memory Recall LLM 只输出自然语言判断，不输出 JSON、字段名、候选 ID 或代码式结构。
 - `relationshipMemory` 必须作为长期记忆候选参与召回。
+- 长期记忆是否写入由 State Update 的自然语言评估决定；Memory Recall 只负责当前这一刻浮现什么。
 - 未来异步生命路径应复用召回上下文，只改变 `memoryRecallSource`。
 
 ## 查询线索
 
 - `rg -n "Memory Retrieval|hybridMemoryRetrieval|memoryRecall|naturalLanguageQuery|relationshipMemory" docs/AI_NAMING_REGISTRY.md docs/SYSTEM_FLOW.md`
-- `rg -n "createMemoryRetrievalContext|buildNaturalCandidateList|createMemoryCandidates|normalizeMemoryRecallResult|relationshipMemory" src/pipeline src/core/types.ts`
+- `rg -n "retrieveMemory|formatRecentSituationSummaryForPrompt|selectRecentDialogueMemories|createLongTermCandidates|relationshipMemory" src/pipeline src/core/types.ts`
 
 ## 验证
 

@@ -1,6 +1,5 @@
 import { CharacterState, EventInput, ExpressionLlmRequest } from "../core/types";
-import { formatRecentDialogueForPrompt } from "./conversationContext";
-import { buildChildSafetyContinuityNarrative } from "./safetyContinuity";
+import { formatRecentDialogueForPrompt, formatRecentSituationSummaryForPrompt } from "./conversationContext";
 
 export function generateNaturalPromptRequest(
   event: EventInput,
@@ -32,9 +31,9 @@ export function generateNaturalPromptRequest(
 
   const recentConversationNarrative =
     formatRecentDialogueForPrompt(state, event);
+  const recentSituationNarrative = formatRecentSituationSummaryForPrompt(state, event);
 
   const responseModeNarrative = "这一轮她的反应倾向：" + decisionNarrative;
-  const childSafetyContinuityNarrative = buildChildSafetyContinuityNarrative(event, state);
   const personalityNarrative = [
     state.profile.personalitySummary,
     ...state.profile.personalityFacets.map((facet) => `她的「${facet.label}」表现为：${facet.summary}${facet.tension ? ` ${facet.tension}` : ""} ${facet.expression}`),
@@ -82,12 +81,13 @@ export function generateNaturalPromptRequest(
     `此刻的物理位置语境是：${locationNarrative}`,
     `界面上的能量、情绪、情绪倾向和唤醒度只是给人看的观察摘要。她内部真正参与反应的是这些自然语言状态：${runtimeNarrative}`,
     `${event.speakerName ?? "对方"}刚刚对她说：「${event.content}」`,
-    childSafetyContinuityNarrative ? `这轮对话的事实承接是：${childSafetyContinuityNarrative}` : "",
     concernNarrative,
     relationshipNarrative,
     memoryNarrative,
     recentConversationNarrative,
+    recentSituationNarrative,
     `综合她的性格、场景、关系、记忆和当下状态，${responseModeNarrative}`,
+    `如果最近几轮里她已经说过某个拒绝、边界或解释，这一轮要承接关系已经发生的变化；可以提到“我刚才已经说过”这类自然承接，但不要机械照抄上一句完整回复。`,
     `如果她此刻真的会连续补充、追问、解释或短句失控，就让屏幕上的话像真实聊天那样自然分成几条，每条另起一行；如果她已经崩溃或被击穿，不要把反应压缩成一句礼貌短答。`,
     `最终出现在屏幕上的，只是 ${state.profile.name} 此刻会自然说出口的话；分析、标签和背景说明都留在她没有说出口的内在过程里。`,
   ].join("\n\n");

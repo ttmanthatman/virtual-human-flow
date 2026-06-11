@@ -35,31 +35,10 @@ const require = createRequire(import.meta.url);
 const { applyStateUpdates } = require(join(outDir, "pipeline/stateUpdater.js"));
 const { seedState } = require(join(outDir, "data/seedState.js"));
 
-const plan = {
-  concernUpdates: [],
-  relationshipUpdates: [
-    {
-      targetId: "user:42",
-      familiarityDelta: 0.04,
-      trustDelta: 0.03,
-      affectionDelta: 0.02,
-      tensionDelta: -0.01,
-      note: "她觉得这个用户这次靠近得比较温和。",
-    },
-  ],
-  newConcerns: [],
-  userRelationshipMemory: {
-    targetUserId: "user:42",
-    targetUserName: "Alice",
-    impressionSummary: "Alice说话直接但没有逼迫感，会把邀请说得像试探而不是命令。",
-    relationshipSummary: "她对Alice愿意继续保持对话，但仍会在涉及私人计划时先观察对方是否尊重边界。",
-    evidence: ["Alice问她周末是否愿意出去走走。", "她回复时没有完全拒绝，只保留了观察距离。"],
-    lastInteractionSummary: "这轮互动让她觉得Alice可以继续靠近一点，但不能越过她解释情绪的边界。",
-  },
-  internalStateNote: "她没有把谨慎说得太重，只是在心里把这个用户单独记了一笔。",
-};
+const stateNarrative =
+  "Alice这次把邀请说得比较温和，没有明显逼迫，但她仍然会在私人计划上保留边界。她说完以后没有完全放松，只是把Alice记成一个可以继续对话、但需要观察是否尊重边界的人。这件事值得写入关系记忆，不必写成重大长期创伤。";
 
-const sse = `data: ${JSON.stringify({ final: plan })}\n\n`;
+const sse = `data: ${JSON.stringify({ final: stateNarrative })}\n\n`;
 globalThis.fetch = async () =>
   new Response(
     new ReadableStream({
@@ -128,7 +107,7 @@ if (Object.values(memory).some((value) => typeof value === "number")) {
 }
 
 const relationship = result.nextState.relationships["user:42"];
-if (!relationship?.recentTone.includes("Alice") || !relationship.notes.join(" ").includes("没有逼迫感")) {
+if (!relationship?.recentTone.includes("Alice") || !relationship.notes.join(" ").includes("尊重边界")) {
   throw new Error("Expected relationship memory text to influence relationship recentTone and notes.");
 }
 

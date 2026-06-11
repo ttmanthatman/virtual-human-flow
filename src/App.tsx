@@ -48,7 +48,7 @@ const traceSteps: { key: keyof PipelineTrace; label: string; icon: typeof Activi
   { key: "appraisal", label: "评估", icon: Brain },
   { key: "memoryRecall", label: "记忆召回", icon: Database },
   { key: "decision", label: "回应决策", icon: ChevronsRight },
-  { key: "llmRequest", label: "回应提示词", icon: FileText },
+  { key: "llmRequest", label: "表达整合", icon: FileText },
   { key: "llmOutput", label: "回应输出", icon: MessageSquare },
   { key: "stateUpdate", label: "状态更新", icon: Braces },
   { key: "runtimeSignalEvaluation", label: "信号评估", icon: Activity },

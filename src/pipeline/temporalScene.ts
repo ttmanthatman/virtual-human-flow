@@ -44,21 +44,17 @@ interface SceneTarget {
   preserveLocationUpdatedAt?: boolean;
 }
 
-const movingConversationSceneHoldMs = 90 * 60 * 1000;
-const settledConversationSceneHoldMs = 3 * 60 * 60 * 1000;
-
 export function advanceSceneForCurrentTime(
   state: CharacterState,
   event: EventInput,
   now: Date = new Date(),
 ): { nextState: CharacterState; progression: TemporalSceneProgression } {
+  void event;
   const timezone = inferTimezone(state);
   const localClock = getLocalClock(now, timezone);
   const archetype = inferArchetype(state);
-  const triggerTarget = detectTriggeredSceneTarget(state, event, localClock);
   const scheduledPhase = chooseScheduledPhase(archetype, localClock.hour);
-  const persistentTarget = triggerTarget ? undefined : buildPersistentConversationSceneTarget(state, scheduledPhase, localClock, now);
-  const target = triggerTarget ?? persistentTarget ?? buildScheduledSceneTarget(state, archetype, scheduledPhase, localClock);
+  const target = buildScheduledSceneTarget(state, archetype, scheduledPhase, localClock);
   const previousSceneTitle = state.scene?.title;
   const nextScene = buildScene(state, target, localClock);
   const nextLocation = buildLocation(state, target, now);
@@ -201,139 +197,6 @@ function chooseScheduledPhase(archetype: PersonaArchetype, hour: number): Schedu
       if (hour === 8 || hour === 18) return "commute";
       return "home";
   }
-}
-
-function detectTriggeredSceneTarget(state: CharacterState, event: EventInput, localClock: LocalClock): SceneTarget | undefined {
-  const content = event.content.trim();
-  if (!content) return undefined;
-
-  const immediate = /现在|马上|赶紧|快|立刻|这会儿|此刻|先去|去一下|出门|过来|过去|到/.test(content);
-  const future = /周末|明天|后天|下周|以后|改天|有空|哪天/.test(content);
-  if (!immediate || future) return undefined;
-
-  if (/(白宫|美国|纽约|华盛顿|伦敦|东京|巴黎|外太空|月球)/.test(content)) {
-    const region = state.location?.region || "原有区域";
-    return {
-      phase: "blocked",
-      title: state.scene?.title || `${state.profile.name}仍在${region}`,
-      description: `${localClock.label}，对方的话让她注意到那个遥远地点，但她的身体仍在${region}，不可能因为一句话瞬间到达。`,
-      atmosphere: state.scene?.atmosphere || "现实距离把对话压回当下",
-      visibleCues: state.scene?.visibleCues ?? ["手机屏幕", "当前环境"],
-      activeObjects: state.scene?.activeObjects ?? ["手机"],
-      sensoryProfile: state.scene?.sensoryProfile || "真实环境没有突然变化。",
-      interactionPressure: "对方提出了不符合现实距离的地点，她只能从当前位置理解这句话。",
-      cognitiveNarrative: `她仍处在${region}的现实环境中，会把远距离地点当成谈话内容，而不是已经抵达那里。`,
-      locationLabel: state.location?.label || region,
-      address: state.location?.address || region,
-      motionState: state.location?.motionState ?? "stationary",
-      speedKmh: state.location?.speedKmh ?? 0,
-      headingLabel: state.location?.headingLabel ?? "原地",
-      headingDeg: state.location?.headingDeg ?? 0,
-      reason: "对话触发了不现实的远距离地点，场景推进拒绝瞬移。",
-      plausibility: `保留在${region}，避免跨城或跨国瞬移。`,
-      blocked: true,
-    };
-  }
-
-  if (/医院|急诊|诊所|发烧|受伤|报警|警察/.test(content)) {
-    return buildTriggeredTarget(state, "errand", "附近医院路上", "对话触发了现实紧急事项，她开始转向同城可达的求助地点。", "driving");
-  }
-  if (/回家|睡觉|休息|躺/.test(content)) {
-    return buildTriggeredTarget(state, "home", "住处", "对话触发她离开原场景，转向同区域的住处或休息点。", "walking");
-  }
-  if (/上班|开店|店里|办公室|工位|摊位|接单|出车|安检口|机房|现场/.test(content)) {
-    return buildTriggeredTarget(state, "work", inferWorkplaceLabel(state), "对话触发了工作责任，她把注意力转回同区域的工作现场。", "walking");
-  }
-  if (/下班|走吧|出来|见面|吃饭|喝咖啡|商场|公园/.test(content)) {
-    return buildTriggeredTarget(state, "errand", "同城见面路上", "对话触发了离开原场景的可能，她先进入同城路上或约见地点附近。", "walking");
-  }
-
-  return undefined;
-}
-
-function buildTriggeredTarget(
-  state: CharacterState,
-  phase: SchedulePhase,
-  label: string,
-  reason: string,
-  motionState: CharacterLocation["motionState"],
-): SceneTarget {
-  const region = state.location?.region || "当前城市";
-  const isStationary = phase === "home" || phase === "work";
-  return {
-    phase,
-    title: isStationary ? label : `${label}`,
-    description: `${state.profile.name}没有离开原有地理范围，只是根据这句对话把现场推进到${region}内合理可达的${label}。`,
-    atmosphere: phase === "errand" ? "被临时事项推着走，注意力更急" : "现实任务重新占到前面",
-    visibleCues: phase === "errand" ? ["手机导航", "路口", "行人和车辆"] : ["手机", "门口", "正在处理的事情"],
-    activeObjects: phase === "errand" ? ["手机", "随身物品"] : ["手机", "手边物件"],
-    sensoryProfile: phase === "errand" ? "路上的声音、距离和时间压力会挤进她的表达。" : "现场的具体物件和责任会影响她的语速和耐心。",
-    interactionPressure: "这次场景变换来自当前对话触发，但仍受地理位置和人物设定限制。",
-    cognitiveNarrative: `${state.profile.name}仍在${region}，只能进入同区域内可达的新现场，不会跨越现实距离。`,
-    locationLabel: label,
-    address: `${region}内与人物档案相符的位置`,
-    motionState,
-    speedKmh: motionState === "driving" ? 28 : motionState === "riding" ? 16 : motionState === "walking" ? 4 : 0,
-    headingLabel: motionState === "stationary" ? "原地" : "前往同城目的地",
-    headingDeg: state.location?.headingDeg ?? 0,
-    reason,
-    plausibility: `新位置限定在${region}，沿用原档案地理范围。`,
-  };
-}
-
-function buildPersistentConversationSceneTarget(
-  state: CharacterState,
-  scheduledPhase: SchedulePhase,
-  localClock: LocalClock,
-  now: Date,
-): SceneTarget | undefined {
-  const updatedAt = Date.parse(state.location?.updatedAt ?? "");
-  if (!Number.isFinite(updatedAt)) return undefined;
-  if (state.location?.source !== "temporal_progression" || !isConversationTriggeredScene(state)) return undefined;
-
-  const ageMs = now.getTime() - updatedAt;
-  const isMoving = state.location.motionState !== "stationary" && state.location.motionState !== "unknown";
-  const maxAgeMs = isMoving ? movingConversationSceneHoldMs : settledConversationSceneHoldMs;
-  if (ageMs < 0 || ageMs > maxAgeMs) return undefined;
-
-  const phase = inferPersistentScenePhase(state, scheduledPhase);
-  return {
-    phase,
-    title: state.scene?.title || state.location.label,
-    description: state.scene?.description || `${localClock.label}，她还在承接上一轮对话触发的现实动线。`,
-    atmosphere: state.scene?.atmosphere || "上一轮决定还没有落地，现实动线仍在继续",
-    visibleCues: state.scene?.visibleCues?.length ? state.scene.visibleCues : ["手机", "路口", "随身物品"],
-    activeObjects: state.scene?.activeObjects?.length ? state.scene.activeObjects : ["手机", "随身物品"],
-    sensoryProfile: state.scene?.sensoryProfile || "路上的声音、距离和时间压力仍在影响她。",
-    interactionPressure: state.scene?.interactionPressure || "她不会因为刷新或下一句普通消息就回到旧场景。",
-    cognitiveNarrative:
-      state.scene?.cognitiveNarrative ||
-      `${state.profile.name}仍在上一轮对话触发的${state.location.label}，除非时间明显跨过这段行动，否则会先承接当前场景。`,
-    locationLabel: state.location.label,
-    address: state.location.address,
-    motionState: state.location.motionState,
-    speedKmh: state.location.speedKmh,
-    headingLabel: state.location.headingLabel,
-    headingDeg: state.location.headingDeg,
-    reason: `上一轮对话触发的场景变化仍在持续；${localClock.label} 的例行阶段是 ${scheduledPhase}，但还没到把人物拉回日程模板的时刻。`,
-    plausibility: `保留在${state.location.region || "原有区域"}，承接已持久化的全局场景。`,
-    preserveLocationUpdatedAt: true,
-  };
-}
-
-function isConversationTriggeredScene(state: CharacterState) {
-  const text = [state.scene?.description, state.scene?.interactionPressure, state.scene?.cognitiveNarrative].filter(Boolean).join(" ");
-  return /对话触发|根据这句对话|上一轮对话|对方提出|对方的话|临时事项/.test(text);
-}
-
-function inferPersistentScenePhase(state: CharacterState, scheduledPhase: SchedulePhase): SchedulePhase {
-  const text = [state.scene?.title, state.scene?.description, state.location?.label, state.location?.address].filter(Boolean).join(" ");
-  if (/不可能|拒绝瞬移|白宫|远距离/.test(text)) return "blocked";
-  if (/医院|急诊|诊所|见面|吃饭|咖啡|商场|公园|办事|附近/.test(text)) return "errand";
-  if (/回家|住处|睡觉|休息/.test(text)) return state.location?.motionState === "stationary" ? "home" : "commute";
-  if (/上班|开店|店里|办公室|工位|摊位|接单|出车|安检口|机房|现场/.test(text)) return "work";
-  if (state.location?.motionState && state.location.motionState !== "stationary" && state.location.motionState !== "unknown") return "commute";
-  return scheduledPhase;
 }
 
 function buildScheduledSceneTarget(
@@ -494,9 +357,7 @@ function refineAttentionFocus(state: CharacterState, target: SceneTarget) {
 function inferWorkplaceLabel(state: CharacterState) {
   const current = state.location?.label || state.scene?.title;
   if (current && !/住处|家里|夜里|睡|通勤|路上|附近办事/.test(current)) return current;
-  const text = [state.profile.displaySummary, state.profile.background, state.scene?.title].filter(Boolean).join(" ");
-  const match = text.match(/([\u4e00-\u9fa5A-Za-z0-9]+(?:店|站|园区|工位|摊位|机房|路边|工作室|安检口|办公室|市场))/);
-  return match?.[1] ?? `${state.profile.name}的工作现场`;
+  return `${state.profile.name}的工作现场`;
 }
 
 function inferHomeLabel(state: CharacterState, archetype: PersonaArchetype) {

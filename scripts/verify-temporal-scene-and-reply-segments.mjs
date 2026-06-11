@@ -102,34 +102,32 @@ const futureInviteResult = advanceSceneForCurrentTime(
 if (/山|白宫/.test(futureInviteResult.nextState.scene.title)) {
   throw new Error("Expected future hiking invite not to teleport the persona to a mountain or remote place.");
 }
+if (futureInviteResult.progression.schedulePhase !== "work") {
+  throw new Error("Expected future hiking invite not to change the time-based work phase.");
+}
 
-const blockedResult = advanceSceneForCurrentTime(
+const remoteCommandResult = advanceSceneForCurrentTime(
   zhengzhouCleanerState,
   { ...ordinaryEvent, content: "你现在马上去白宫找我。" },
   new Date("2026-06-10T02:30:00.000Z"),
 );
-if (blockedResult.progression.schedulePhase !== "blocked") {
-  throw new Error("Expected impossible remote destination to be blocked.");
+if (remoteCommandResult.progression.schedulePhase !== "work") {
+  throw new Error("Expected remote command not to override the time-based work phase.");
 }
-if (!blockedResult.progression.locationPlausibility.includes("郑州市金水区")) {
-  throw new Error("Expected blocked scene to preserve original Zhengzhou geography.");
+if (/白宫/.test(remoteCommandResult.nextState.scene.title + remoteCommandResult.nextState.location.label)) {
+  throw new Error("Expected remote command not to put the persona at the White House.");
 }
 
-const goingHomeResult = advanceSceneForCurrentTime(
+const goHomeCommandResult = advanceSceneForCurrentTime(
   zhengzhouCleanerState,
   { ...ordinaryEvent, content: "你现在先回家休息吧。" },
   new Date("2026-06-10T02:30:00.000Z"),
 );
-const heldHomeResult = advanceSceneForCurrentTime(
-  goingHomeResult.nextState,
-  { ...ordinaryEvent, content: "到了吗？" },
-  new Date("2026-06-10T02:35:00.000Z"),
-);
-if (heldHomeResult.nextState.location.label !== goingHomeResult.nextState.location.label) {
-  throw new Error("Expected recently triggered homeward scene to persist instead of snapping back to routine work.");
+if (goHomeCommandResult.progression.schedulePhase !== "work") {
+  throw new Error("Expected go-home wording not to move the persona outside the time-based phase.");
 }
-if (!heldHomeResult.progression.reason.includes("上一轮对话触发")) {
-  throw new Error("Expected persistence reason to explain the held conversation-triggered scene.");
+if (goHomeCommandResult.nextState.location.label !== workResult.nextState.location.label) {
+  throw new Error("Expected go-home wording not to change location through local keyword logic.");
 }
 
 const decisionBase = {

@@ -2,7 +2,6 @@ import {
   AppraisalResult,
   CharacterState,
   CognitiveModuleTrace,
-  ConcernStatus,
   EventInput,
   LlmConfig,
   MemoryRecallResult,
@@ -13,7 +12,6 @@ import {
 } from "../core/types";
 import { clamp, makeId, nowIso, round } from "../core/utils";
 import { runCognitiveModule } from "./cognitiveModuleClient";
-import { shouldApplyChildSafetyClarification, isChildSafetyClarification } from "./safetyContinuity";
 
 export async function applyStateUpdates(
   state: CharacterState,
@@ -61,25 +59,18 @@ async function planStateUpdates(
     internalStateNote: "这次对话后，她的内心状态没有明显变化。",
   };
 
-  const trace = await runCognitiveModule<StateUpdatePlan>(
+  const trace = await runCognitiveModule<string>(
     {
       moduleName: "state_update",
-      inputMode: "structured_context",
-      outputMode: "structured_json",
+      inputMode: "natural_language",
+      outputMode: "natural_language",
       prompt: [
         "你是虚拟人大脑里的状态写回区。你根据刚发生的事和她的话，判断她内在状态的变化。",
-        "先理解下面这些自然语言叙述，然后把变化填入结构化出口。",
+        "请只用自然语言输出，不要 JSON，不要字段名，不要代码式 delta。",
+        "不要用关键词触发。请综合事件评估、记忆浮现、回应决策、她实际说出的话、最近关系和当前场景，判断这轮互动之后哪些东西应该留在短期余波、哪些值得成为长期记忆。",
         "",
         "事件评估：",
         context.appraisal.narrative || "",
-        "危险/触动/失态：危险强度 " +
-          (context.appraisal.dangerState?.level ?? 0) +
-          "；触动强度 " +
-          (context.appraisal.emotionalImpact?.level ?? 0) +
-          "；失态强度 " +
-          (context.appraisal.composureRisk?.level ?? 0) +
-          "；突破外壳强度 " +
-          (context.appraisal.personaBreakRisk?.level ?? 0),
         "",
         "记忆浮现：",
         context.memoryRecall.narrative || "没有特别的记忆。",
@@ -91,99 +82,42 @@ async function planStateUpdates(
         "当前说话者：" + targetName + "(" + targetId + ")",
         "",
         "当前心事状态：",
-        ...state.concerns.map((concern) => concern.title + "：强度" + concern.intensity + "，偏好" + concern.valence + "，唤醒" + concern.arousal),
+        ...state.concerns.map((concern) => concern.title + "：" + concern.description),
         "",
-        "请判断哪些数值需要调整。注意：",
-        "- 关切各维度变化一般在 -0.1 到 +0.1 之间",
-        "- 关系各维度变化一般在 -0.05 到 +0.05 之间",
-        "- 如果没有明显变化，填 0 或不包含该项",
-        "- 关系印象(userRelationshipMemory)必须用自然语言写，不要数字",
-        "- userRelationshipMemory 必须合并本轮真实事件，不得只复述旧印象；如果本轮是噩耗、威胁、羞辱、伤害或足以让她崩溃的信息，印象、关系总结、证据和最近互动都必须写出这次冲击。",
-        "- 如果本轮是在澄清孩子或女儿已经安全，状态写回要降低直接安全警报，但保留被戏弄后的愤怒、不信任和确认需求。",
+        "请自然语言说明：她说完后身体/情绪/注意力有什么余波；她对当前说话者的印象和关系感有没有改变；哪些内容只该留在短期，哪些值得写成长期记忆；如果不值得长期写入，也请说明为什么。",
       ].join("\n"),
-      outputContract:
-        "Return JSON: { concernUpdates: [{ concernId, intensityDelta, valenceDelta, arousalDelta, status, note }], relationshipUpdates: [{ targetId, familiarityDelta, trustDelta, affectionDelta, tensionDelta, note }], newConcerns: [], userRelationshipMemory: { targetUserId, targetUserName, impressionSummary, relationshipSummary, evidence: string[], lastInteractionSummary }, internalStateNote }",
+      outputContract: "自然语言状态写回判断，不使用 JSON、字段名、数值 delta 或代码式结构。",
     },
     llmConfig,
-    mockOutput,
+    mockOutput.internalStateNote,
     { onStream },
   );
 
   return {
     ...trace,
-    output: stabilizeStateUpdateForChildSafetyClarification(normalizeStateUpdatePlan(trace.output, mockOutput, state, event), state, event, context),
+    output: stateUpdatePlanFromNarrative(trace.output, mockOutput, event),
   };
 }
 
-function stabilizeStateUpdateForChildSafetyClarification(
-  plan: StateUpdatePlan,
-  state: CharacterState,
-  event: EventInput,
-  context: {
-    appraisal: AppraisalResult;
-    memoryRecall: MemoryRecallResult;
-    decision: ResponseDecision;
-  },
-): StateUpdatePlan {
-  if (!shouldApplyChildSafetyClarification(event, state)) return plan;
-
-  const targetName = event.speakerName ?? "对方";
-  const safetyNote = `${targetName}澄清孩子已经在家或安全，直接危险警报下降；她仍然愤怒、不信任，需要亲眼确认，也会记住对方刚才造成的惊吓。`;
-  const childConcernIds = state.concerns
-    .filter((concern) => /女儿|孩子|小孩|娃|闺女|儿子/.test([concern.title, concern.object, concern.description, concern.triggers.join("、")].filter(Boolean).join(" ")))
-    .map((concern) => concern.id);
-  const concernUpdates = mergeSafetyConcernUpdates(plan.concernUpdates, childConcernIds, safetyNote);
-
+function stateUpdatePlanFromNarrative(narrative: string, fallback: StateUpdatePlan, event: EventInput): StateUpdatePlan {
+  const text = typeof narrative === "string" && narrative.trim() ? narrative.trim() : fallback.internalStateNote;
+  const targetUserId = event.speakerId ?? fallback.userRelationshipMemory?.targetUserId ?? "unknown";
+  const targetUserName = event.speakerName ?? fallback.userRelationshipMemory?.targetUserName ?? "当前对话者";
   return {
-    ...plan,
-    concernUpdates,
-    userRelationshipMemory: stabilizeRelationshipMemoryForSafetyClarification(plan.userRelationshipMemory, event, safetyNote),
-    internalStateNote: [plan.internalStateNote, safetyNote].filter(Boolean).join(" "),
-    narrative: [plan.narrative, context.appraisal.narrative, safetyNote].filter(Boolean).join("\n"),
-  };
-}
-
-function mergeSafetyConcernUpdates(updates: StateUpdatePlan["concernUpdates"], childConcernIds: string[], note: string) {
-  if (childConcernIds.length === 0) return updates;
-  const byId = new Map(updates.map((update) => [update.concernId, { ...update }]));
-  for (const concernId of childConcernIds) {
-    const existing = byId.get(concernId);
-    byId.set(concernId, {
-      concernId,
-      intensityDelta: Math.min(existing?.intensityDelta ?? 0, -0.22),
-      valenceDelta: Math.max(existing?.valenceDelta ?? 0, 0.22),
-      arousalDelta: Math.min(existing?.arousalDelta ?? 0, -0.28),
-      status: existing?.status ?? "active",
-      note: [existing?.note, note].filter(Boolean).join(" "),
-    });
-  }
-  return Array.from(byId.values());
-}
-
-function stabilizeRelationshipMemoryForSafetyClarification(
-  memory: StateUpdatePlan["userRelationshipMemory"],
-  event: EventInput,
-  note: string,
-): StateUpdatePlan["userRelationshipMemory"] {
-  const targetUserId = event.speakerId ?? memory?.targetUserId ?? "unknown";
-  const targetUserName = event.speakerName ?? memory?.targetUserName ?? "对方";
-  const evidence = [`${targetUserName}本轮说：「${event.content}」`, ...(memory?.evidence ?? [])].filter(Boolean).slice(-6);
-
-  return {
-    targetUserId,
-    targetUserName,
-    impressionSummary: ensureMentionsCurrentEvent(
-      memory?.impressionSummary ?? "",
-      event.content,
-      `${targetUserName}刚澄清孩子安全，直接危险暂时缓解，但她会把对方和惊吓、戏弄、不可靠联系在一起。`,
-    ),
-    relationshipSummary: ensureMentionsCurrentEvent(
-      memory?.relationshipSummary ?? "",
-      event.content,
-      "安全事实被澄清后，关系没有恢复轻松；她仍然戒备、愤怒，需要确认对方没有继续耍她。",
-    ),
-    evidence,
-    lastInteractionSummary: note,
+    ...fallback,
+    narrative: text,
+    concernUpdates: [],
+    relationshipUpdates: [],
+    newConcerns: [],
+    userRelationshipMemory: {
+      targetUserId,
+      targetUserName,
+      impressionSummary: `${targetUserName}在这轮互动里留下的印象需要结合自然语言状态写回理解：${text}`,
+      relationshipSummary: `她和${targetUserName}的关系感在这轮互动后被重新解释，不能只沿用旧标签：${text}`,
+      evidence: [`${targetUserName}本轮说：「${event.content}」`],
+      lastInteractionSummary: text,
+    },
+    internalStateNote: text,
   };
 }
 
@@ -290,7 +224,7 @@ function commitStateUpdates(
   }
 
   const relationshipMemory = [...(state.relationshipMemory ?? [])];
-  const userRelationshipMemory = strengthenUserRelationshipMemoryForSevereEvent(stateUpdatePlan.userRelationshipMemory, event, replyOutput, context);
+  const userRelationshipMemory = strengthenUserRelationshipMemoryForCurrentEvent(stateUpdatePlan.userRelationshipMemory, event, replyOutput, context);
   if (userRelationshipMemory?.targetUserId) {
     const targetUserId = userRelationshipMemory.targetUserId;
     const existingIndex = relationshipMemory.findIndex((memory) => memory.targetUserId === targetUserId);
@@ -344,7 +278,7 @@ function commitStateUpdates(
   const activeConcernIds = nextConcerns.filter((concern) => concern.status === "active" && concern.intensity > 0.15).map((concern) => concern.id);
   const moodFromConcerns = nextConcerns.reduce((sum, concern) => sum + concern.valence * concern.intensity, 0) / Math.max(nextConcerns.length, 1);
   const arousalFromConcerns = nextConcerns.reduce((sum, concern) => sum + concern.arousal * concern.intensity, 0) / Math.max(nextConcerns.length, 1);
-  const impact = computeInteractionImpact(context, event);
+  const impact = computeInteractionImpact(context);
   const moodValence = round(clamp(impact >= 0.7 ? Math.min(moodFromConcerns, -0.65) : moodFromConcerns, -1, 1));
   const moodArousal = round(clamp(impact >= 0.7 ? Math.max(arousalFromConcerns, 0.62) : arousalFromConcerns, 0, 1));
   const energyDrain = impact >= 0.7 ? 0.25 : moodValence < -0.25 ? 0.08 : 0.02;
@@ -486,55 +420,7 @@ function commitStateUpdates(
   };
 }
 
-function normalizeStateUpdatePlan(result: unknown, fallback: StateUpdatePlan, state: CharacterState, event: EventInput): StateUpdatePlan {
-  if (!isRecord(result)) return fallback;
-  const knownConcernIds = new Set(state.concerns.map((concern) => concern.id));
-  const concernUpdates = normalizeConcernUpdates(result.concernUpdates, fallback.concernUpdates, knownConcernIds);
-  const relationshipUpdates = normalizeRelationshipUpdates(result.relationshipUpdates, fallback.relationshipUpdates);
-  const userRelationshipMemory = normalizeUserRelationshipMemory(result.userRelationshipMemory, fallback.userRelationshipMemory, event);
-
-  return {
-    concernUpdates,
-    relationshipUpdates,
-    newConcerns: Array.isArray(result.newConcerns) ? result.newConcerns : fallback.newConcerns,
-    userRelationshipMemory,
-    internalStateNote:
-      typeof result.internalStateNote === "string" && result.internalStateNote.trim()
-        ? result.internalStateNote
-        : typeof result.internal_state_note === "string" && result.internal_state_note.trim()
-          ? result.internal_state_note
-          : fallback.internalStateNote,
-  };
-}
-
-function normalizeUserRelationshipMemory(value: unknown, fallback: StateUpdatePlan["userRelationshipMemory"], event: EventInput): StateUpdatePlan["userRelationshipMemory"] {
-  const targetUserId = event.speakerId ?? fallback?.targetUserId ?? "unknown";
-  const targetUserName = event.speakerName ?? fallback?.targetUserName ?? "Unknown";
-  if (!isRecord(value)) return fallback ? { ...fallback, targetUserId, targetUserName } : undefined;
-
-  const impressionSummary = normalizeNaturalText(value.impressionSummary, fallback?.impressionSummary ?? `${targetUserName}这次互动后仍处在待观察的位置。`);
-  const relationshipSummary = normalizeNaturalText(value.relationshipSummary, fallback?.relationshipSummary ?? `她和${targetUserName}的关系还在形成中，会根据对方是否尊重边界继续调整。`);
-  const lastInteractionSummary = normalizeNaturalText(value.lastInteractionSummary, fallback?.lastInteractionSummary ?? `本轮互动让她对${targetUserName}有了新的具体印象。`);
-  const evidence = Array.isArray(value.evidence)
-    ? value.evidence.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean).slice(0, 6)
-    : fallback?.evidence ?? [];
-
-  return {
-    targetUserId,
-    targetUserName,
-    impressionSummary,
-    relationshipSummary,
-    evidence: evidence.length > 0 ? evidence : [`对方说：「${event.content}」`],
-    lastInteractionSummary,
-  };
-}
-
-function normalizeNaturalText(value: unknown, fallback: string) {
-  if (typeof value !== "string" || !value.trim()) return fallback;
-  return value.trim();
-}
-
-function strengthenUserRelationshipMemoryForSevereEvent(
+function strengthenUserRelationshipMemoryForCurrentEvent(
   memory: StateUpdatePlan["userRelationshipMemory"],
   event: EventInput,
   replyOutput: ReplyOutput,
@@ -544,34 +430,34 @@ function strengthenUserRelationshipMemoryForSevereEvent(
     decision: ResponseDecision;
   },
 ): StateUpdatePlan["userRelationshipMemory"] {
-  if (memory && isChildSafetyClarification(event.content)) {
-    return stabilizeRelationshipMemoryForSafetyClarification(
-      memory,
-      event,
-      `${memory.targetUserName || event.speakerName || "对方"}澄清孩子已经在家或安全，直接危险暂时缓解，但惊吓和信任破裂仍留下余波。`,
-    );
-  }
-  if (!memory || !isSevereInteraction(context)) return memory;
+  if (!memory) return memory;
 
   const targetName = memory.targetUserName || event.speakerName || "这个用户";
   const currentEventEvidence = `${targetName}本轮说：「${event.content}」`;
   const replyEvidence = replyOutput.reply ? `她当时回应：「${replyOutput.reply}」` : "她当时没有能正常回应。";
-  const severeAftermath = "这次互动带来了极端冲击，她暂时无法把对方和普通闲聊或工作配合放在同一个心理位置。";
+  const naturalAftermath = [
+    "这次关系印象应承接 State Update 的自然语言判断。",
+    context.appraisal.narrative ? `事件评估里已经形成的理解是：${context.appraisal.narrative}` : "",
+    context.memoryRecall.narrative ? `记忆召回里浮现的是：${context.memoryRecall.narrative}` : "",
+    context.decision.narrative ? `回应决策里形成的倾向是：${context.decision.narrative}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return {
     ...memory,
     impressionSummary: ensureMentionsCurrentEvent(
       memory.impressionSummary,
       event.content,
-      `${targetName}这次带来足以让她崩溃的消息；旧有的普通印象被这次冲击盖过。`,
+      `${targetName}这轮互动改变了她对对方的即时印象。`,
     ),
     relationshipSummary: ensureMentionsCurrentEvent(
       memory.relationshipSummary,
       event.content,
-      `当前关系被本轮冲击推入高压和失衡，她很难立刻恢复到普通工作关系或轻松社交。`,
+      "当前关系需要承接这一轮实际发生的推进、退让、越界或澄清，而不是沿用旧关系标签。",
     ),
     evidence: [...memory.evidence.filter(Boolean), currentEventEvidence, replyEvidence].slice(-6),
-    lastInteractionSummary: `${currentEventEvidence}；${replyEvidence}；${severeAftermath}`,
+    lastInteractionSummary: `${currentEventEvidence}；${replyEvidence}；${naturalAftermath}`,
   };
 }
 
@@ -581,19 +467,11 @@ function ensureMentionsCurrentEvent(text: string, eventContent: string, prefix: 
   return `${prefix}${text ? ` ${text}` : ""}`;
 }
 
-function isSevereInteraction(context: {
-  appraisal: AppraisalResult;
-  memoryRecall: MemoryRecallResult;
-  decision: ResponseDecision;
-}) {
-  return computeInteractionImpact(context) >= 0.7 || context.decision.shouldLoseComposure || context.decision.shouldBreakPersona;
-}
-
 function computeInteractionImpact(context: {
   appraisal: AppraisalResult;
   memoryRecall: MemoryRecallResult;
   decision: ResponseDecision;
-}, event?: EventInput) {
+}) {
   const rawImpact = Math.max(
     context.appraisal.dangerState?.level ?? 0,
     context.appraisal.emotionalImpact?.level ?? 0,
@@ -603,59 +481,5 @@ function computeInteractionImpact(context: {
     context.decision.shouldLoseComposure ? 0.75 : 0,
     context.decision.shouldBreakPersona ? 0.86 : 0,
   );
-  return event && isChildSafetyClarification(event.content) ? Math.min(rawImpact, 0.58) : rawImpact;
-}
-
-function normalizeConcernUpdates(value: unknown, fallback: StateUpdatePlan["concernUpdates"], knownConcernIds: Set<string>) {
-  if (!Array.isArray(value)) return fallback;
-  const normalized: StateUpdatePlan["concernUpdates"] = [];
-  for (const item of value) {
-    if (!isRecord(item)) continue;
-    const concernId = typeof item.concernId === "string" ? item.concernId : "";
-    if (!knownConcernIds.has(concernId)) continue;
-
-    normalized.push({
-      concernId,
-      intensityDelta: normalizeOptionalNumber(item.intensityDelta, -1, 1),
-      valenceDelta: normalizeOptionalNumber(item.valenceDelta, -2, 2),
-      arousalDelta: normalizeOptionalNumber(item.arousalDelta, -1, 1),
-      status: normalizeConcernStatus(item.status),
-      note: typeof item.note === "string" && item.note.trim() ? item.note : "模型未给出明确状态变化说明。",
-    });
-  }
-
-  return normalized;
-}
-
-function normalizeRelationshipUpdates(value: unknown, fallback: StateUpdatePlan["relationshipUpdates"]) {
-  if (!Array.isArray(value)) return fallback;
-  const normalized: StateUpdatePlan["relationshipUpdates"] = [];
-  for (const item of value) {
-    if (!isRecord(item)) continue;
-    const targetId = typeof item.targetId === "string" && item.targetId.trim() ? item.targetId : "";
-    if (!targetId) continue;
-
-    normalized.push({
-      targetId,
-      familiarityDelta: normalizeOptionalNumber(item.familiarityDelta, -1, 1),
-      trustDelta: normalizeOptionalNumber(item.trustDelta, -1, 1),
-      affectionDelta: normalizeOptionalNumber(item.affectionDelta, -2, 2),
-      tensionDelta: normalizeOptionalNumber(item.tensionDelta, -1, 1),
-      note: typeof item.note === "string" && item.note.trim() ? item.note : "模型未给出明确关系变化说明。",
-    });
-  }
-
-  return normalized;
-}
-
-function normalizeOptionalNumber(value: unknown, min: number, max: number) {
-  return typeof value === "number" ? clamp(value, min, max) : undefined;
-}
-
-function normalizeConcernStatus(value: unknown): ConcernStatus | undefined {
-  return value === "active" || value === "dormant" || value === "resolved" ? value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return rawImpact;
 }

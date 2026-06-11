@@ -18,21 +18,21 @@
 
 后台会记录每个登录用户的一次输入、虚拟人输出和本轮对话的模块调用记录，并在新审计记录里保存本轮 `conversationEventId` 和中间栏消息 ID，作为删除同轮运行态的锚点。审计记录写入 `.conversation-audits.local.json`，中间栏历史写入 `.conversation-histories.local.json`，角色全局对话运行态写入 `.conversation-states.local.json`，共享档案写入 `.persona-dossiers.local.json`；这些都是运行时文件，被 `.gitignore` 忽略。中间栏临时心理流来自 `PipelineStepProgress.mindFlow`，只在当前轮 streaming 展示和折叠，不写入后台历史。只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计，也可以通过 `/api/conversation-audits/export` 导出所选记录或完整导出所有用户的所有输入输出审计记录；删除审计时会级联清理同轮中间栏消息、短期记忆、长期记忆和关系记忆片段，前端同步清理当前消息桶和 localStorage，避免旧缓存回填。所有登录用户可以通过 `/api/conversation-histories` 按人物只读查看各用户中间栏历史；旧 `/api/admin/conversation-histories` 路由保留兼容但同样只要求登录。管理员还可以通过 `/api/persona-dossiers/:id/reset-conversation` 将当前角色恢复到共享档案底稿，同时清理该角色所有用户历史、全局运行态和对应审计。
 
-重要约束：Reply LLM 只接收自然语言上下文，只生成角色说出口的话。不能把 JSON、字段名、输出契约、工程术语或类似编程语言的内容混进这一步。
+重要约束：同步对话链路里的 Appraisal、Memory Recall、Decision、State Update 和统一表达模块都用自然语言评判和自然语言上下文承接。不能把 JSON、字段名、输出契约、工程术语、单一数值向量或类似编程语言的内容当成这些环节的语义主干。
 
-认知模块是另一类 LLM 调用。Appraisal、Memory Recall、Decision、State Update 都是独立的脑区式 LLM 模块；它们可以根据模块需要使用自然语言或结构化输出，因为它们不是角色台词生成器，而是系统内部的判断模块。
+认知模块是另一类 LLM 调用。Appraisal、Memory Recall、Decision、State Update 都是独立的脑区式 LLM 模块；当前同步路径要求它们只输出自然语言 narrative，由 LLM 自己评价是否触发、是否召回、是否回应和是否写入记忆。本地兼容字段只服务 UI、trace 和写回壳，不能重新变成硬编码判断入口。
 
-真实 LLM 的结构化输出必须先经过确定性归一化，再交给下游模块；自然语言输出则保留为 narrative，并用兼容字段承接旧下游。Memory Recall 和 State Update 等结构化模块有出口归一化层，用来处理数组缺失、关系对象变成字符串、未知 memory id 或枚举漂移等情况。如果外部结构化 JSON 被截断或无法解析，Cognitive Module Client 会记录 `fallbackReason` 并使用本地候选结果继续流程，不能让用户对话卡死。归一化层不能改变 Reply LLM 的自然语言边界，它只保护内部认知模块的数据契约。
+真实 LLM 的自然语言输出保留为 narrative，并用兼容字段承接旧 UI 和审计。Cognitive Module Client 仍保留结构化 fallback 能力，供人物/场景生成预览、兼容脚本或未来结构化模块使用；同步对话的 Appraisal、Memory Recall、Decision、State Update 不再要求结构化 JSON。如果外部结构化 JSON 被截断或无法解析，Cognitive Module Client 会记录 `fallbackReason` 并使用本地候选结果继续流程，不能让用户对话卡死。
 
 Reply LLM 的自然语言结果也要过台词边界归一化：开头括号动作旁白和说话人标签会被剥离，最终写入聊天历史、状态更新和审计的 `ReplyOutput.reply` 只保留角色实际说出口的话。
 
-Memory Recall 不是敏感词召回。当前同步路径先在本地构建自然语言候选清单，包含短期上下文、长期记忆和关系记忆候选，再交给 Memory Recall LLM 复判；Memory Recall LLM 只选择短期/长期记忆 ID，不输出完整短期记忆、长期记忆摘要或召回因子，完整内容由本地候选表回填。短期上下文只取同一说话者/本角色在短时间窗内的消息，跨天或其他用户历史不会被描述成“刚才”。未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
+Memory Recall 不是敏感词召回。当前同步路径会把最近 6 小时最多 10 条短期对话、过去 6 小时关系/状态/场景摘要、长期记忆候选和关系记忆候选整理成自然语言清单，再交给 Memory Recall LLM 判断此刻什么会自然浮现。Memory Recall LLM 只输出自然语言 narrative，不输出候选 ID、分数、字段或 JSON；本地保留短期上下文和长期候选只是为了 UI、审计和兼容。跨天或其他用户历史不会被描述成“刚才”。未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
 
 左侧 UI 里的 DeepSeek 预览、性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由 DeepSeek 预览缓存、State Update 确定性写入的 runtime 展示信号、种子档案或管理员维护字段提供，不由 Reply LLM 直接控制台词。Runtime Signal Evaluation 在同步对话里只保留本地快照和 trace，不再调用外部 LLM 覆盖 State Update 刚写入的 runtime。提交给 Reply LLM 的是 `fullLifeStory`、`lifeEvents`、`socialPersonaPattern`、`personalitySummary`、`personalityFacets`、`relationships`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
 
-对话开始后，系统不再把人物固定在档案初始场景。Conversation Pipeline 会先运行本地 `temporalSceneProgression`：根据 `CharacterState.location` 推断时区，用该地真实当前时间判断人物更可能在工作、通勤、住处、睡眠或临时外出场景，再把 `scene/location` 推进为同一地理范围内的自然现场。对话可以触发离开原场景，但只允许同城或同区域内合理移动；触发后的场景会写入角色全局运行态，刷新后和其他用户读取同一人物时都会承接。普通下一轮消息会先保持最近对话触发的移动或临时场景一段合理时间，不会立刻被 routine 拉回工作模板；超过合理时间后，routine 仍可继续推进上班、睡眠、通勤和回家。未来邀约不会立刻移动，跨城/跨国或世界观不可能的地点会被记录为 blocked 场景上下文，不会瞬移。
+对话开始后，系统不再把人物固定在档案初始场景。Conversation Pipeline 会先运行本地 `temporalSceneProgression`：根据 `CharacterState.location` 推断时区，用该地真实当前时间判断人物更可能在工作、通勤、住处、睡眠或临时外出场景，再把 `scene/location` 推进为同一地理范围内的自然现场。同步对话路径不再用用户话语关键词触发移动或瞬移；用户话语对行动意图的影响交给后续 LLM 自然语言模块评价，并由 State Update 决定是否写成关系、状态或长期记忆。routine 仍可继续推进上班、睡眠、通勤和回家，跨城/跨国或世界观不可能的地点不会瞬移。
 
-人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。Reply Prompt 的作用是把这些自然语言材料过一遍，让回复从人物整体状态中长出来，而不是让某个单独指标指挥台词风格。
+人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。统一表达模块会把前序自然语言材料综合成不失真的表达语境，再交给 Reply LLM 生成角色台词；Prompt Builder 是表达模块的内部实现，不再是单独的决策环节。
 
 人物档案和场景预览也属于认知模块，不是本地字符串拼接。这里的“预览”指管理员应用前的待应用预览：人物档案预览通过 Dossier Interpretation LLM 将用户素材拆成展示摘要、生平事件、长期记忆、人性/人格、标签、关切和状态信号；场景预览通过 Scene Interpretation LLM 将用户素材拆成场景摘要、状态影响和人物影响。预览应用时写入的是 LLM 解读后的结构化状态，而不是用户原文。左侧人物短预览是另一条 DeepSeek 缓存路径：它只生成 `personaDossier.previewSummary`，不改详细档案。
 
@@ -136,12 +136,12 @@ flowchart TD
     U[用户在对话区输入消息] --> AUTH{是否已登录}
     AUTH -- 否 --> LOGIN[打开登录浮窗]
     AUTH -- 是 --> E[事件输入]
-    E --> A[评估模块: 判断事件触发关切]
-    A --> M[记忆召回模块: 本地候选 + LLM只选择ID]
-    M --> D[回应决策模块: 判断是否回应和回应姿态]
-    D --> P[Prompt Generator: 生成自然语言回复上下文 + 位置语境]
+    E --> A[Appraisal: LLM 自然语言评价当前事件]
+    A --> M[Memory Recall: 短期6小时 + 长期候选 + LLM自然语言召回]
+    M --> D[Decision: LLM 自然语言判断回应倾向]
+    D --> P[统一表达模块: 汇总前序自然语言语境]
     P --> R[DeepSeek Flash Reply LLM: 只生成角色台词]
-    R --> S[状态更新模块: 判断状态和记忆变化]
+    R --> S[State Update: LLM 自然语言判断状态和记忆写入]
     S --> G[信号评估模块: 评估能量/情绪/情绪倾向/唤醒度]
     G --> W[确定性写回: clamp/append/commit]
     W --> C[聊天室显示回复]
@@ -179,24 +179,20 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    E[事件输入] --> Q[合成 naturalLanguageQuery]
-    A[事件评估输出] --> N[认知模块输出归一化]
-    N --> Q
-    C[激活关切] --> Q
-    R[说话者关系] --> Q
-    Q --> S[长期记忆本地混合排序]
-    L[长期记忆库] --> S
-    S --> F[召回因子: 自然语言相关/关切/关系/情绪/近期/词面]
-    F --> M[Memory Recall LLM 只选择记忆ID]
-    B[短期记忆最近几轮] --> M
-    M --> H[本地回填短期记忆和长期记忆摘要/factors]
+    E[事件输入] --> Q[合成自然语言召回语境]
+    A[Appraisal narrative] --> Q
+    R[过去6小时关系/状态/场景摘要] --> Q
+    B[最近6小时最多10条短期对话] --> Q
+    L[长期记忆和关系记忆候选] --> Q
+    Q --> M[Memory Recall LLM 自然语言判断]
+    M --> H[保留 narrative + 短期上下文 + 长期候选]
     H --> O[MemoryRecallResult]
     O --> D[回应决策]
-    O --> P[Prompt Generator]
+    O --> P[统一表达模块]
     X[未来异步生命路径] -. 复用召回上下文 .-> Q
 ```
 
-本地混合排序只是候选层，不是最终心理判断。它的责任是避免把整个历史粗暴塞给模型，同时避免只按敏感词命中决定召回。Memory Recall LLM 可以提升“没有词面命中但语义相关”的记忆，也可以压低“只是撞词但语义无关”的记忆。
+本地候选层只负责把可读材料整理好，不做最终心理判断。它的责任是避免把整个历史粗暴塞给模型，同时避免只按敏感词命中决定召回。Memory Recall LLM 可以在自然语言里说明“没有词面命中但语义相关”的记忆为什么浮现，也可以说明“只是撞词但语义无关”的候选为什么不该影响当下。
 
 ## 生成预览路径
 
@@ -418,9 +414,11 @@ flowchart TD
     CLIENT --> CHECK{"endpoint 可用?"}
     CHECK -- "是" --> FETCH["POST /api/deepseek-chat"]
     FETCH --> STREAM{"SSE?"}
-    STREAM -- "是" --> READ["readEventStream: 累积 delta / 解析 final JSON"]
+    STREAM -- "是" --> READ["readEventStream: 累积 delta / 读取 final"]
     STREAM -- "否" --> JSON["response.json"]
-    READ --> PARSE{"结构化 JSON 可解析?"}
+    READ --> MODE{"outputMode"}
+    MODE -- "natural_language" --> TRACE
+    MODE -- "structured_json" --> PARSE{"结构化 JSON 可解析?"}
     PARSE -- "否" --> FALLBACK["记录 fallbackReason + 使用 mockOutput"]
     PARSE -- "是" --> TRACE
     CHECK -- "否" --> MOCK["mockOutput"]
@@ -432,20 +430,15 @@ flowchart TD
 
 ### Appraisal
 
-Appraisal 是回复前的状态裁判，不负责写回复。它输出结构化 `AppraisalResult`，同时保留自然语言 `narrative` 给记忆召回、右侧追踪和后续上下文阅读。评估重点包括：角色是否危险、是否清醒、是否需要回应、适合单条还是连续/爆发节奏、这句话对当事人的触动强度、是否失态、是否短暂突破平常人设外壳进入失控式反应。
+Appraisal 是回复前的状态裁判，不负责写回复。它要求 LLM 输出自然语言 `narrative`，给记忆召回、右侧追踪和后续上下文阅读；`AppraisalResult` 只是兼容壳。评估重点包括：角色是否危险、是否清醒、是否需要回应、适合沉默/短答/追问/连续/失态的哪种方向、这句话对当事人的触动、是否失态、是否短暂突破平常人设外壳进入失控式反应。
 
 ```mermaid
 flowchart TD
-    E["EventInput"] --> LOCAL["本地候选: 触发词/对象/关系/强度/默认状态"]
-    S["CharacterState"] --> LOCAL
-    LOCAL --> MOCK["本地 fallback AppraisalResult"]
-    E --> PROMPT["组装结构化 Appraisal LLM prompt"]
+    E["EventInput"] --> PROMPT["组装自然语言 Appraisal 语境"]
     S --> PROMPT
     PROMPT --> CLIENT["Cognitive Module Client"]
-    MOCK --> CLIENT
-    CLIENT --> RAW["LLM AppraisalResult"]
-    RAW --> NORM["normalizeAppraisalResult"]
-    NORM --> OUT["稳定 AppraisalResult: danger/awareness/need/rhythm/impact/composure/personaBreak"]
+    CLIENT --> RAW["LLM 自然语言 appraisal narrative"]
+    RAW --> OUT["AppraisalResult 兼容壳 + narrative"]
     OUT --> MEM["Memory Retrieval"]
     OUT --> DECISION["Response Decision"]
     OUT --> TRACE["流程追踪"]
@@ -464,57 +457,53 @@ flowchart TD
     LTM --> LIST
     S --> REL["relationshipMemory 候选"]
     REL --> LIST
-    LIST --> PROMPT["Memory Recall LLM 复判 ID"]
+    LIST --> PROMPT["Memory Recall LLM 自然语言判断"]
     S --> STM["shortTermMemory 最近几轮"]
     STM --> PROMPT
     PROMPT --> CLIENT["Cognitive Module Client"]
-    CLIENT --> RAW["LLM MemoryRecallResult"]
-    RAW --> NORM["normalizeMemoryRecallResult"]
-    NORM --> OUT["稳定 MemoryRecallResult"]
+    CLIENT --> RAW["LLM 自然语言 narrative"]
+    RAW --> OUT["MemoryRecallResult: narrative + 短期上下文 + 长期候选"]
     OUT --> DECISION["Response Decision"]
-    OUT --> PROMPTGEN["Prompt Generator"]
+    OUT --> EXPR["统一表达模块"]
 ```
 
 ### Response Decision
 
-Response Decision 消费 `EventInput`、完整 `AppraisalResult`、召回叙述和 `CharacterState` 运行时信号，把状态评估翻译为回复路由：是否回应、回应模式、单条/连续多条/短句爆发、是否失态、是否突破平常人设外壳。它仍不写角色台词；Prompt Generator 会把路由转成自然语言语境交给 Reply LLM。若角色处在极低能量、强烈负面、震惊、麻木或崩溃边缘，而 LLM 把新的普通邀约/工作安排判成低影响礼貌回应，`stabilizeDecisionForCurrentState` 还必须从近期短期记忆、关系记忆、长期记忆或召回叙述中看到同一关系里的重大事件证据，才会把路由确定性调回失态或爆发式承接；仅有 severe 标签或疲惫状态不能触发爆发。
+Response Decision 消费 `EventInput`、Appraisal narrative、Memory Recall narrative 和 `CharacterState` 的自然语言运行时信号，只输出自然语言回应判断：是否开口、沉默还是回应、是否需要追问/连续补充/失态、以及同一关系事件相对上一轮发生了什么递进。它不写角色台词，也不要求 LLM 输出 JSON、枚举或字段名；兼容字段只服务 UI 和本地分段，不再作为下游语义主干。本地代码不再用 severe/casual/child-safety 等关键词或数值阈值强行改写路由。
 
 ```mermaid
 flowchart TD
-    E["EventInput"] --> PROMPT["组装结构化 Decision prompt"]
-    A["AppraisalResult"] --> PROMPT["组装结构化 Decision prompt"]
+    E["EventInput"] --> PROMPT["组装自然语言 Decision 语境"]
+    A["Appraisal narrative"] --> PROMPT
     M["memoryRecallNarrative"] --> PROMPT
     S["CharacterState + runtime signal narrative"] --> PROMPT
-    S --> MOCK["ResponseDecision fallback"]
     PROMPT --> CLIENT["Cognitive Module Client"]
-    MOCK --> CLIENT
-    CLIENT --> RAW["LLM ResponseDecision"]
-    RAW --> NORM["normalizeResponseDecision"]
-    NORM --> STABLE["stabilizeDecisionForCurrentState"]
-    STABLE --> OUT["shouldRespond / responseMode / replyRhythm / shouldLoseComposure / shouldBreakPersona / delaySeconds / rationale"]
-    OUT --> PROMPTGEN["Prompt Generator"]
+    CLIENT --> RAW["LLM 自然语言 decision narrative"]
+    RAW --> OUT["ResponseDecision 兼容壳 + narrative"]
+    OUT --> EXPR["统一表达模块"]
     OUT --> TRACE["流程追踪"]
 ```
 
-### Prompt Generator
+### 统一表达模块
 
 ```mermaid
 flowchart TD
-    E["EventInput"] --> PG["generateNaturalPromptRequest"]
-    S["CharacterState"] --> PG
-    A["appraisalNarrative"] --> PG
-    M["memoryRecallNarrative"] --> PG
-    D["decisionNarrative"] --> PG
-    PG --> P1["人格/价值/边界/表达样本"]
-    PG --> P2["场景和 runtime cognitiveNarrative"]
-    PG --> P3["关切/关系/记忆/近期对话"]
-    PG --> P4["characterLocation + mapContext"]
+    E["EventInput"] --> EXPR["runExpressionLlm"]
+    S["CharacterState"] --> EXPR
+    A["appraisalNarrative"] --> EXPR
+    M["memoryRecallNarrative"] --> EXPR
+    D["decisionNarrative"] --> EXPR
+    EXPR --> P1["人格/价值/边界/表达样本"]
+    EXPR --> P2["场景和 runtime cognitiveNarrative"]
+    EXPR --> P3["关切/关系/记忆/近期对话 + 6小时摘要"]
+    EXPR --> P4["characterLocation + mapContext"]
     P1 --> PROMPT["自然语言 Reply Prompt"]
     P2 --> PROMPT
     P3 --> PROMPT
     P4 --> PROMPT
     PROMPT --> REQ["ExpressionLlmRequest"]
-    REQ --> LLM["LLM Client"]
+    REQ --> LLM["Reply LLM"]
+    LLM --> OUT["ReplyOutput.reply + segments"]
 ```
 
 ### LLM Client
@@ -542,26 +531,26 @@ flowchart TD
     S["当前 CharacterState"] --> PLAN["planStateUpdates"]
     E["EventInput"] --> PLAN
     R["ReplyOutput"] --> PLAN
-    C["Appraisal/Memory/Decision narrative + impact levels"] --> PLAN
-    PLAN --> CLIENT["State Update LLM JSON 出口"]
-    CLIENT --> RAW["StateUpdatePlan raw"]
-    RAW --> NORM["normalizeStateUpdatePlan"]
-    NORM --> COMMIT["commitStateUpdates"]
+    C["Appraisal/Memory/Decision narrative"] --> PLAN
+    PLAN --> CLIENT["State Update LLM 自然语言出口"]
+    CLIENT --> RAW["State update narrative"]
+    RAW --> PLAN2["StateUpdatePlan 兼容壳"]
+    PLAN2 --> COMMIT["commitStateUpdates"]
     C --> COMMIT
     S --> COMMIT
     E --> COMMIT
     R --> COMMIT
     COMMIT --> STM["写入 shortTermMemory"]
-    COMMIT --> LTM["按冲击强度写入 longTermMemory"]
+    COMMIT --> LTM["按自然语言状态写回评估写入 longTermMemory"]
     COMMIT --> RMEM["写入/强化 relationshipMemory 关系记忆区"]
     COMMIT --> REL["更新 relationships"]
-    COMMIT --> CONCERN["更新 concerns"]
+    COMMIT --> CONCERN["保留 concerns 兼容字段"]
     COMMIT --> RUNTIME["写入 runtime.energy / derivedMood / signalProfiles"]
     COMMIT --> NEXT["nextState + StateDelta"]
     NEXT --> SIGNAL["Runtime Signal Evaluator"]
 ```
 
-重大事件写回有确定性保护：`computeInteractionImpact` 根据 Appraisal/Decision 的危险、触动、失态和突破外壳强度决定长期记忆重要性与情绪强度；`strengthenUserRelationshipMemoryForSevereEvent` 会把本轮噩耗、威胁、羞辱或伤害写进当前用户关系记忆，避免模型把关系摘要回退成旧的礼貌同事印象。
+State Update 不再要求 LLM 输出 JSON delta。LLM 用自然语言判断说完后的身体/情绪/注意力余波、当前用户关系印象、哪些内容只留短期、哪些值得成为长期记忆；本地只把这段 narrative 落成兼容运行态、关系记忆和审计 trace。
 
 ### Runtime Signal Evaluator
 
@@ -591,8 +580,8 @@ flowchart TD
     SCENE --> APPRAISAL["runAppraisal"]
     APPRAISAL --> MEM["retrieveMemory"]
     MEM --> DECISION["decideResponse"]
-    DECISION --> PROMPT["generateNaturalPromptRequest"]
-    PROMPT --> REPLY["runLlm"]
+    DECISION --> EXPR["runExpressionLlm"]
+    EXPR --> REPLY["Reply LLM"]
     REPLY --> UPDATE["applyStateUpdates"]
     UPDATE --> SIGNAL["evaluateRuntimeSignals"]
     SIGNAL --> APPLY["applyRuntimeSignalEvaluation"]
@@ -605,10 +594,6 @@ flowchart TD
     UPDATE --> POSTMIND["emit post-speech mindFlow"]
     SIGNAL --> POSTMIND
     APPLY --> POSTMIND
-    SAFETY["safetyContinuity: 安全澄清/旧危险循环判断"] --> APPRAISAL
-    SAFETY --> DECISION
-    SAFETY --> PROMPT
-    SAFETY --> UPDATE
     PROGRESS1 --> TRACE["onProgress liveTrace"]
     SCENE --> TRACE
     MIND --> CHAT["中间栏临时心理流"]
@@ -779,7 +764,7 @@ flowchart LR
     LEFT[左侧分组档案/状态/位置/人物档案/场景] --> PIPE[对话流程]
     CHAT[中间对话] --> PIPE
     PIPE --> TRACE[右侧流程追踪]
-    TRACE --> JSON[事件/评估/记忆/决策/回应提示词/回应输出/状态更新/信号评估/状态变化]
+    TRACE --> JSON[事件/评估/记忆/决策/表达整合/回应输出/状态更新/信号评估/状态变化]
     LEFT --> MONITOR[右侧生成监视]
     MONITOR --> GENJSON[人物短预览/人物档案/场景生成输入输出状态]
     TRACE --> AUDIT[管理员输入输出和模块调用审计]
@@ -845,10 +830,10 @@ flowchart LR
 | 场景生成 | initialized | 通过 Scene Interpretation LLM 重新解读用户素材，生成 scene、状态影响、人物影响、关切和记忆预览 |
 | 场景预览 | initialized | 先显示场景摘要和状态影响预览，用户确认后应用完整状态 |
 | 人物场景一致性检测 | initialized | Profile Scene Consistency LLM 判断人物和场景是否硬冲突；硬冲突需要扭曲时空密码继续 |
-| 时间场景推进 | initialized | `temporalSceneProgression` 在 Event 后、Appraisal 前根据位置时区真实时间和对话触发，推进 `scene/location`，并拒绝未来计划瞬移或跨地理范围跳转 |
-| 同步对话路径 | initialized | 登录用户身份 -> 事件 -> 时间场景推进 -> 评估 -> 记忆召回（含关系记忆区）-> 回应决策 -> 回应提示词（含当前用户印象）-> 回应输出/分段 -> 状态更新（写入关系印象）-> 信号评估 -> 状态变化 |
+| 时间场景推进 | initialized | `temporalSceneProgression` 在 Event 后、Appraisal 前只根据位置时区和真实时间推进 `scene/location`；同步对话不再用用户话语关键词触发移动 |
+| 同步对话路径 | initialized | 登录用户身份 -> 事件 -> 时间场景推进 -> Appraisal 自然语言评价 -> Memory Recall 自然语言召回 -> Decision 自然语言回应判断 -> 统一表达模块 -> 回应输出/分段 -> State Update 自然语言写回 -> 信号快照 -> 状态变化 |
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
-| 结构化输出回退 | initialized | 外部认知模块 JSON 截断或无法解析时记录 `fallbackReason`，使用本地候选结果继续对话 |
+| 结构化输出回退 | initialized | Cognitive Module Client 对仍使用结构化输出的生成/兼容模块保留 JSON 截断 fallback；同步对话认知模块使用自然语言 narrative |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |
 | 生产部署 | initialized | `<production-domain>` 通过 nginx 反代 PM2 进程 `<production-pm2-name>`，线上目录 `<production-app-dir>` |
 | 站内手动更新 | initialized | 左上角自动检查远端版本；管理员可触发 VPS git pull、npm ci、npm run build 和重启 |

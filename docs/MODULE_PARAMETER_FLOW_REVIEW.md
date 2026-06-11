@@ -6,7 +6,7 @@
 
 当前系统有三条主要数据流：
 
-1. 对话同步响应流：`App Shell -> Conversation Pipeline -> Appraisal -> Memory Recall -> Response Decision -> Prompt Generator -> Reply LLM -> State Update -> Runtime Signal Snapshot -> App Shell -> Server Support 持久化`。
+1. 对话同步响应流：`App Shell -> Conversation Pipeline -> Appraisal -> Memory Recall -> Response Decision -> Expression Module -> Reply LLM -> State Update -> Runtime Signal Snapshot -> App Shell -> Server Support 持久化`。
 2. 档案和场景生成流：`App Shell -> Generators -> Cognitive Module Client -> DeepSeek Proxy -> Generators 归一化 -> Profile Scene Consistency -> App Shell -> Server Support 共享档案持久化`。
 3. 登录、审计、历史和部署流：`App Shell -> Vite Dev Proxy 或 Production Server -> Server Support -> liao Chatroom / runtime JSON files / git working tree / DeepSeek API`。
 
@@ -25,15 +25,15 @@
 
 | 参数 | 类型 | 来源 | 用途 | 流向 |
 | --- | --- | --- | --- | --- |
-| `profile` | `CharacterProfile` | 种子、内置档案、生成器、角色全局运行态 | 人物稳定身份和表达材料 | UI、Prompt Generator、生成器、一致性检测 |
-| `concerns` | `Concern[]` | 种子、内置档案、生成器、State Update | 当前关切清单 | Appraisal、Memory Recall、Prompt Generator |
-| `relationships` | `Record<string, Relationship>` | 种子、内置档案、State Update、关系余波 | 人物对用户或其他人物的关系 | Appraisal、Prompt Generator、Server relationship propagation |
-| `shortTermMemory` | `ShortTermMemory[]` | State Update | 最近对话原文 | Memory Recall、Prompt Generator |
-| `longTermMemory` | `LongTermMemory[]` | 种子、生成器、State Update、关系余波 | 长期摘要记忆 | Memory Recall、Prompt Generator |
-| `relationshipMemory` | `RelationshipMemory[]` | 种子、内置档案、State Update | 当前用户专属印象和关系总结 | Memory Recall、Prompt Generator、右侧 UI |
-| `runtime` | `RuntimeState` | 种子、生成器、State Update | 当前能量、情绪、注意力和活跃关切 | UI、Prompt Generator、Decision、Runtime Signal Snapshot |
-| `scene` | `SceneState?` | 种子、内置档案、场景生成器 | 当前场景语境 | UI、Prompt Generator、一致性检测 |
-| `location` | `CharacterLocation?` | 种子、内置档案、管理员手动字段 | 物理位置和地图语境 | UI、Prompt Generator |
+| `profile` | `CharacterProfile` | 种子、内置档案、生成器、角色全局运行态 | 人物稳定身份和表达材料 | UI、Expression Module、生成器、一致性检测 |
+| `concerns` | `Concern[]` | 种子、内置档案、生成器、State Update | 当前关切清单；同步对话中只是自然语言背景 | Appraisal、Memory Recall、Expression Module |
+| `relationships` | `Record<string, Relationship>` | 种子、内置档案、State Update、关系余波 | 人物对用户或其他人物的关系 | Appraisal、Expression Module、Server relationship propagation |
+| `shortTermMemory` | `ShortTermMemory[]` | State Update | 最近对话原文；Memory Recall 默认取最近 6 小时最多 10 条 | Memory Recall、Expression Module |
+| `longTermMemory` | `LongTermMemory[]` | 种子、生成器、State Update、关系余波 | 长期摘要记忆 | Memory Recall、Expression Module |
+| `relationshipMemory` | `RelationshipMemory[]` | 种子、内置档案、State Update | 当前用户专属印象和关系总结 | Memory Recall、Expression Module、右侧 UI |
+| `runtime` | `RuntimeState` | 种子、生成器、State Update | 当前能量、情绪、注意力和活跃关切 | UI、Expression Module、Decision、Runtime Signal Snapshot |
+| `scene` | `SceneState?` | 种子、内置档案、场景生成器、时间场景推进 | 当前场景语境 | UI、Expression Module、一致性检测 |
+| `location` | `CharacterLocation?` | 种子、内置档案、管理员手动字段、时间场景推进 | 物理位置和地图语境 | UI、Expression Module |
 
 ### `CharacterProfile`
 
@@ -92,7 +92,7 @@
 | `intensity` | `number` | 强度，归一化到 0-1。 |
 | `valence` | `number` | 情绪方向，归一化到 -1 到 1。 |
 | `arousal` | `number` | 唤醒度，归一化到 0-1。 |
-| `triggers` | `string[]` | 触发线索。 |
+| `triggers` | `string[]` | 生成档案时留下的自然语言线索；同步对话不再用它做本地关键词触发。 |
 | `possibleResolutions` | `string[]` | 可能缓解方式。 |
 | `lastActivatedAt` | `string?` | 最近激活时间。 |
 | `createdAt` | `string` | 创建时间。 |
@@ -235,23 +235,26 @@
 | `EventInput` | `roomId` | `string?` | 当前固定为 `main_room`。 |
 | `EventInput` | `content` | `string` | 用户输入内容。 |
 | `EventInput` | `metadata` | `Record<string, unknown>?` | 预留元数据。 |
+| `AppraisalResult` | `narrative` | `string?` | Appraisal LLM 的自然语言评估；同步下游语义主干。 |
 | `AppraisalResult` | `eventId` | `string` | 对应事件 ID。 |
-| `AppraisalResult` | `speakerRelationship` | `Relationship?` | 当前说话者关系。 |
-| `AppraisalResult` | `activatedConcerns` | array | 激活关切、强度、触发词和原因。 |
-| `AppraisalResult` | `eventSalience` | `number` | 事件显著性，0-1。 |
-| `AppraisalResult` | `appraisalSummary` | `string` | 评估摘要。 |
+| `AppraisalResult` | `speakerRelationship` | `Relationship?` | 当前说话者关系兼容字段。 |
+| `AppraisalResult` | `activatedConcerns` | array | 兼容字段；同步路径不再由本地关键词激活关切。 |
+| `AppraisalResult` | `eventSalience` | `number` | 兼容字段，保留给 UI 和写回壳。 |
+| `AppraisalResult` | `appraisalSummary` | `string` | 兼容摘要，当前等同或承接 narrative。 |
+| `MemoryRecallResult` | `narrative` | `string?` | Memory Recall LLM 的自然语言召回判断；同步下游语义主干。 |
 | `MemoryRecallResult` | `source` | `"sync_response" \| "async_life"?` | 召回来源。 |
 | `MemoryRecallResult` | `retrievalMode` | `"hybrid_relevance"?` | 当前召回模式。 |
-| `MemoryRecallResult` | `naturalLanguageQuery` | `string?` | 合成的自然语言召回查询。 |
-| `MemoryRecallResult` | `shortTermContext` | `ShortTermMemory[]` | 被选中的短期记忆。 |
-| `MemoryRecallResult` | `longTermMemories` | array | 被选中的长期记忆及评分、理由、召回因子。 |
-| `MemoryRecallFactor` | `name` | enum | 因子名：自然语言相关、关切关联、关系关联、情绪显著、近期性、词面线索。 |
+| `MemoryRecallResult` | `naturalLanguageQuery` | `string?` | 合成的自然语言召回语境。 |
+| `MemoryRecallResult` | `shortTermContext` | `ShortTermMemory[]` | 最近 6 小时最多 10 条对话上下文。 |
+| `MemoryRecallResult` | `longTermMemories` | array | 长期记忆和关系记忆候选；供 UI/审计展示，不代表 LLM ID 选择。 |
+| `MemoryRecallFactor` | `name` | enum | 兼容字段；自然语言候选策略下通常为空数组。 |
 | `MemoryRecallFactor` | `score` | `number` | 因子分数。 |
 | `MemoryRecallFactor` | `reason` | `string` | 因子理由。 |
+| `ResponseDecision` | `narrative` | `string?` | Response Decision LLM 的自然语言回应判断；Expression Module 使用它作为语义主干。 |
 | `ResponseDecision` | `shouldRespond` | `boolean` | 是否回应。 |
-| `ResponseDecision` | `responseMode` | `ResponseMode` | 回应姿态。 |
-| `ResponseDecision` | `delaySeconds` | `number?` | 延迟秒数，归一化到 0-30。 |
-| `ResponseDecision` | `rationale` | `string` | 决策理由。 |
+| `ResponseDecision` | `responseMode` | `ResponseMode` | 兼容字段；不再作为硬编码语义路由。 |
+| `ResponseDecision` | `delaySeconds` | `number?` | 兼容字段。 |
+| `ResponseDecision` | `rationale` | `string` | 决策理由兼容字段，当前承接 narrative。 |
 | `ExpressionLlmRequest` | `provider` | `"external"` | 回复 LLM 提供方。 |
 | `ExpressionLlmRequest` | `model` | `string` | 回复模型。 |
 | `ExpressionLlmRequest` | `prompt` | `string` | 只含自然语言的回复上下文。 |
@@ -260,7 +263,8 @@
 | `StateUpdatePlan` | `relationshipUpdates` | array | 关系变化计划。 |
 | `StateUpdatePlan` | `newConcerns` | array | 新关切计划；当前归一化后主要保留结构。 |
 | `StateUpdatePlan` | `userRelationshipMemory` | object? | 对当前用户的印象和关系总结。 |
-| `StateUpdatePlan` | `internalStateNote` | `string` | 没说出口但进入长期记忆的内心余波。 |
+| `StateUpdatePlan` | `internalStateNote` | `string` | 没说出口但进入长期记忆候选的内心余波。 |
+| `StateUpdatePlan` | `narrative` | `string?` | State Update LLM 的自然语言写回判断；关系记忆和长期记忆写回主干。 |
 | `RuntimeSignalEvaluationResult` | `energy` | `number` | 评估后的能量。 |
 | `RuntimeSignalEvaluationResult` | `derivedMood` | object | 评估后的情绪方向、唤醒度和标签。 |
 | `RuntimeSignalEvaluationResult` | `signalProfiles` | record | 四项指标的自然语言说明。 |
@@ -343,7 +347,7 @@
 
 输出：`{ nextState, trace }`。`nextState` 回到 App Shell 并保存到角色全局运行态；`trace` 显示在右侧并保存到审计。
 
-数据流顺序：`content -> event -> appraisal -> memoryRecall -> decision -> llmRequest -> llmOutput -> stateUpdate -> runtimeSignalEvaluation -> stateDelta -> nextState/trace`。
+数据流顺序：`content -> event -> appraisal narrative -> memoryRecall narrative -> decision narrative -> expression request/reply -> stateUpdate narrative -> runtimeSignalEvaluation -> stateDelta -> nextState/trace`。
 
 ### Cognitive Module Client: `src/pipeline/cognitiveModuleClient.ts`
 
@@ -351,34 +355,34 @@
 | --- | --- | --- |
 | `request.moduleName` | `CognitiveModuleName` | 当前认知模块名。 |
 | `request.inputMode` | `"natural_language" \| "structured_context"` | 模型输入模式。 |
-| `request.outputMode` | `"natural_language" \| "structured_json"` | 模型输出模式。结构化模式可 fallback。 |
+| `request.outputMode` | `"natural_language" \| "structured_json"` | 模型输出模式。同步对话认知模块使用 `natural_language`；结构化生成/兼容模块可 fallback。 |
 | `request.prompt` | `string` | 发给 DeepSeek proxy 的用户 prompt。 |
-| `request.outputContract` | `string?` | 结构化输出契约。 |
+| `request.outputContract` | `string?` | 输出说明；同步对话模块这里是自然语言标准，不是 JSON 契约。 |
 | `config` | `LlmConfig` | 外部 endpoint、模型和认证 token。 |
 | `mockOutput` | generic | 本地兜底输出。 |
 | `options.onStream` | callback? | 流式输出回调。 |
 
-输出：`CognitiveModuleTrace<TOutput>`，包含 `request/output/transport/fallbackReason`。如果外部结构化 JSON 截断或无法解析，使用 `mockOutput` 并记录 `fallbackReason`。
+输出：`CognitiveModuleTrace<TOutput>`，包含 `request/output/transport/fallbackReason`。自然语言模块读取 SSE `final` 文本；如果仍使用结构化输出的生成/兼容模块遇到 JSON 截断或无法解析，使用 `mockOutput` 并记录 `fallbackReason`。
 
 ### Appraisal: `src/pipeline/appraisal.ts`
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `event` | `EventInput` | 本轮用户事件。 |
-| `state` | `CharacterState` | 提供 `concerns` 和 `relationships`。 |
+| `state` | `CharacterState` | 提供 `concerns`、`relationships`、最近对话、过去 6 小时关系/状态/场景摘要。 |
 | `llmConfig` | `LlmConfig` | LLM 配置。 |
 | `onStream` | callback? | 评估模块流式输出。 |
 
-内部派生：`speakerRelationship` 来自 `state.relationships[event.speakerId]`；`activatedConcerns` 先由触发词、对象匹配、关系和关切强度本地估算；`eventSalience` 由最高激活度、关系权重和文本长度估算。
+内部派生：将人物长期关切、运行时信号、最近对话和过去 6 小时摘要组织成自然语言评估语境。长期关切中的 `triggers` 只作为背景线索，不做本地命中。
 
-输出：`CognitiveModuleTrace<AppraisalResult>`。归一化会过滤未知 `concernId`、clamp 分数、修复关系对象形状。
+输出：`CognitiveModuleTrace<AppraisalResult>`。`output.narrative` 是 LLM 自然语言评估；其他字段是兼容壳，用于 UI、trace 和状态写回。
 
 ### Memory Retrieval: `src/pipeline/memoryRetrieval.ts`
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `event` | `EventInput` | 本轮事件。 |
-| `appraisal` | `AppraisalResult` | 激活关切和说话者关系。 |
+| `appraisal` | `AppraisalResult` | Appraisal narrative。 |
 | `state` | `CharacterState` | 短期记忆、长期记忆、关系记忆。 |
 | `llmConfig` | `LlmConfig` | LLM 配置。 |
 | `onStream` | callback? | 记忆召回流式输出。 |
@@ -388,49 +392,48 @@
 | 参数 | 说明 |
 | --- | --- |
 | `retrievalContext.source` | 当前同步响应固定为 `sync_response`，未来异步生命路径可用 `async_life`。 |
-| `naturalLanguageQuery` | 由事件内容、评估摘要、激活关切、说话者关系总结合成。 |
-| `activatedConcernScores` | `concernId -> activationScore` map。 |
-| `speakerNames` | 说话者 ID、说话者名、关系 target ID/name。 |
-| `speakerRelationshipSummary` | 关系气氛、用户印象、关系总结、最近互动和备注。 |
-| `longTermMemoryCandidates` | `state.longTermMemory + relationshipMemory 转换候选`。 |
-| `rankedCandidates` | 按自然语言相关、关切、关系、情绪显著、近期性、词面线索排序。 |
-| `shortTermCandidates` | 最近 4 条短期记忆。 |
+| `naturalLanguageQuery` | 由事件内容、Appraisal narrative、过去 6 小时关系/状态/场景摘要和候选记忆合成。 |
+| `shortTermContext` | 最近 6 小时最多 10 条同一用户/本角色对话。 |
+| `recentSituationSummary` | 过去 6 小时关系、状态和场景摘要。 |
+| `longTermMemoryCandidates` | `state.longTermMemory + relationshipMemory` 的自然语言候选，最多送入有限条。 |
+| `fallbackNarrative` | 本地兜底自然语言，不按关键词选择记忆。 |
 
-输出：`CognitiveModuleTrace<MemoryRecallResult>`。LLM 只选择 ID；完整短期记忆、长期摘要和召回因子由本地候选表回填。
+输出：`CognitiveModuleTrace<MemoryRecallResult>`。`output.narrative` 是 LLM 自然语言召回判断；`shortTermContext` 和 `longTermMemories` 保留给 UI/审计，不代表 JSON ID 复判。
 
 ### Response Decision: `src/pipeline/responseDecision.ts`
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
-| `appraisal` | `AppraisalResult` | 事件显著性、激活关切、说话者关系。 |
-| `memoryRecall` | `MemoryRecallResult` | 浮现记忆。 |
+| `appraisal` | `AppraisalResult` | Appraisal narrative。 |
+| `memoryRecall` | `MemoryRecallResult` | Memory Recall narrative。 |
 | `state` | `CharacterState` | runtime、关切和关系背景。 |
 | `llmConfig` | `LlmConfig` | LLM 配置。 |
 | `onStream` | callback? | 决策流式输出。 |
 
-内部派生：根据 `eventSalience`、负面关切强度、关系熟悉度先构建 `mockOutput`，再交给 LLM 复判。
+内部派生：将事件、Appraisal narrative、Memory Recall narrative、最近对话、过去 6 小时摘要和 runtime narrative 组织成自然语言决策语境。
 
-输出：`CognitiveModuleTrace<ResponseDecision>`。归一化保证 `responseMode` 属于枚举、`delaySeconds` 在 0-30。
+输出：`CognitiveModuleTrace<ResponseDecision>`。`output.narrative` 是 LLM 自然语言回应判断；`responseMode/replyRhythm` 等字段是兼容壳，不再做本地强制路由。
 
-### Prompt Generator: `src/pipeline/promptBuilder.ts`
+### Expression Module: `src/pipeline/llmClient.ts` + `src/pipeline/promptBuilder.ts`
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `event` | `EventInput` | 当前用户消息和说话者。 |
 | `state` | `CharacterState` | 人物、场景、位置、记忆、关系和 runtime。 |
-| `appraisal` | `AppraisalResult` | 关切评估。 |
-| `memoryRecall` | `MemoryRecallResult` | 被召回记忆。 |
-| `decision` | `ResponseDecision` | 回应姿态和理由。 |
+| `appraisalNarrative` | `string` | Appraisal 自然语言评估。 |
+| `memoryRecallNarrative` | `string` | Memory Recall 自然语言召回判断。 |
+| `decisionNarrative` | `string` | Response Decision 自然语言回应判断。 |
+| `decision` | `ResponseDecision` | 兼容节奏字段和 narrative。 |
 | `provider` | `"external"` | 固定外部模型。 |
 | `model` | `string` | 模型名。 |
 
-输出：`ExpressionLlmRequest`。关键约束：`prompt` 是自然语言上下文，只给 Reply LLM；不能混入 JSON、字段名、工程术语或结构化输出契约。
+输出：`{ request, output }`。`request.prompt` 是自然语言上下文，只给 Reply LLM；`output` 是 Reply LLM 结果。Prompt Builder 只是表达模块内部 helper，不再作为单独 pipeline 决策环节。
 
 ### Reply LLM Client: `src/pipeline/llmClient.ts`
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
-| `request` | `ExpressionLlmRequest` | Prompt Generator 生成的自然语言请求。 |
+| `request` | `ExpressionLlmRequest` | Expression Module 内部生成的自然语言请求。 |
 | `config` | `LlmConfig` | endpoint、model、authToken。 |
 | `simulateInput` | `{ event, state, decision }` | 非外部模式兜底输入；当前正式配置走外部。 |
 | `onStream` | callback? | 回复流式输出。 |
@@ -450,9 +453,9 @@
 | `llmConfig` | `LlmConfig` | LLM 配置。 |
 | `onStream` | callback? | 状态更新流式输出。 |
 
-输出：`{ nextState, stateDelta, stateUpdate }`。`stateUpdate` 是 LLM 计划；`nextState` 是确定性写回后的状态；`stateDelta` 是写回摘要。
+输出：`{ nextState, stateDelta, stateUpdate }`。`stateUpdate.output.narrative` 是 LLM 自然语言写回判断；`nextState` 是兼容写回后的状态；`stateDelta` 是写回摘要。
 
-确定性写回包括：更新关切数值、更新关系数值和备注、追加短期记忆、必要时追加长期记忆、写入或更新 `relationshipMemory`、重算活跃关切、energy、derivedMood 和 `signalProfiles`。Runtime Signal Evaluator 只读取这些结果生成 trace 快照，不再覆盖 State Update 写入的 runtime。
+兼容写回包括：追加本轮短期记忆、把 State Update narrative 写入长期记忆候选、写入或更新 `relationshipMemory`、把上游自然语言判断合入关系印象、重算活跃关切、energy、derivedMood 和 `signalProfiles`。Runtime Signal Evaluator 只读取这些结果生成 trace 快照，不再覆盖 State Update 写入的 runtime。
 
 ### Runtime Signal Evaluator: `src/pipeline/runtimeSignalEvaluator.ts`
 
@@ -651,12 +654,12 @@ DeepSeek proxy 参数：
 1. 用户输入框 `input` 进入 `handleSend`。
 2. `handleSend` 用 `activeConversationSpeaker` 生成 `speaker.id/name`，把用户消息写入本地历史桶。
 3. `runConversationPipeline` 接收 `content/state/llmConfig/speaker/onProgress`，生成 `EventInput`。
-4. Appraisal 接收 `event/state`，输出 `AppraisalResult`。
-5. Memory Retrieval 接收 `event/appraisal/state`，合成 `naturalLanguageQuery`，输出 `MemoryRecallResult`。
-6. Response Decision 接收 `appraisal/memoryRecall/state`，输出 `ResponseDecision`。
-7. Prompt Generator 接收 `event/state/appraisal/memoryRecall/decision/provider/model`，输出自然语言 `ExpressionLlmRequest.prompt`。
-8. Reply LLM Client 接收 `ExpressionLlmRequest/LlmConfig`，通过 `/api/deepseek-chat` 输出 `ReplyOutput.reply`，并剥离开头动作旁白和说话人标签。
-9. State Updater 接收 `state/event/replyOutput/context/llmConfig`，输出 `StateUpdatePlan`，确定性写回 `nextState` 和 `StateDelta`。
+4. Appraisal 接收 `event/state`，输出自然语言 `AppraisalResult.narrative` 和兼容壳。
+5. Memory Retrieval 接收 `event/appraisal narrative/state`，合成自然语言召回语境，输出 `MemoryRecallResult.narrative`、最近 6 小时短期上下文和长期候选。
+6. Response Decision 接收 `appraisal narrative/memoryRecall narrative/state`，输出自然语言 `ResponseDecision.narrative` 和兼容壳。
+7. Expression Module 接收 `event/state/appraisalNarrative/memoryRecallNarrative/decisionNarrative/provider/model`，内部生成自然语言 `ExpressionLlmRequest.prompt` 并调用 Reply LLM。
+8. Reply LLM 通过 `/api/deepseek-chat` 输出 `ReplyOutput.reply`，并剥离开头动作旁白和说话人标签。
+9. State Updater 接收 `state/event/replyOutput/context/llmConfig`，输出自然语言 `StateUpdatePlan.narrative` 和兼容壳，写回 `nextState` 和 `StateDelta`。
 10. Runtime Signal Evaluator 接收 `stateAfterUpdate/event/replyOutput/context/llmConfig`，输出四项观察信号快照；值来自 State Update 已写入的 `nextState.runtime`。
 11. `handleSend` 把回复消息写入本地历史桶。
 12. `persistConversationHistoryMessages` POST 当前用户和当前档案消息到 `.conversation-histories.local.json`。

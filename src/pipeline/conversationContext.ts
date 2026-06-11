@@ -5,7 +5,7 @@ const recentDialogueWindowMs = 6 * 60 * 60 * 1000;
 export function selectRecentDialogueMemories(
   state: CharacterState,
   event: EventInput,
-  limit = 4,
+  limit = 10,
 ): ShortTermMemory[] {
   const eventTime = Date.parse(event.timestamp);
   const hasEventTime = Number.isFinite(eventTime);
@@ -31,6 +31,53 @@ export function formatRecentDialogueForPrompt(state: CharacterState, event: Even
   const memories = selectRecentDialogueMemories(state, event);
   if (memories.length === 0) return "最近几个小时没有直接上下文。";
   return memories.map((memory) => formatDialogueMemoryForPrompt(memory, state, event)).join("\n");
+}
+
+export function formatRecentSituationSummaryForPrompt(state: CharacterState, event: EventInput) {
+  const eventTime = Date.parse(event.timestamp);
+  const hasEventTime = Number.isFinite(eventTime);
+  const sixHoursMs = recentDialogueWindowMs;
+  const relationshipMemory = (state.relationshipMemory ?? []).find((memory) => memory.targetUserId === event.speakerId);
+  const recentRelationshipHistory = relationshipMemory?.history
+    .filter((item) => {
+      if (!hasEventTime) return true;
+      const createdAt = Date.parse(item.createdAt);
+      return Number.isFinite(createdAt) && eventTime - createdAt >= 0 && eventTime - createdAt <= sixHoursMs;
+    })
+    .slice(-5)
+    .map((item) => item.summary);
+
+  const relationshipSummary = relationshipMemory
+    ? [
+        `她对${relationshipMemory.targetUserName}的印象：${relationshipMemory.impressionSummary}`,
+        `当前关系感：${relationshipMemory.relationshipSummary}`,
+        `最近一次关系余波：${relationshipMemory.lastInteractionSummary}`,
+        recentRelationshipHistory?.length ? `过去6小时关系片段：${recentRelationshipHistory.join("；")}` : "",
+      ]
+        .filter(Boolean)
+        .join("。")
+    : "她对当前说话者还没有稳定的关系记忆，只能从最近几句和当下语气里判断距离。";
+
+  const runtimeSummary = [
+    `当前外显心情：${state.runtime.derivedMood.label}`,
+    `注意焦点：${state.runtime.attentionFocus || "没有明确写入"}`,
+    ...Object.values(state.runtime.signalProfiles).map((profile) =>
+      [profile.label, profile.summary, profile.cognitiveNarrative].filter(Boolean).join("："),
+    ),
+  ].join("。");
+
+  const sceneSummary = state.scene
+    ? [
+        `当前场景：${state.scene.title}`,
+        state.scene.description,
+        state.scene.cognitiveNarrative,
+        state.location ? `当前位置：${state.location.label}，${state.location.region}，${state.location.motionState}` : "",
+      ]
+        .filter(Boolean)
+        .join("。")
+    : "当前没有明确场景，只能按对话现场和人物状态理解。";
+
+  return ["过去6小时关系摘要：" + relationshipSummary, "过去6小时状态摘要：" + runtimeSummary, "过去6小时场景摘要：" + sceneSummary].join("\n");
 }
 
 export function formatDialogueMemoryForPrompt(

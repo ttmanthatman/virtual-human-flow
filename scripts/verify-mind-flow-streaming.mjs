@@ -20,7 +20,6 @@ execFileSync(
     "src/pipeline/stateUpdater.ts",
     "src/pipeline/runtimeSignalEvaluator.ts",
     "src/pipeline/cognitiveModuleClient.ts",
-    "src/pipeline/safetyContinuity.ts",
     "src/chat/mindFlowMessages.ts",
     "src/data/seedState.ts",
     "src/core/types.ts",
@@ -56,8 +55,9 @@ globalThis.fetch = async (_url, init) => {
   fetchedModules.push(body.moduleName);
   const final = createFixtureFinal(body.moduleName);
   if (body.outputMode === "natural_language") {
+    const naturalText = typeof final === "string" ? final : final.reply ?? JSON.stringify(final);
     return createSseResponse([
-      { delta: final.reply.split("\n")[0] || "" },
+      { delta: naturalText.split("\n")[0] || "" },
       { final },
     ]);
   }
@@ -164,52 +164,17 @@ console.log("mind-flow streaming verified");
 function createFixtureFinal(moduleName) {
   switch (moduleName) {
     case "appraisal":
-      return {
-        narrative: "她先把这句话放到关系和旧约定里过了一遍，表面还稳，心里有一点被牵动。",
-        eventId: "event_fixture",
-        dangerState: { isInDanger: false, level: 0.1, sources: [], rationale: "没有直接危险。" },
-        awarenessState: { isClearHeaded: true, controlLevel: 0.7, rationale: "还能控制表达。" },
-        responseNeed: { shouldRespond: true, rationale: "对方直接问她。" },
-        replyRhythm: decisionRhythm,
-        emotionalImpact: { level: 0.48, touchedCore: ["未完成约定"], rationale: "周末邀约触到旧约定。" },
-        composureRisk: { shouldLoseComposure: false, level: 0.28, rationale: "会停顿，但不至于失态。" },
-        personaBreakRisk: { shouldBreakPersona: false, level: 0.1, rationale: "不需要突破外壳。" },
-        activatedConcerns: [{ concernId: "breakup_with_a", activationScore: 0.62, matchedTriggers: ["周末"], reason: "触到旧约定。" }],
-        eventSalience: 0.52,
-        appraisalSummary: "轻微触动。",
-      };
+      return "她先把这句话放到关系和旧约定里过了一遍，表面还稳，心里有一点被牵动。她需要回应，但不能把旧约定当成普通邀约。";
     case "memory_retrieval":
-      return { shortTermMemoryIds: [], longTermMemories: [{ memoryId: "memory_mountain_with_a" }] };
+      return "最近几句对话会浮上来，同时旧约定的长期记忆也会轻轻带起，但不需要把所有候选都搬出来。";
     case "response_decision":
-      return {
-        shouldRespond: true,
-        responseMode: "neutral_reply",
-        replyRhythm: decisionRhythm,
-        shouldLoseComposure: false,
-        shouldBreakPersona: false,
-        delaySeconds: 0,
-        narrative: decisionRhythm === "multi_turn" ? "她会先说一句，再补一点解释。" : "她能把回应收成一句。",
-        rationale: "fixture",
-      };
+      return decisionRhythm === "multi_turn" ? "她会先说一句，再补一点解释。" : "她能把回应收成一句。";
     case "reply_generation":
       return decisionRhythm === "multi_turn"
         ? { reply: "等一下。\n我不是不想回答你。\n只是这句话让我慢了一下。", segments: ["等一下。", "我不是不想回答你。", "只是这句话让我慢了一下。"] }
         : { reply: "还好，就是有点慢。", segments: ["还好，就是有点慢。"] };
     case "state_update":
-      return {
-        concernUpdates: [],
-        relationshipUpdates: [],
-        newConcerns: [],
-        userRelationshipMemory: {
-          targetUserId: "user_b",
-          targetUserName: "当前对话者",
-          impressionSummary: "对方的问法没有恶意，但会碰到旧约定。",
-          relationshipSummary: "半熟友好，仍保持边界。",
-          evidence: ["对方提出周末邀约"],
-          lastInteractionSummary: "她先停顿，再给出回应。",
-        },
-        internalStateNote: "她说完之后，旧约定的余波还在，但已经能收住。",
-      };
+      return "她说完之后，旧约定的余波还在，但已经能收住。这个互动值得作为关系里的轻微靠近和保留边界被记住。";
     case "runtime_signal_evaluation":
       return {
         energy: 0.52,

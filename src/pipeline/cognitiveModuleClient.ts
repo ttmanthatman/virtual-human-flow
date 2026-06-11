@@ -49,7 +49,11 @@ export async function runCognitiveModule<TOutput>(
           ? formatNaturalLanguageFallbackReason(caught)
           : formatStructuredFallbackReason(caught);
       output = mockOutput;
-      options.onStream?.(JSON.stringify({ fallbackReason, output: mockOutput }, null, 2));
+      options.onStream?.(
+        request.outputMode === "natural_language"
+          ? `${fallbackReason}\n${String(mockOutput)}`
+          : JSON.stringify({ fallbackReason, output: mockOutput }, null, 2),
+      );
     }
 
     return {
@@ -61,7 +65,7 @@ export async function runCognitiveModule<TOutput>(
     };
   }
 
-  options.onStream?.(JSON.stringify(mockOutput, null, 2));
+  options.onStream?.(request.outputMode === "natural_language" ? String(mockOutput) : JSON.stringify(mockOutput, null, 2));
   return {
     moduleName: request.moduleName,
     request,
@@ -84,6 +88,7 @@ async function readEventStream(
   let buffer = "";
   let accumulated = "";
   let finalJson = "";
+  let finalText = "";
 
   while (true) {
     const { done, value } = await reader.read();
@@ -112,21 +117,36 @@ async function readEventStream(
         onStream?.(accumulated);
       }
       if (parsed.final !== undefined) {
-        finalJson = JSON.stringify(parsed.final);
+        if (request.outputMode === "natural_language") {
+          if (typeof parsed.final === "string") {
+            finalText = parsed.final;
+          } else if (isRecord(parsed.final) && typeof parsed.final.reply === "string") {
+            finalText = parsed.final.reply;
+          } else {
+            finalText = JSON.stringify(parsed.final);
+          }
+        } else {
+          finalJson = JSON.stringify(parsed.final);
+        }
       }
     }
   }
 
   if (request.outputMode === "natural_language") {
-    if (accumulated === "") {
+    const text = (finalText || accumulated).trim();
+    if (text === "") {
       throw new Error("外部接口流结束但没有返回自然语言内容");
     }
-    return accumulated;
+    return text;
   }
 
   if (finalJson) return JSON.parse(finalJson);
   if (accumulated.trim()) return JSON.parse(accumulated.trim());
   throw new Error("外部接口流结束但没有返回内容");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function shouldUseStructuredFallback(request: CognitiveModuleRequest, caught: unknown) {

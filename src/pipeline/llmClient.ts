@@ -1,10 +1,36 @@
 import { CharacterState, EventInput, ExpressionLlmRequest, LlmConfig, ReplyOutput, ResponseDecision } from "../core/types";
 import { stripReplyStageDirections } from "./conversationContext";
+import { generateNaturalPromptRequest } from "./promptBuilder";
 
 interface SimulateInput {
   event: EventInput;
   state: CharacterState;
   decision: ResponseDecision;
+}
+
+export async function runExpressionLlm(
+  input: {
+    event: EventInput;
+    state: CharacterState;
+    appraisalNarrative: string;
+    memoryRecallNarrative: string;
+    decisionNarrative: string;
+    decision: ResponseDecision;
+  },
+  config: LlmConfig,
+  onStream?: (output: string) => void,
+): Promise<{ request: ExpressionLlmRequest; output: ReplyOutput }> {
+  const request = generateNaturalPromptRequest(
+    input.event,
+    input.state,
+    input.appraisalNarrative,
+    input.memoryRecallNarrative,
+    input.decisionNarrative,
+    config.provider,
+    config.model,
+  );
+  const output = await runLlm(request, config, { event: input.event, state: input.state, decision: input.decision }, onStream);
+  return { request, output };
 }
 
 export async function runLlm(
@@ -117,8 +143,8 @@ function splitReplyIntoSegments(reply: string, rhythm: ResponseDecision["replyRh
     .filter(Boolean);
 
   if (!reply.trim()) return [];
-  if (rhythm === "single" || rhythm === "none") return explicitSegments.length > 0 ? [explicitSegments.join("\n")] : [reply.trim()];
   if (explicitSegments.length > 1) return explicitSegments.slice(0, 6);
+  if (rhythm === "single" || rhythm === "none") return explicitSegments.length > 0 ? [explicitSegments.join("\n")] : [reply.trim()];
 
   const sentenceSegments = (reply.match(/[^。！？!?]+[。！？!?]?/g) ?? [])
     .map((segment) => segment.trim())

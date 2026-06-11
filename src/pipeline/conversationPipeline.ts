@@ -2,8 +2,7 @@ import { CharacterState, CognitiveModuleTrace, LlmConfig, MindFlowFrame, Pipelin
 import { runAppraisal } from "./appraisal";
 import { retrieveMemory } from "./memoryRetrieval";
 import { decideResponse } from "./responseDecision";
-import { generateNaturalPromptRequest } from "./promptBuilder";
-import { runLlm } from "./llmClient";
+import { runExpressionLlm } from "./llmClient";
 import { applyStateUpdates } from "./stateUpdater";
 import { applyRuntimeSignalEvaluation, evaluateRuntimeSignals } from "./runtimeSignalEvaluator";
 import { advanceSceneForCurrentTime } from "./temporalScene";
@@ -139,27 +138,31 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     content: summarizeText(formatDecisionMindFlow(decision.output), 260),
   });
 
-  const llmRequest = generateNaturalPromptRequest(
-    event,
-    sceneAwareState,
-    appraisalNarrative,
-    memoryNarrative,
-    decisionNarrative,
-    llmConfig.provider,
-    llmConfig.model,
-  );
+  const expressionInputSummary = [event.content, appraisalNarrative, memoryNarrative, decisionNarrative].join("\n");
   emit({
     step: "llmRequest",
     status: "completed",
-    input: "Prompt Generator 输入\n\n" + summarizeText([event.content, appraisalNarrative, memoryNarrative, decisionNarrative].join("\n")),
-    output: summarizeText(llmRequest.prompt),
+    input: "表达模块整合输入\n\n" + summarizeText(expressionInputSummary),
+    output: "表达模块会把前序自然语言评估整合成给 Reply LLM 的不失真上下文。",
     transport: "local",
   });
 
-  emit({ step: "llmOutput", status: "running", input: summarizeText(llmRequest.prompt), output: "等待角色回复..." });
-  const llmOutput = await runLlm(llmRequest, llmConfig, { event, state: sceneAwareState, decision: decision.output }, (output) =>
+  emit({ step: "llmOutput", status: "running", input: summarizeText(expressionInputSummary), output: "等待表达模块生成角色回复..." });
+  const expression = await runExpressionLlm(
+    {
+      event,
+      state: sceneAwareState,
+      appraisalNarrative,
+      memoryRecallNarrative: memoryNarrative,
+      decisionNarrative,
+      decision: decision.output,
+    },
+    llmConfig,
+    (output) =>
     emit({ step: "llmOutput", status: "streaming", output: summarizeText(output) }),
   );
+  const llmRequest = expression.request;
+  const llmOutput = expression.output;
   emit({
     step: "llmOutput",
     status: "completed",
