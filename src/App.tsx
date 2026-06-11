@@ -45,6 +45,7 @@ const appVersionLabel = `v${packageInfo.version}`;
 const traceSteps: { key: keyof PipelineTrace; label: string; icon: typeof Activity }[] = [
   { key: "event", label: "事件", icon: Play },
   { key: "sceneContext", label: "时空场景", icon: MapPin },
+  { key: "roleTurn", label: "人物主脑", icon: Brain },
   { key: "appraisal", label: "评估", icon: Brain },
   { key: "memoryRecall", label: "记忆召回", icon: Database },
   { key: "decision", label: "回应决策", icon: ChevronsRight },

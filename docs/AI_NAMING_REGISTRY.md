@@ -37,16 +37,18 @@
 | 流程步骤进度 | `pipelineStepProgress` | runtime object | 执行中步骤的输入、输出、状态和 transport | `loadingStep`, `traceDump` |
 | 结构化输出回退 | `structuredOutputFallback` | runtime safety workflow | 仍使用结构化输出的生成/兼容模块返回截断或不可解析 JSON 时，记录原因并用本地候选结果继续流程；同步对话认知模块使用自然语言 narrative | `jsonCrash`, `silentRetry` |
 | 认知模块调用 | `cognitiveModuleTrace` | runtime object | 一个脑区式模块的一次 LLM 调用记录 | `debugInfo` |
-| 回复请求 | `expressionLlmRequest` | runtime object | 只交给 Reply LLM 的自然语言上下文 | `promptData` |
-| 回复输出 | `replyOutput` | runtime object | Reply LLM 生成的角色台词和本地归一化分段 | `aiResult` |
+| 人物主脑回合 | `roleTurn` | pipeline module | 同步对话说话前唯一主脑 LLM 调用；在同一上下文里模拟人物心理、记忆浮现、开口倾向和最终台词 | `splitBrainReply`, `jsonDecisionRouter` |
+| 人物主脑结果 | `roleTurnResult` | runtime object | `roleTurn` 的自然语言心理状态、记忆浮现、开口倾向和 `ReplyOutput` | `brainJson`, `replyPlan` |
+| 回复请求 | `expressionLlmRequest` | runtime object | 旧统一表达 helper 的自然语言上下文；当前同步主路径用 `roleTurn.request.prompt` 作为审计用表达输入 | `promptData` |
+| 回复输出 | `replyOutput` | runtime object | `roleTurn` 的“说出口”段落或旧 Reply LLM 结果归一化后的角色台词和本地分段 | `aiResult` |
 | 回复分段 | `replyOutput.segments` | runtime field | 从自然语言角色回复归一化出的多条聊天消息，用于 `multi_turn` 或 `burst` 展示；不是 Reply LLM JSON 契约 | `replyArrayContract`, `messageJson` |
-| 统一表达模块 | `expressionModule` | pipeline module | 把前序自然语言评价、召回和决策综合成不失真的表达语境，并调用 Reply LLM | `separatePromptStep`, `replyRouter` |
+| 统一表达模块 | `expressionModule` | pipeline module | 旧 helper：把前序自然语言评价、召回和决策综合成 Reply LLM prompt；当前同步主路径已由 `roleTurn` 取代 | `separatePromptStep`, `replyRouter` |
 | 状态更新计划 | `stateUpdatePlan` | runtime object | State Update LLM 的自然语言写回判断落成的兼容写回壳 | `stateDeltaDraft` |
 | 心理流帧 | `mindFlowFrame` | runtime object | 每轮对话中可 streaming 到中间栏的心理、场景、动作和余波片段；临时展示，不写入历史 | `thoughtBubble`, `debugTyping` |
 | 心理流消息 | `mindFlowChatMessage` | app state object | App Shell 用来临时展示 `mindFlowFrame` 的中间栏消息，发言后折叠 | `hiddenReasoningMessage`, `pipelineBubble` |
 | 性格特性 | `personalityFacet` | domain object | 一个性格摘要背后的来源、张力和表达方式 | `traitDefinition` |
 | 状态信号详情 | `runtimeSignalProfile` | domain object | 能量、情绪、情绪倾向、唤醒度显示值背后的自然语言考量 | `metricDetail` |
-| 状态信号评估 | `runtimeSignalEvaluation` | cognitive module | 专门评估能量、情绪、情绪倾向、唤醒度的 LLM 模块 | `derivedMoodUpdater` |
+| 状态信号评估 | `runtimeSignalEvaluation` | local trace module | 根据 State Update 后的 runtime 本地派生能量、情绪、情绪倾向、唤醒度快照 | `derivedMoodUpdater` |
 | 认知叙述 | `cognitiveNarrative` | domain field | 人物内部状态或场景如何参与反应的自然语言描述，不是给 Reply LLM 的直接指令 | `llmContext`, `replyInstruction` |
 | 生成预览 | `generationPreview` | UI state | Dossier/Scene 生成后等待用户应用的预览结果 | `draftResult` |
 | 人物档案解读 | `dossierInterpretation` | cognitive module | 将用户人物素材重新解读为展示摘要、长期记忆、人性/人格、标签、关切和状态信号 | `profileRewrite`, `rawDossierPreview` |
@@ -96,18 +98,19 @@
 | Core Types | `src/core/types.ts` | 定义角色、关切、关系、记忆、事件、trace 类型 | 无 | TypeScript 类型 | 全模块 | 无 |
 | Seed State | `src/data/seedState.ts` | 提供林安初始状态和默认消息 | 无 | `CharacterState` | App Shell | Core Types |
 | Builtin Persona Dossiers | `builtinPersonaDossiers.mjs` | 提供“马可福音10”和“郑州市”全局初始人物/场景/位置档案，并登记生平事件、社会人格位置和熟人关系 | 无 | `PersonaDossier[]` | Server Support | 无 |
-| Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport/fallbackReason | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Appraisal/Memory/Decision/State Update | 外部 LLM endpoint |
+| Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport/fallbackReason；同步主路径由 `roleTurn` 和 State Update 使用 | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Role Turn/State Update/Generators/compat modules | 外部 LLM endpoint |
 | Cognitive Module Fallback Verification | `scripts/verify-cognitive-module-fallback.mjs` | 伪造未闭合 SSE JSON，验证认知模块会 fallback 而不是抛错卡住 | 无 | pass/fail | npm script | TypeScript compiler |
 | Severe State Continuity Verification | `scripts/verify-severe-state-continuity.mjs` | 伪造重大坏消息和后续普通邀约，验证自然语言 Appraisal/Decision/State Update 能承接余波且不会依赖本地强制路由 | 无 | pass/fail | npm script | Appraisal, State Updater, Response Decision, Expression Module |
 | Temporal Scene And Reply Segments Verification | `scripts/verify-temporal-scene-and-reply-segments.mjs` | 验证真实时间场景推进不会瞬移，工作/睡眠场景按当地时区变化，连续/爆发回复会归一化为多条消息 | 无 | pass/fail | npm script | Temporal Scene Progression, LLM Client |
 | Update Button Clickable Verification | `scripts/verify-update-button-clickable.mjs` | 用 Playwright mock 有新版本状态，验证未登录时“更新服务器”按钮仍可点击并进入权限反馈路径 | 无 | pass/fail | npm script | App Shell |
-| Appraisal | `src/pipeline/appraisal.ts` | 通过 LLM 用自然语言评价事件如何进入人物关系、场景、记忆和状态；不使用本地关键词触发或结构化 JSON 作为语义主干 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | Conversation Pipeline | Cognitive Module Client |
-| Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 将最近 6 小时最多 10 条短期对话、过去 6 小时关系/状态/场景摘要、长期记忆和关系记忆候选交给 LLM，自然语言判断此刻什么会浮现 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` | Conversation Pipeline | Cognitive Module Client |
-| Response Decision | `src/pipeline/responseDecision.ts` | 通过 LLM 消费事件、Appraisal narrative、Memory Recall narrative 和运行时信号，自然语言判断是否回应、如何承接关系递进和是否失态 | event, appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | Conversation Pipeline | Cognitive Module Client |
+| Role Turn | `src/pipeline/roleTurn.ts` | 同步对话主脑：一次 LLM 调用读取人物、场景、位置、最近对话、关系记忆、长期候选和用户原话，输出心理状态、记忆浮现、开口倾向和台词 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<RoleTurnResult>` | Conversation Pipeline | Cognitive Module Client, Memory Retrieval helpers |
+| Appraisal | `src/pipeline/appraisal.ts` | 旧独立自然语言评估模块，当前同步主路径改由 `roleTurn` 派生 Appraisal 兼容视图；文件保留供实验和回滚 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | compat scripts/future experiments | Cognitive Module Client |
+| Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 提供最近 6 小时短期上下文、长期记忆和关系记忆候选 helper；旧独立 Memory Recall LLM 保留供实验和回滚 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` or candidate lists | Role Turn/compat scripts | Cognitive Module Client |
+| Response Decision | `src/pipeline/responseDecision.ts` | 旧独立自然语言回应决策模块，当前同步主路径改由 `roleTurn` 派生 Decision 兼容视图；文件保留供实验和回滚 | event, appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | compat scripts/future experiments | Cognitive Module Client |
 | Temporal Scene Progression | `src/pipeline/temporalScene.ts` | 根据人物地理位置推断时区，用当地真实时间推进 `scene/location`；同步对话不再用用户话语关键词触发移动 | `CharacterState`, `EventInput`, now? | `TemporalSceneProgression`, next `CharacterState` | Conversation Pipeline | Core Types |
 | Conversation Context | `src/pipeline/conversationContext.ts` | 统一格式化最近 6 小时短期对话、过去 6 小时关系/状态/场景摘要和清理 Reply 台词，避免过期/跨用户消息被说成“刚才” | `CharacterState`, `EventInput`, `ShortTermMemory`, reply text | prompt-safe context lines, situation summary, sanitized reply text | Appraisal/Memory Retrieval/Decision/Expression Module/LLM Client | Core Types |
-| Prompt Builder | `src/pipeline/promptBuilder.ts` | 统一表达模块内部 helper：把前序自然语言材料综合成只给 Reply LLM 的自然语言 prompt | event, state, appraisal, recall, decision | `ExpressionLlmRequest` | LLM Client `runExpressionLlm` | Core Types |
-| LLM Client | `src/pipeline/llmClient.ts` | 调用 Reply LLM；正式模式只传自然语言 prompt | `ExpressionLlmRequest`, `LlmConfig` | `ReplyOutput` | Conversation Pipeline | 外部 LLM endpoint |
+| Prompt Builder | `src/pipeline/promptBuilder.ts` | 旧统一表达 helper：把前序自然语言材料综合成 Reply LLM prompt；当前同步主路径已由 `roleTurn` 取代 | event, state, appraisal, recall, decision | `ExpressionLlmRequest` | LLM Client `runExpressionLlm` | Core Types |
+| LLM Client | `src/pipeline/llmClient.ts` | 调用旧 Reply LLM 并提供回复清洗/分段 helper；当前同步主路径复用其分段函数处理 `roleTurn` 台词 | `ExpressionLlmRequest`, `LlmConfig` or reply text | `ReplyOutput` / segments | Role Turn/compat scripts | 外部 LLM endpoint |
 | State Updater | `src/pipeline/stateUpdater.ts` | 通过 State Update LLM 输出自然语言状态写回判断，再落成兼容写回壳，写入短期记忆、长期记忆、关系记忆和 runtime 展示信号 | state, event, replyOutput, context, llmConfig | next state, `StateDelta`, `stateUpdate` | Conversation Pipeline | Cognitive Module Client |
 | Runtime Signal Evaluator | `src/pipeline/runtimeSignalEvaluator.ts` | 本地读取 State Update 已写入的 runtime 形成可审计展示信号快照，不再同步调用外部 LLM 覆盖状态 | state, event, replyOutput, stateUpdatePlan, llmConfig | `runtimeSignalEvaluation`, same runtime signals | Conversation Pipeline | State Updater |
 | Mind Flow Messages | `src/chat/mindFlowMessages.ts` | 将 `MindFlowFrame` 转成中间栏临时消息，负责 upsert、折叠和持久化过滤 | `MindFlowFrame`, `ChatMessage[]` | `ChatMessage[]` | App Shell, verification scripts | Core Types |
@@ -140,6 +143,24 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `runConversationPipeline` | `src/pipeline/conversationPipeline.ts` | 运行完整对话 pipeline，并把当前登录用户作为事件说话者 | content, state, llmConfig, speaker | nextState, trace | 写入状态 | implemented |
 | `runCognitiveModule` | `src/pipeline/cognitiveModuleClient.ts` | 执行一个认知脑区式 LLM 模块；同步对话模块可读取自然语言 final，结构化兼容模块仍在解析失败时记录 fallbackReason | request, config, mockOutput | CognitiveModuleTrace | 可调用外部 endpoint | implemented |
+| `runRoleTurn` | `src/pipeline/roleTurn.ts` | 调用同步对话人物主脑 LLM，让同一模型在同一上下文中模拟心理并产出台词 | event, state, llmConfig, onStream? | `CognitiveModuleTrace<RoleTurnResult>` | 可调用外部 endpoint | implemented |
+| `buildRoleTurnPrompt` | `src/pipeline/roleTurn.ts` | 将人物档案、场景、位置、runtime、最近对话、关系记忆、长期候选和用户原话合成主脑自然语言 prompt | event, state | string | 无 | implemented |
+| `buildFallbackRoleTurn` | `src/pipeline/roleTurn.ts` | 为主脑外部输出为空时提供可继续流程的本地自然语言候选 | event, state | `RoleTurnResult` | 无 | implemented |
+| `serializeRoleTurnFallback` | `src/pipeline/roleTurn.ts` | 将本地主脑候选序列化成四段自然语言文本，供 fallback streaming 展示 | fallback | string | 无 | implemented |
+| `parseRoleTurnNarrative` | `src/pipeline/roleTurn.ts` | 从主脑四段自然语言输出中提取心理状态、记忆浮现、开口倾向和说出口台词 | text, fallback | `RoleTurnResult` | 无 | implemented |
+| `buildAppraisalTraceFromRoleTurn` | `src/pipeline/roleTurn.ts` | 将 `roleTurn.innerStateNarrative` 派生为 Appraisal 兼容 trace | event, state, roleTurn | `CognitiveModuleTrace<AppraisalResult>` | 无 | implemented |
+| `buildMemoryTraceFromRoleTurn` | `src/pipeline/roleTurn.ts` | 将 `roleTurn.memoryNarrative` 和本地候选上下文派生为 Memory Recall 兼容 trace | event, state, roleTurn | `CognitiveModuleTrace<MemoryRecallResult>` | 无 | implemented |
+| `buildDecisionTraceFromRoleTurn` | `src/pipeline/roleTurn.ts` | 将 `roleTurn.decisionNarrative` 和最终台词派生为 Response Decision 兼容 trace | event, roleTurn | `CognitiveModuleTrace<ResponseDecision>` | 无 | implemented |
+| `extractNaturalSections` | `src/pipeline/roleTurn.ts` | 从主脑自然语言段落标题中切出心理状态、记忆浮现、开口倾向和说出口段落 | text | section object | 无 | implemented |
+| `extractLastQuotedReply` | `src/pipeline/roleTurn.ts` | 当主脑输出缺少段落标题时，从最后一段引号内容尝试恢复台词 | text | string | 无 | implemented |
+| `normalizeSpokenReply` | `src/pipeline/roleTurn.ts` | 清理主脑“说出口”段落，把沉默标记转成空台词并剥离动作/说话人标签 | reply | string | 无 | implemented |
+| `derivedRequest` | `src/pipeline/roleTurn.ts` | 为由 `roleTurn` 派生的 Appraisal/Memory/Decision trace 构造兼容 request | moduleName, roleTurn, description | `CognitiveModuleRequest`-like object | 无 | implemented |
+| `inferReplyRhythm` | `src/pipeline/roleTurn.ts` | 从 `RoleTurnResult` 生成旧兼容回复节奏 | roleTurn | `ReplyRhythm` | 无 | implemented |
+| `inferReplyRhythmFromText` | `src/pipeline/roleTurn.ts` | 根据主脑台词分行和开口倾向生成分段兼容节奏 | reply, decisionNarrative | `ReplyRhythm` | 无 | implemented |
+| `inferResponseMode` | `src/pipeline/roleTurn.ts` | 将主脑自然语言倾向映射到旧 UI 兼容回应模式 | roleTurn, rhythm | `ResponseMode` | 无 | implemented |
+| `estimateCompatibilityImpact` | `src/pipeline/roleTurn.ts` | 根据主脑自然语言热度和当前 runtime 生成旧兼容壳所需的影响强度 | state, roleTurn | number | 无 | implemented |
+| `estimateNarrativeHeat` | `src/pipeline/roleTurn.ts` | 将主脑自然语言中的强余波线索映射成 UI/写回兼容热度，不作为台词语义主干 | roleTurn | number | 无 | implemented |
+| `roundCompatibility` | `src/pipeline/roleTurn.ts` | 将派生兼容强度限制在 0~1 两位小数 | value | number | 无 | implemented |
 | `runAppraisal` | `src/pipeline/appraisal.ts` | 通过 LLM 用自然语言做事件到角色状态评估，并落成兼容 `AppraisalResult` 壳 | event, state, llmConfig | CognitiveModuleTrace<AppraisalResult> | 可调用外部 endpoint | implemented |
 | `appraisalFromNarrative` | `src/pipeline/appraisal.ts` | 将 Appraisal LLM 自然语言判断放入兼容字段，供 UI 和后续模块读取 narrative | narrative, fallback | AppraisalResult | 无 | implemented |
 | `formatRuntimeSignalNarrative` | `src/pipeline/appraisal.ts`, `src/pipeline/responseDecision.ts` | 将运行时信号 profile 合成为认知模块可读的自然语言状态叙述 | state | string | 无 | implemented |
@@ -161,6 +182,8 @@
 | `readReplyEventStream` | `src/pipeline/llmClient.ts` | 读取 Reply LLM 的 SSE 输出并累积为回复文本 | response, onStream | ReplyOutput-like object | 调用 onStream 更新 live trace | implemented |
 | `normalizeReplyOutput` | `src/pipeline/llmClient.ts` | 将外部或模拟 Reply 输出归一化为 `reply` 和自然消息分段 | data, decision | ReplyOutput | 无 | implemented |
 | `splitReplyIntoSegments` | `src/pipeline/llmClient.ts` | 按换行和标点把 `multi_turn`/`burst` 自然语言回复拆成多条聊天消息 | reply, rhythm, modelSegments? | string[] | 无 | implemented |
+| `formatRoleTurnOutput` | `src/pipeline/conversationPipeline.ts` | 将主脑心理状态、记忆浮现、开口倾向和台词合成右侧 trace 展示文本 | roleTurn output | string | 无 | implemented |
+| `buildNaturalLanguageSystemPrompt` | `server.mjs` | 为 DeepSeek 代理里的自然语言模块选择系统提示；`role_turn` 允许四段自然语言格式，旧 reply 仍只返回台词 | moduleName | string | 无 | implemented |
 | `applyStateUpdates` | `src/pipeline/stateUpdater.ts` | 调用 State Update LLM 并写回状态 | state, event, replyOutput, context, llmConfig | nextState, StateDelta, stateUpdate | 写入记忆和状态 | implemented |
 | `stateUpdatePlanFromNarrative` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 自然语言判断落成兼容写回壳，保留 narrative 作为语义主干 | narrative, fallback, event | StateUpdatePlan | 无 | implemented |
 | `strengthenUserRelationshipMemoryForCurrentEvent` | `src/pipeline/stateUpdater.ts` | 把本轮实际事件、角色回复和上游自然语言判断合入当前用户关系记忆，避免旧印象覆盖新关系推进 | memory, event, replyOutput, context | StateUpdatePlan.userRelationshipMemory | 无 | implemented |
@@ -317,6 +340,11 @@
 | `pipelineTrace` | `ChatMessage` | `PipelineTrace` | 一轮对话所有中间结果 | conversationPipeline | Pipeline Debug Panel | implemented |
 | `pipelineTrace.sceneContext` | `PipelineTrace` | `TemporalSceneProgression` | Event 后、Appraisal 前的时空场景推进结果 | temporalSceneProgression | Pipeline Debug Panel/audit | implemented |
 | `pipelineTrace.mindFlow` | `PipelineTrace` | `MindFlowFrame[]` | 本轮说话前和说话后的心理、场景、动作和余波 streaming 帧集合 | conversationPipeline | App Shell temporary chat/Pipeline Debug Panel | implemented |
+| `pipelineTrace.roleTurn` | `PipelineTrace` | `CognitiveModuleTrace<RoleTurnResult>` | 同步对话主脑 LLM 调用记录；Appraisal/Memory/Decision 兼容视图由它派生 | roleTurn | Pipeline Debug Panel/audit | implemented |
+| `roleTurnResult.innerStateNarrative` | `RoleTurnResult` | `string` | 主脑输出的心理状态段落：身体感、情绪、关系距离和控制感 | roleTurn | mindFlow/Appraisal view/State Update | implemented |
+| `roleTurnResult.memoryNarrative` | `RoleTurnResult` | `string` | 主脑输出的记忆浮现段落：最近对话、关系余波或长期记忆如何在此刻浮上来 | roleTurn | mindFlow/Memory view/State Update | implemented |
+| `roleTurnResult.decisionNarrative` | `RoleTurnResult` | `string` | 主脑输出的开口倾向段落：沉默、短答、追问、连续补充、转移、拒绝或失态的自然语言理由 | roleTurn | mindFlow/Decision view/State Update | implemented |
+| `roleTurnResult.replyOutput` | `RoleTurnResult` | `ReplyOutput` | 主脑“说出口”段落归一化后的聊天台词和分段 | roleTurn | App Shell/history/State Update/audit | implemented |
 | `mindFlowFrame.phase` | `MindFlowFrame` | `pre_speech/post_speech` | 区分发言前心理变化和发言后余波 | conversationPipeline | App Shell folding logic | implemented |
 | `mindFlowFrame.kind` | `MindFlowFrame` | enum | 标识心理流内容类型：场景、内部状态、记忆、关系、动作、继续发言或收住 | conversationPipeline | App Shell display/verification | implemented |
 | `formatRecentSituationSummaryForPrompt` | function | string | 生成过去 6 小时关系、状态和场景的自然语言摘要，供 Appraisal、Memory Recall、Decision 和表达模块共用 | conversationContext | cognitive modules/expression module | implemented |

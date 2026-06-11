@@ -137,7 +137,7 @@ function normalizeReplyOutput(data: unknown, decision: ResponseDecision): ReplyO
   };
 }
 
-function splitReplyIntoSegments(reply: string, rhythm: ResponseDecision["replyRhythm"], modelSegments?: string[]) {
+export function splitReplyIntoSegments(reply: string, rhythm: ResponseDecision["replyRhythm"], modelSegments?: string[]) {
   const explicitSegments = (modelSegments && modelSegments.length > 0 ? modelSegments : reply.split(/\n+/))
     .map((segment) => segment.trim())
     .filter(Boolean);

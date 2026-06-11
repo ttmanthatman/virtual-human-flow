@@ -6,7 +6,7 @@
 
 当前系统有三条主要数据流：
 
-1. 对话同步响应流：`App Shell -> Conversation Pipeline -> Appraisal -> Memory Recall -> Response Decision -> Expression Module -> Reply LLM -> State Update -> Runtime Signal Snapshot -> App Shell -> Server Support 持久化`。
+1. 对话同步响应流：`App Shell -> Conversation Pipeline -> Role Turn -> Appraisal/Memory/Decision 兼容视图 -> State Update -> Runtime Signal Snapshot -> App Shell -> Server Support 持久化`。
 2. 档案和场景生成流：`App Shell -> Generators -> Cognitive Module Client -> DeepSeek Proxy -> Generators 归一化 -> Profile Scene Consistency -> App Shell -> Server Support 共享档案持久化`。
 3. 登录、审计、历史和部署流：`App Shell -> Vite Dev Proxy 或 Production Server -> Server Support -> liao Chatroom / runtime JSON files / git working tree / DeepSeek API`。
 
@@ -25,15 +25,15 @@
 
 | 参数 | 类型 | 来源 | 用途 | 流向 |
 | --- | --- | --- | --- | --- |
-| `profile` | `CharacterProfile` | 种子、内置档案、生成器、角色全局运行态 | 人物稳定身份和表达材料 | UI、Expression Module、生成器、一致性检测 |
-| `concerns` | `Concern[]` | 种子、内置档案、生成器、State Update | 当前关切清单；同步对话中只是自然语言背景 | Appraisal、Memory Recall、Expression Module |
-| `relationships` | `Record<string, Relationship>` | 种子、内置档案、State Update、关系余波 | 人物对用户或其他人物的关系 | Appraisal、Expression Module、Server relationship propagation |
-| `shortTermMemory` | `ShortTermMemory[]` | State Update | 最近对话原文；Memory Recall 默认取最近 6 小时最多 10 条 | Memory Recall、Expression Module |
-| `longTermMemory` | `LongTermMemory[]` | 种子、生成器、State Update、关系余波 | 长期摘要记忆 | Memory Recall、Expression Module |
-| `relationshipMemory` | `RelationshipMemory[]` | 种子、内置档案、State Update | 当前用户专属印象和关系总结 | Memory Recall、Expression Module、右侧 UI |
-| `runtime` | `RuntimeState` | 种子、生成器、State Update | 当前能量、情绪、注意力和活跃关切 | UI、Expression Module、Decision、Runtime Signal Snapshot |
-| `scene` | `SceneState?` | 种子、内置档案、场景生成器、时间场景推进 | 当前场景语境 | UI、Expression Module、一致性检测 |
-| `location` | `CharacterLocation?` | 种子、内置档案、管理员手动字段、时间场景推进 | 物理位置和地图语境 | UI、Expression Module |
+| `profile` | `CharacterProfile` | 种子、内置档案、生成器、角色全局运行态 | 人物稳定身份和表达材料 | UI、Role Turn、生成器、一致性检测 |
+| `concerns` | `Concern[]` | 种子、内置档案、生成器、State Update | 当前关切清单；同步对话中只是自然语言背景 | Role Turn、State Update |
+| `relationships` | `Record<string, Relationship>` | 种子、内置档案、State Update、关系余波 | 人物对用户或其他人物的关系 | Role Turn、Server relationship propagation |
+| `shortTermMemory` | `ShortTermMemory[]` | State Update | 最近对话原文；Role Turn 默认取最近 6 小时最多 10 条 | Role Turn、Memory 兼容视图 |
+| `longTermMemory` | `LongTermMemory[]` | 种子、生成器、State Update、关系余波 | 长期摘要记忆 | Role Turn、Memory 兼容视图 |
+| `relationshipMemory` | `RelationshipMemory[]` | 种子、内置档案、State Update | 当前用户专属印象和关系总结 | Role Turn、Memory 兼容视图、右侧 UI |
+| `runtime` | `RuntimeState` | 种子、生成器、State Update | 当前能量、情绪、注意力和活跃关切 | UI、Role Turn、Runtime Signal Snapshot |
+| `scene` | `SceneState?` | 种子、内置档案、场景生成器、时间场景推进 | 当前场景语境 | UI、Role Turn、一致性检测 |
+| `location` | `CharacterLocation?` | 种子、内置档案、管理员手动字段、时间场景推进 | 物理位置和地图语境 | UI、Role Turn |
 
 ### `CharacterProfile`
 
@@ -235,13 +235,18 @@
 | `EventInput` | `roomId` | `string?` | 当前固定为 `main_room`。 |
 | `EventInput` | `content` | `string` | 用户输入内容。 |
 | `EventInput` | `metadata` | `Record<string, unknown>?` | 预留元数据。 |
-| `AppraisalResult` | `narrative` | `string?` | Appraisal LLM 的自然语言评估；同步下游语义主干。 |
+| `RoleTurnResult` | `narrative` | `string?` | 主脑心理状态、记忆浮现和开口倾向的合成摘要。 |
+| `RoleTurnResult` | `innerStateNarrative` | `string` | 主脑输出的心理状态段落；当前 Appraisal 兼容视图由此派生。 |
+| `RoleTurnResult` | `memoryNarrative` | `string` | 主脑输出的记忆浮现段落；当前 Memory 兼容视图由此派生。 |
+| `RoleTurnResult` | `decisionNarrative` | `string` | 主脑输出的开口倾向段落；当前 Decision 兼容视图由此派生。 |
+| `RoleTurnResult` | `replyOutput` | `ReplyOutput` | 主脑“说出口”段落归一化后的台词和分段。 |
+| `AppraisalResult` | `narrative` | `string?` | 当前同步主路径中由 `roleTurn.innerStateNarrative` 派生；旧独立 Appraisal LLM 保留为兼容路径。 |
 | `AppraisalResult` | `eventId` | `string` | 对应事件 ID。 |
 | `AppraisalResult` | `speakerRelationship` | `Relationship?` | 当前说话者关系兼容字段。 |
 | `AppraisalResult` | `activatedConcerns` | array | 兼容字段；同步路径不再由本地关键词激活关切。 |
 | `AppraisalResult` | `eventSalience` | `number` | 兼容字段，保留给 UI 和写回壳。 |
 | `AppraisalResult` | `appraisalSummary` | `string` | 兼容摘要，当前等同或承接 narrative。 |
-| `MemoryRecallResult` | `narrative` | `string?` | Memory Recall LLM 的自然语言召回判断；同步下游语义主干。 |
+| `MemoryRecallResult` | `narrative` | `string?` | 当前同步主路径中由 `roleTurn.memoryNarrative` 派生；旧独立 Memory Recall LLM 保留为兼容路径。 |
 | `MemoryRecallResult` | `source` | `"sync_response" \| "async_life"?` | 召回来源。 |
 | `MemoryRecallResult` | `retrievalMode` | `"hybrid_relevance"?` | 当前召回模式。 |
 | `MemoryRecallResult` | `naturalLanguageQuery` | `string?` | 合成的自然语言召回语境。 |
@@ -250,14 +255,14 @@
 | `MemoryRecallFactor` | `name` | enum | 兼容字段；自然语言候选策略下通常为空数组。 |
 | `MemoryRecallFactor` | `score` | `number` | 因子分数。 |
 | `MemoryRecallFactor` | `reason` | `string` | 因子理由。 |
-| `ResponseDecision` | `narrative` | `string?` | Response Decision LLM 的自然语言回应判断；Expression Module 使用它作为语义主干。 |
+| `ResponseDecision` | `narrative` | `string?` | 当前同步主路径中由 `roleTurn.decisionNarrative` 派生；旧独立 Response Decision LLM 保留为兼容路径。 |
 | `ResponseDecision` | `shouldRespond` | `boolean` | 是否回应。 |
 | `ResponseDecision` | `responseMode` | `ResponseMode` | 兼容字段；不再作为硬编码语义路由。 |
 | `ResponseDecision` | `delaySeconds` | `number?` | 兼容字段。 |
 | `ResponseDecision` | `rationale` | `string` | 决策理由兼容字段，当前承接 narrative。 |
 | `ExpressionLlmRequest` | `provider` | `"external"` | 回复 LLM 提供方。 |
 | `ExpressionLlmRequest` | `model` | `string` | 回复模型。 |
-| `ExpressionLlmRequest` | `prompt` | `string` | 只含自然语言的回复上下文。 |
+| `ExpressionLlmRequest` | `prompt` | `string` | 旧表达 helper 的自然语言回复上下文；当前同步主路径中 `trace.llmRequest.prompt` 保存 `roleTurn.request.prompt` 供审计。 |
 | `ReplyOutput` | `reply` | `string` | 角色最终说出口的话。 |
 | `StateUpdatePlan` | `concernUpdates` | array | 关切变化计划。 |
 | `StateUpdatePlan` | `relationshipUpdates` | array | 关系变化计划。 |
@@ -364,25 +369,37 @@
 
 输出：`CognitiveModuleTrace<TOutput>`，包含 `request/output/transport/fallbackReason`。自然语言模块读取 SSE `final` 文本；如果仍使用结构化输出的生成/兼容模块遇到 JSON 截断或无法解析，使用 `mockOutput` 并记录 `fallbackReason`。
 
-### Appraisal: `src/pipeline/appraisal.ts`
+### Role Turn: `src/pipeline/roleTurn.ts`
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `event` | `EventInput` | 本轮用户事件。 |
-| `state` | `CharacterState` | 提供 `concerns`、`relationships`、最近对话、过去 6 小时关系/状态/场景摘要。 |
+| `state` | `CharacterState` | 提供人物档案、场景、位置、runtime、短期记忆、长期记忆和关系记忆。 |
 | `llmConfig` | `LlmConfig` | LLM 配置。 |
-| `onStream` | callback? | 评估模块流式输出。 |
+| `onStream` | callback? | 主脑自然语言输出流式回调。 |
 
-内部派生：将人物长期关切、运行时信号、最近对话和过去 6 小时摘要组织成自然语言评估语境。长期关切中的 `triggers` 只作为背景线索，不做本地命中。
+内部派生：`buildRoleTurnPrompt` 将人物稳定背景、成长经历、性格面、表达样本、当前场景、当前位置、runtime narrative、最近 6 小时直接对话、过去 6 小时关系/状态/场景摘要、长期记忆候选、关系记忆候选和用户原话组织为同一个自然语言心理回合。
 
-输出：`CognitiveModuleTrace<AppraisalResult>`。`output.narrative` 是 LLM 自然语言评估；其他字段是兼容壳，用于 UI、trace 和状态写回。
+输出：`CognitiveModuleTrace<RoleTurnResult>`。`output.innerStateNarrative`、`output.memoryNarrative`、`output.decisionNarrative` 分别派生 Appraisal/Memory/Decision 兼容视图；`output.replyOutput` 进入聊天历史、State Update 和审计。
+
+### Appraisal: `src/pipeline/appraisal.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `event` | `EventInput` | 本轮用户事件；当前主路径派生视图仍保留事件 ID。 |
+| `state` | `CharacterState` | 提供 runtime 和旧兼容强度派生参考。 |
+| `roleTurn` | `CognitiveModuleTrace<RoleTurnResult>` | 当前主路径的语义来源。 |
+
+内部派生：当前同步主路径调用 `buildAppraisalTraceFromRoleTurn`，把 `roleTurn.innerStateNarrative` 放入 `AppraisalResult.narrative/appraisalSummary`，并生成 UI/写回兼容字段。旧 `runAppraisal` 独立 LLM 函数仍保留供实验和回滚。
+
+输出：`CognitiveModuleTrace<AppraisalResult>`。`output.narrative` 是人物主脑心理状态段落；其他字段是兼容壳，用于 UI、trace 和状态写回。
 
 ### Memory Retrieval: `src/pipeline/memoryRetrieval.ts`
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `event` | `EventInput` | 本轮事件。 |
-| `appraisal` | `AppraisalResult` | Appraisal narrative。 |
+| `appraisal` | `AppraisalResult` | Appraisal 兼容 narrative，当前来自 `roleTurn.innerStateNarrative`。 |
 | `state` | `CharacterState` | 短期记忆、长期记忆、关系记忆。 |
 | `llmConfig` | `LlmConfig` | LLM 配置。 |
 | `onStream` | callback? | 记忆召回流式输出。 |
@@ -398,23 +415,21 @@
 | `longTermMemoryCandidates` | `state.longTermMemory + relationshipMemory` 的自然语言候选，最多送入有限条。 |
 | `fallbackNarrative` | 本地兜底自然语言，不按关键词选择记忆。 |
 
-输出：`CognitiveModuleTrace<MemoryRecallResult>`。`output.narrative` 是 LLM 自然语言召回判断；`shortTermContext` 和 `longTermMemories` 保留给 UI/审计，不代表 JSON ID 复判。
+输出：当前同步主路径调用 `buildMemoryTraceFromRoleTurn`，返回 `CognitiveModuleTrace<MemoryRecallResult>`。`output.narrative` 来自 `roleTurn.memoryNarrative`；`shortTermContext` 和 `longTermMemories` 保留给 UI/审计，不代表 JSON ID 复判。旧 `retrieveMemory` 独立 LLM 函数仍保留供实验和回滚。
 
 ### Response Decision: `src/pipeline/responseDecision.ts`
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
-| `appraisal` | `AppraisalResult` | Appraisal narrative。 |
-| `memoryRecall` | `MemoryRecallResult` | Memory Recall narrative。 |
-| `state` | `CharacterState` | runtime、关切和关系背景。 |
-| `llmConfig` | `LlmConfig` | LLM 配置。 |
-| `onStream` | callback? | 决策流式输出。 |
+| `roleTurn` | `CognitiveModuleTrace<RoleTurnResult>` | 当前主路径的开口倾向和最终台词来源。 |
 
-内部派生：将事件、Appraisal narrative、Memory Recall narrative、最近对话、过去 6 小时摘要和 runtime narrative 组织成自然语言决策语境。
+内部派生：当前同步主路径调用 `buildDecisionTraceFromRoleTurn`，根据 `roleTurn.decisionNarrative`、最终台词是否为空和自然分行生成 `ResponseDecision` 兼容壳。旧 `decideResponse` 独立 LLM 函数仍保留供实验和回滚。
 
-输出：`CognitiveModuleTrace<ResponseDecision>`。`output.narrative` 是 LLM 自然语言回应判断；`responseMode/replyRhythm` 等字段是兼容壳，不再做本地强制路由。
+输出：`CognitiveModuleTrace<ResponseDecision>`。`output.narrative` 来自主脑开口倾向段落；`responseMode/replyRhythm` 等字段是兼容壳，不再做台词生成前的本地强制路由。
 
 ### Expression Module: `src/pipeline/llmClient.ts` + `src/pipeline/promptBuilder.ts`
+
+当前同步主路径已由 Role Turn 取代表达模块。下面接口仍保留供旧验证、局部实验或未来单独台词生成路径使用。
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
@@ -427,7 +442,7 @@
 | `provider` | `"external"` | 固定外部模型。 |
 | `model` | `string` | 模型名。 |
 
-输出：`{ request, output }`。`request.prompt` 是自然语言上下文，只给 Reply LLM；`output` 是 Reply LLM 结果。Prompt Builder 只是表达模块内部 helper，不再作为单独 pipeline 决策环节。
+输出：`{ request, output }`。`request.prompt` 是自然语言上下文，只给旧 Reply LLM；`output` 是旧 Reply LLM 结果。Prompt Builder 是兼容 helper，不再作为当前同步 pipeline 的表达决策环节。
 
 ### Reply LLM Client: `src/pipeline/llmClient.ts`
 
@@ -654,15 +669,14 @@ DeepSeek proxy 参数：
 1. 用户输入框 `input` 进入 `handleSend`。
 2. `handleSend` 用 `activeConversationSpeaker` 生成 `speaker.id/name`，把用户消息写入本地历史桶。
 3. `runConversationPipeline` 接收 `content/state/llmConfig/speaker/onProgress`，生成 `EventInput`。
-4. Appraisal 接收 `event/state`，输出自然语言 `AppraisalResult.narrative` 和兼容壳。
-5. Memory Retrieval 接收 `event/appraisal narrative/state`，合成自然语言召回语境，输出 `MemoryRecallResult.narrative`、最近 6 小时短期上下文和长期候选。
-6. Response Decision 接收 `appraisal narrative/memoryRecall narrative/state`，输出自然语言 `ResponseDecision.narrative` 和兼容壳。
-7. Expression Module 接收 `event/state/appraisalNarrative/memoryRecallNarrative/decisionNarrative/provider/model`，内部生成自然语言 `ExpressionLlmRequest.prompt` 并调用 Reply LLM。
-8. Reply LLM 通过 `/api/deepseek-chat` 输出 `ReplyOutput.reply`，并剥离开头动作旁白和说话人标签。
-9. State Updater 接收 `state/event/replyOutput/context/llmConfig`，输出自然语言 `StateUpdatePlan.narrative` 和兼容壳，写回 `nextState` 和 `StateDelta`。
-10. Runtime Signal Evaluator 接收 `stateAfterUpdate/event/replyOutput/context/llmConfig`，输出四项观察信号快照；值来自 State Update 已写入的 `nextState.runtime`。
-11. `handleSend` 把回复消息写入本地历史桶。
-12. `persistConversationHistoryMessages` POST 当前用户和当前档案消息到 `.conversation-histories.local.json`。
+4. `advanceSceneForCurrentTime` 根据人物位置时区和真实时间推进 `scene/location`。
+5. `runRoleTurn` 接收 `event/sceneAwareState/llmConfig`，一次性输出 `RoleTurnResult.innerStateNarrative/memoryNarrative/decisionNarrative/replyOutput`。
+6. `buildAppraisalTraceFromRoleTurn`、`buildMemoryTraceFromRoleTurn` 和 `buildDecisionTraceFromRoleTurn` 生成兼容 trace，供 UI、审计和 State Update 读取。
+7. `ReplyOutput.reply` 来自 `roleTurn` 的“说出口”段落，并剥离开头动作旁白和说话人标签；`replyOutput.segments` 由本地分段生成。
+8. State Updater 接收 `state/event/replyOutput/context/llmConfig`，输出自然语言 `StateUpdatePlan.narrative` 和兼容壳，写回 `nextState` 和 `StateDelta`。
+9. Runtime Signal Evaluator 接收 `stateAfterUpdate/event/replyOutput/context/llmConfig`，输出四项观察信号快照；值来自 State Update 已写入的 `nextState.runtime`。
+10. `handleSend` 把回复消息写入本地历史桶。
+11. `persistConversationHistoryMessages` POST 当前用户和当前档案消息到 `.conversation-histories.local.json`。
 13. `syncConversationState` POST `nextState + interaction` 到 `.conversation-states.local.json`，并在当前用户范围内传播关系余波。
 14. `recordConversationAudit` POST `PipelineTrace` 派生的 `moduleCalls` 到 `.conversation-audits.local.json`。
 
@@ -695,21 +709,21 @@ DeepSeek proxy 参数：
 
 ### DeepSeek 调用
 
-1. 认知模块或 Reply LLM 通过 `config.endpoint` POST `/api/deepseek-chat`。
+1. `roleTurn`、State Update、生成器或旧兼容 Reply LLM 通过 `config.endpoint` POST `/api/deepseek-chat`。
 2. 请求 body 包含 `model/moduleName/inputMode/outputMode/prompt/outputContract?/stream?`。
 3. proxy 读取 `.deepseek.local.json` 或 `DEEPSEEK_API_KEY`。
 4. proxy 组装 DeepSeek Chat Completions：system message、user prompt、`response_format`、`thinking: disabled`、`stream`。
-5. 非流式时返回 JSON 或 `{ reply }`；流式时发送 `{ delta }`，结束时发送 `{ final }`。
+5. 非流式时返回 JSON、自然语言文本或旧 reply `{ reply }`；流式时发送 `{ delta }`，结束时发送 `{ final }`。
 6. 结构化输出解析失败时，proxy 发送 error；`runCognitiveModule` 对结构化模块使用 fallback。
 
 ## 人工审核重点
 
 | 审核点 | 应看参数 |
 | --- | --- |
-| Reply LLM 是否纯自然语言 | `ExpressionLlmRequest.prompt`、`runLlm` 请求体。 |
+| Role Turn 是否充分使用自然语言上下文 | `roleTurn.request.prompt`、`RoleTurnResult` 四段自然语言、`replyOutput.reply`。 |
 | 用户隔离是否正确 | `speaker.id`、`createConversationHistoryKey`、`createConversationHistoryEntryKey`、`.conversation-states.local.json` entries。 |
 | 关系印象是否按当前用户保存 | `StateUpdatePlan.userRelationshipMemory.targetUserId`、`RelationshipMemory.targetUserId`。 |
-| 记忆召回是否不是敏感词过滤 | `naturalLanguageQuery`、`MemoryRecallFactor`、`rankedCandidates`。 |
+| 记忆召回是否不是敏感词过滤 | `roleTurn.request.prompt` 内的最近对话/长期候选、`MemoryRecallResult.naturalLanguageQuery`、`longTermMemories`。 |
 | 生成档案是否照抄原文 | `compactText/isRawCopy`、`displaySummary/background/fullLifeStory`。 |
 | 场景和人物是否同世界观 | `ProfileSceneConsistencyResult.severity/requiresDistortionPassword`。 |
 | 审计是否能复盘模块链 | `PipelineTrace`、`ConversationModuleCall.input/output/status/transport`。 |

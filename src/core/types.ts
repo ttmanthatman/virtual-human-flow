@@ -335,7 +335,16 @@ export interface ResponseDecision {
   rationale: string;
 }
 
+export interface RoleTurnResult {
+  narrative?: string;
+  innerStateNarrative: string;
+  memoryNarrative: string;
+  decisionNarrative: string;
+  replyOutput: ReplyOutput;
+}
+
 export type CognitiveModuleName =
+  | "role_turn"
   | "appraisal"
   | "memory_retrieval"
   | "response_decision"
@@ -359,7 +368,7 @@ export interface CognitiveModuleTrace<TOutput> {
   moduleName: CognitiveModuleName;
   request: CognitiveModuleRequest;
   output: TOutput;
-  transport: "mock_llm" | "external_llm";
+  transport: "mock_llm" | "external_llm" | "local";
   fallbackReason?: string;
 }
 
@@ -454,6 +463,7 @@ export interface PipelineTrace {
   event: EventInput;
   sceneContext: TemporalSceneProgression;
   mindFlow: MindFlowFrame[];
+  roleTurn: CognitiveModuleTrace<RoleTurnResult>;
   appraisal: CognitiveModuleTrace<AppraisalResult>;
   memoryRecall: CognitiveModuleTrace<MemoryRecallResult>;
   decision: CognitiveModuleTrace<ResponseDecision>;

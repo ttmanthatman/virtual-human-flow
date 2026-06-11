@@ -144,6 +144,12 @@ if (followUpSegments.length < 1) {
 if (fetchedModules.includes("runtime_signal_evaluation")) {
   throw new Error("Expected runtime signal evaluation to use a local snapshot instead of an external LLM call.");
 }
+if (!fetchedModules.includes("role_turn")) {
+  throw new Error("Expected unified role_turn LLM call to drive the pre-speech path.");
+}
+if (fetchedModules.some((moduleName) => ["appraisal", "memory_retrieval", "response_decision", "reply_generation"].includes(moduleName))) {
+  throw new Error(`Expected split cognitive/reply modules to stay out of the main pipeline, got ${fetchedModules.join(", ")}`);
+}
 
 decisionRhythm = "single";
 const singleProgress = [];
@@ -163,6 +169,20 @@ console.log("mind-flow streaming verified");
 
 function createFixtureFinal(moduleName) {
   switch (moduleName) {
+    case "role_turn":
+      return decisionRhythm === "multi_turn"
+        ? [
+            "心理状态：她先把这句话放到关系和旧约定里过了一遍，表面还稳，心里有一点被牵动。",
+            "记忆浮现：最近几句对话会浮上来，同时旧约定的长期记忆也会轻轻带起，但不需要把所有候选都搬出来。",
+            "开口倾向：她会先说一句，再补一点解释。",
+            "说出口：等一下。\n我不是不想回答你。\n只是这句话让我慢了一下。",
+          ].join("\n")
+        : [
+            "心理状态：她能把这句普通问候接住，反应慢一点，但没有明显失控。",
+            "记忆浮现：没有特别强的记忆浮上来。",
+            "开口倾向：她能把回应收成一句。",
+            "说出口：还好，就是有点慢。",
+          ].join("\n");
     case "appraisal":
       return "她先把这句话放到关系和旧约定里过了一遍，表面还稳，心里有一点被牵动。她需要回应，但不能把旧约定当成普通邀约。";
     case "memory_retrieval":

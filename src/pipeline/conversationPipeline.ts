@@ -1,8 +1,10 @@
 import { CharacterState, CognitiveModuleTrace, LlmConfig, MindFlowFrame, PipelineStepProgress, PipelineTrace } from "../core/types";
-import { runAppraisal } from "./appraisal";
-import { retrieveMemory } from "./memoryRetrieval";
-import { decideResponse } from "./responseDecision";
-import { runExpressionLlm } from "./llmClient";
+import {
+  buildAppraisalTraceFromRoleTurn,
+  buildDecisionTraceFromRoleTurn,
+  buildMemoryTraceFromRoleTurn,
+  runRoleTurn,
+} from "./roleTurn";
 import { applyStateUpdates } from "./stateUpdater";
 import { applyRuntimeSignalEvaluation, evaluateRuntimeSignals } from "./runtimeSignalEvaluator";
 import { advanceSceneForCurrentTime } from "./temporalScene";
@@ -70,15 +72,29 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     content: summarizeText(formatSceneMindFlow(sceneContext), 220),
   });
 
-  emit({ step: "appraisal", status: "running", input: "事件评估模块输入\n\n" + summarizeText(event.content), output: "等待模型输出..." });
-  const appraisal = await runAppraisal(event, sceneAwareState, llmConfig, (output) =>
-    emit({ step: "appraisal", status: "streaming", output: summarizeText(output) }),
+  emit({
+    step: "roleTurn",
+    status: "running",
+    input: "人物主脑输入\n\n" + summarizeText([event.content, formatSceneContext(sceneContext)].join("\n")),
+    output: "等待人物主脑进入角色...",
+  });
+  const roleTurn = await runRoleTurn(event, sceneAwareState, llmConfig, (output) =>
+    emit({ step: "roleTurn", status: "streaming", output: summarizeText(output) }),
   );
+  emit({
+    step: "roleTurn",
+    status: "completed",
+    input: roleTurn.request.prompt,
+    output: formatRoleTurnOutput(roleTurn.output),
+    transport: roleTurn.transport,
+  });
+
+  const appraisal = buildAppraisalTraceFromRoleTurn(event, sceneAwareState, roleTurn);
   const appraisalNarrative = appraisal.output.narrative || "";
   emit({
     step: "appraisal",
     status: "completed",
-    input: "事件评估模块输入\n\n" + summarizeText(event.content),
+    input: "由人物主脑的心理状态段落派生\n\n" + summarizeText(roleTurn.output.innerStateNarrative),
     output: appraisalNarrative,
     transport: appraisal.transport,
   });
@@ -91,20 +107,12 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     content: summarizeText(formatAppraisalMindFlow(appraisal.output), 260),
   });
 
-  emit({
-    step: "memoryRecall",
-    status: "running",
-    input: "记忆召回模块输入\n\n情境：" + summarizeText(appraisalNarrative),
-    output: "等待模型输出...",
-  });
-  const memoryRecall = await retrieveMemory(event, appraisalNarrative, sceneAwareState, llmConfig, (output) =>
-    emit({ step: "memoryRecall", status: "streaming", output: summarizeText(output) }),
-  );
+  const memoryRecall = buildMemoryTraceFromRoleTurn(event, sceneAwareState, roleTurn);
   const memoryNarrative = memoryRecall.output.narrative || "";
   emit({
     step: "memoryRecall",
     status: "completed",
-    input: "记忆召回模块输入\n\n情境：" + summarizeText(appraisalNarrative, 200),
+    input: "由人物主脑的记忆浮现段落派生\n\n情境：" + summarizeText(appraisalNarrative, 200),
     output: memoryNarrative,
     transport: memoryRecall.transport,
   });
@@ -117,15 +125,12 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     content: summarizeText(memoryNarrative || "没有特别强的记忆浮上来，她更多是在观察当前这句话。", 260),
   });
 
-  emit({ step: "decision", status: "running", input: "回应决策模块输入\n\n" + summarizeText([appraisalNarrative, memoryNarrative].filter(Boolean).join("\n")), output: "等待模型输出..." });
-  const decision = await decideResponse(event, appraisal.output, memoryNarrative, sceneAwareState, llmConfig, (output) =>
-    emit({ step: "decision", status: "streaming", output: summarizeText(output) }),
-  );
+  const decision = buildDecisionTraceFromRoleTurn(event, roleTurn);
   const decisionNarrative = formatDecisionNarrative(decision.output);
   emit({
     step: "decision",
     status: "completed",
-    input: "回应决策模块输入\n\n" + summarizeText([appraisalNarrative, memoryNarrative].filter(Boolean).join("\n")),
+    input: "由人物主脑的开口倾向和最终台词派生\n\n" + summarizeText([appraisalNarrative, memoryNarrative].filter(Boolean).join("\n")),
     output: decisionNarrative,
     transport: decision.transport,
   });
@@ -139,30 +144,20 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
   });
 
   const expressionInputSummary = [event.content, appraisalNarrative, memoryNarrative, decisionNarrative].join("\n");
+  const llmRequest = {
+    provider: "external" as const,
+    model: llmConfig.model,
+    prompt: roleTurn.request.prompt,
+  };
   emit({
     step: "llmRequest",
     status: "completed",
     input: "表达模块整合输入\n\n" + summarizeText(expressionInputSummary),
-    output: "表达模块会把前序自然语言评估整合成给 Reply LLM 的不失真上下文。",
+    output: "表达已由人物主脑在同一次 LLM 回合中完成；这里保留原始主脑 prompt 供审计。",
     transport: "local",
   });
 
-  emit({ step: "llmOutput", status: "running", input: summarizeText(expressionInputSummary), output: "等待表达模块生成角色回复..." });
-  const expression = await runExpressionLlm(
-    {
-      event,
-      state: sceneAwareState,
-      appraisalNarrative,
-      memoryRecallNarrative: memoryNarrative,
-      decisionNarrative,
-      decision: decision.output,
-    },
-    llmConfig,
-    (output) =>
-    emit({ step: "llmOutput", status: "streaming", output: summarizeText(output) }),
-  );
-  const llmRequest = expression.request;
-  const llmOutput = expression.output;
+  const llmOutput = roleTurn.output.replyOutput;
   emit({
     step: "llmOutput",
     status: "completed",
@@ -251,6 +246,7 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
       event,
       sceneContext,
       mindFlow,
+      roleTurn,
       appraisal,
       memoryRecall,
       decision,
@@ -271,6 +267,15 @@ function formatCognitiveTraceOutput(trace: CognitiveModuleTrace<any>) {
     return "[fallback] " + trace.fallbackReason;
   }
   return JSON.stringify(trace.output, null, 2);
+}
+
+function formatRoleTurnOutput(roleTurn: PipelineTrace["roleTurn"]["output"]) {
+  return [
+    `心理状态：${roleTurn.innerStateNarrative}`,
+    `记忆浮现：${roleTurn.memoryNarrative}`,
+    `开口倾向：${roleTurn.decisionNarrative}`,
+    `说出口：${roleTurn.replyOutput.reply || "（沉默）"}`,
+  ].join("\n");
 }
 
 function summarizeText(value: string, maxLength = 300) {

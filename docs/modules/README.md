@@ -18,8 +18,8 @@
 | 模块包 | 适用任务 |
 | --- | --- |
 | `app-shell.md` | 三栏 UI、前端状态、右侧 trace、生成监视、左侧档案交互 |
-| `conversation-pipeline.md` | 一轮同步响应路径、认知模块串联、Reply LLM、状态更新 |
-| `memory-retrieval.md` | 混合召回、自然语言查询、长期记忆排序、Memory Recall LLM |
+| `conversation-pipeline.md` | 一轮同步响应路径、Role Turn 人物主脑、兼容认知视图、状态更新 |
+| `memory-retrieval.md` | Role Turn 召回候选、自然语言查询、长期/关系记忆候选 |
 | `server-support.md` | 服务端 API、运行时 JSON、共享/私有存储、审计、历史 |
 | `persona-dossiers.md` | 多人档案、内置档案、人物/场景生成、一致性检测 |
 | `auth-permissions.md` | 登录、liao 校验、本地 session、管理员权限和用户隔离 |

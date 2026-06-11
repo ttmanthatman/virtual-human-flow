@@ -73,7 +73,7 @@ export async function retrieveMemory(
   };
 }
 
-function createLongTermCandidates(state: CharacterState): LongTermMemory[] {
+export function createLongTermCandidates(state: CharacterState): LongTermMemory[] {
   const relationshipCandidates = (state.relationshipMemory ?? []).map((memory) => ({
     id: memory.id,
     summary: [
@@ -108,7 +108,7 @@ function formatShortTermList(state: CharacterState, event: EventInput, memories:
   return memories.map((memory) => formatDialogueMemoryForPrompt(memory, state, event)).join("\n");
 }
 
-function formatLongTermCandidates(memories: LongTermMemory[]) {
+export function formatLongTermCandidates(memories: LongTermMemory[]) {
   if (memories.length === 0) return "没有可用的长期记忆候选。";
   return memories.map((memory, index) => `候选${index + 1}：${memory.summary}`).join("\n");
 }
