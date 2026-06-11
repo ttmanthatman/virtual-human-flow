@@ -1,66 +1,40 @@
 import {
-  AppraisalResult,
   CharacterState,
   CognitiveModuleTrace,
   EventInput,
   LlmConfig,
-  MemoryRecallResult,
   ReplyOutput,
-  ResponseDecision,
   RuntimeSignalEvaluationResult,
   StateDelta,
-  StateUpdatePlan,
 } from "../core/types";
 import { clamp, round } from "../core/utils";
-import { runCognitiveModule } from "./cognitiveModuleClient";
 
 export async function evaluateRuntimeSignals(
   state: CharacterState,
   event: EventInput,
   replyOutput: ReplyOutput,
   context: {
-    appraisal: AppraisalResult;
-    memoryRecall: MemoryRecallResult;
-    decision: ResponseDecision;
-    stateUpdatePlan: StateUpdatePlan;
+    stateUpdatePlan: { narrative?: string; internalStateNote?: string };
   },
   llmConfig: LlmConfig,
   onStream?: (output: string) => void,
 ): Promise<CognitiveModuleTrace<RuntimeSignalEvaluationResult>> {
-  const mockOutput = buildDeterministicRuntimeSignals(state);
+  void llmConfig;
+  const output = buildCommittedRuntimeSignals(state, event, replyOutput, context.stateUpdatePlan);
+  onStream?.(JSON.stringify(output, null, 2));
 
-  return runCognitiveModule<RuntimeSignalEvaluationResult>(
-    {
+  return {
+    moduleName: "runtime_signal_evaluation",
+    request: {
       moduleName: "runtime_signal_evaluation",
       inputMode: "structured_context",
       outputMode: "structured_json",
-      prompt: [
-        "你是虚拟人大脑里的运行时信号评估区。",
-        "你不写台词，也不决定她怎么回复。只评估给人观察用的状态信号。",
-        "",
-        "事件评估：" + context.appraisal.narrative,
-        "记忆浮现：" + context.memoryRecall.narrative,
-        "回应决策：" + context.decision.narrative,
-        "状态写回：" + context.stateUpdatePlan.narrative,
-        "她说出口的话：" + (replyOutput.reply || "她选择了沉默"),
-        "",
-        "字符：" + state.profile.name + "。" + state.profile.background,
-        "当前各信号 ：" + JSON.stringify(state.runtime.signalProfiles),
-        "",
-        "请根据以上所有信息决定四个信号的数值和自然语言说明。",
-        "数值范围：energy 0~1；valence -1~1；arousal 0~1。",
-        "自然语言说明只描述内部状态、身体感、注意力落点，不写成回复指令。",
-        "不要把“外表克制”写成内在平稳；如果她是在压住崩溃，mood/valence/arousal 的 label 和 cognitiveNarrative 必须保留痛苦、麻木、应激或耗竭的余波。",
-        "以这个 JSON 格式回复：",
-        '{ energy: number, derivedMood: { valence, arousal, label }, signalProfiles: { energy: {...}, mood: {...}, valence: {...}, arousal: {...} }, rationale: "..." }',
-      ].join("\n"),
-      outputContract:
-        "Return JSON only: { energy, derivedMood: { valence, arousal, label }, signalProfiles: { energy: { label, summary, considerations, cognitiveNarrative }, mood: { label, summary, considerations, cognitiveNarrative }, valence: { label, summary, considerations, cognitiveNarrative }, arousal: { label, summary, considerations, cognitiveNarrative } }, rationale }",
+      prompt: "本地根据 State Update 已写入的 runtime 派生展示信号，不再进行同步外部 LLM 复判。",
+      outputContract: "Local deterministic runtime signal snapshot.",
     },
-    llmConfig,
-    mockOutput,
-    { onStream },
-  );
+    output,
+    transport: "mock_llm",
+  };
 }
 
 export function applyRuntimeSignalEvaluation(
@@ -137,11 +111,19 @@ function normalizeRuntimeSignalProfile(
   };
 }
 
-function buildDeterministicRuntimeSignals(state: CharacterState): RuntimeSignalEvaluationResult {
+function buildCommittedRuntimeSignals(
+  state: CharacterState,
+  event: EventInput,
+  replyOutput: ReplyOutput,
+  stateUpdatePlan: { narrative?: string; internalStateNote?: string },
+): RuntimeSignalEvaluationResult {
+  const stateNote = stateUpdatePlan.narrative || stateUpdatePlan.internalStateNote || "状态写回已完成。";
+  const speechNote = replyOutput.reply ? `她说出口后，展示信号承接这次状态写回。` : "她选择沉默后，展示信号承接这次状态写回。";
   return {
+    narrative: `运行时信号由状态写回本地派生：${state.runtime.derivedMood.label}。`,
     energy: state.runtime.energy,
     derivedMood: { ...state.runtime.derivedMood },
     signalProfiles: { ...state.runtime.signalProfiles },
-    rationale: "LLM 未返回信号评估，维持之前的状态。",
+    rationale: `${event.content} -> ${stateNote} ${speechNote}`,
   };
 }

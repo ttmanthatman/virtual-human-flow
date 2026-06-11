@@ -166,4 +166,34 @@ if (!Array.isArray(burstOutput.segments) || burstOutput.segments.length < 2) {
   throw new Error("Expected burst reply to split short emotional sentences into separate segments.");
 }
 
+globalThis.fetch = async () => createSseResponse([{ final: { reply: "（低头揉了揉眉心）周末不行，我得带孩子。", segments: ["（低头揉了揉眉心）周末不行，我得带孩子。"] } }]);
+const sanitizedOutput = await runLlm(
+  { provider: "external", model: "fixture", prompt: "fixture" },
+  { provider: "external", endpoint: "http://fake.local/reply", model: "fixture" },
+  {
+    event: ordinaryEvent,
+    state: zhengzhouCleanerState,
+    decision: { ...decisionBase, replyRhythm: "single" },
+  },
+);
+if (sanitizedOutput.reply.includes("揉了揉眉心") || sanitizedOutput.reply.includes("（")) {
+  throw new Error("Expected reply output normalization to strip stage directions from spoken text.");
+}
+if (sanitizedOutput.reply !== "周末不行，我得带孩子。") {
+  throw new Error(`Unexpected sanitized reply: ${sanitizedOutput.reply}`);
+}
+
 console.log("temporal scene progression and reply segments verified");
+
+function createSseResponse(events) {
+  const text = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(text));
+        controller.close();
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "text/event-stream; charset=utf-8" } },
+  );
+}

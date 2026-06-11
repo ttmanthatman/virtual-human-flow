@@ -56,11 +56,11 @@ npm run start
 
 后台会记录每个登录用户的一次输入、虚拟人输出和本轮对话每个模块的调用记录，写入运行时文件 `.conversation-audits.local.json`；只有管理员可以在右侧“输入输出审计”里查看、选择导出、完整导出所有用户所有记录、删除单条或清空这些记录。管理员还可以在当前人物的中间栏上方选择某个用户，查看该用户与该人物的历史消息；普通用户仍只能读取自己的历史。`.conversation-histories.local.json`、`.conversation-states.local.json`、`.conversation-audits.local.json`、`.persona-dossiers.local.json` 和 `.deepseek.local.json` 都被 `.gitignore` 忽略，不能提交。
 
-当前 LLM 入口固定为真实 DeepSeek 本地代理，不再在 UI 中提供模拟语言模型选项。每个认知步骤都必须调用 LLM：Appraisal、Memory Recall、Decision、State Update、Runtime Signal Evaluation 都是独立的 LLM 模块。
+当前 LLM 入口固定为真实 DeepSeek 本地代理，不再在 UI 中提供模拟语言模型选项。同步对话里的结构化 LLM 模块是 Appraisal、Memory Recall、Decision 和 State Update；Runtime Signal Evaluation 在同步路径中保留为本地派生的展示信号快照，不再额外调用 LLM 覆盖 State Update 写入的 runtime。
 
-Memory Recall 当前是混合召回，不是敏感词召回。系统会构建自然语言召回语境，把短期上下文、长期记忆和关系记忆转成候选清单交给 Memory Recall LLM 复判；LLM 只选择记忆 ID，完整记忆内容仍由本地按 ID 回填。长期记忆里包含独立的 `relationshipMemory` 关系记忆区，专门存自然语言的“对这个用户的印象”和“当前关系总结”，不使用数值展示。右侧 pipeline 下方会展示当前登录用户对应的印象、关系、最近互动和证据。这个入口也预留了未来异步生命路径使用的召回来源字段。
+Memory Recall 当前是混合召回，不是敏感词召回。系统会构建自然语言召回语境，把短时间窗内的同一对话短期上下文、长期记忆和关系记忆转成候选清单交给 Memory Recall LLM 复判；LLM 只选择记忆 ID，完整记忆内容仍由本地按 ID 回填。长期记忆里包含独立的 `relationshipMemory` 关系记忆区，专门存自然语言的“对这个用户的印象”和“当前关系总结”，不使用数值展示。右侧 pipeline 下方会展示当前登录用户对应的印象、关系、最近互动和证据。这个入口也预留了未来异步生命路径使用的召回来源字段。
 
-角色回复这一步是例外中的硬规则：Reply LLM 只接收自然语言上下文，只生成角色说出口的话，不混入 JSON、字段名、输出约束或类似编程语言的内容。结构化状态更新由后续 State Update LLM 模块单独判断。
+角色回复这一步是例外中的硬规则：Reply LLM 只接收自然语言上下文，只生成角色说出口的话，不混入 JSON、字段名、输出约束或类似编程语言的内容；出口归一化会剥离开头括号动作旁白和说话人标签。结构化状态更新由后续 State Update LLM 模块单独判断。
 
 左侧简化指标只用于人快速观察。性格标签、能量、情绪、情绪倾向、唤醒度、当前位置等显示值不是提交给 LLM 的孤立指令；Reply LLM 使用的是人物档案、状态考量、场景语境和物理位置语境的自然语言综合描述。人物档案和场景预览必须先经过独立 LLM 解读：人物素材会被拆成长期记忆、人性/人格、标签和状态信号；场景素材会被拆成场景本身、状态影响和可能影响人物的记忆或关切。人物档案和场景作为一个配套档案保存，切换档案时会同时切换人物、场景和位置。确认应用前还会由一致性检测 LLM 判断人物和场景是否处在同一世界观；若出现现代人物配古代场景这类硬冲突，需要输入“扭曲时空密码”才能继续。
 

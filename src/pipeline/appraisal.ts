@@ -1,5 +1,6 @@
 import { AppraisalResult, CharacterState, CognitiveModuleTrace, EventInput, LlmConfig } from "../core/types";
 import { runCognitiveModule } from "./cognitiveModuleClient";
+import { formatRecentDialogueForPrompt } from "./conversationContext";
 import { shouldApplyChildSafetyClarification } from "./safetyContinuity";
 
 export async function runAppraisal(
@@ -96,7 +97,7 @@ export async function runAppraisal(
     "她此刻的运行时信号：",
     formatRuntimeSignalNarrative(state),
     "最近几句对话：",
-    formatRecentConversation(state),
+    formatRecentDialogueForPrompt(state, event),
     "她一直装在心里的事：",
     ...activeConcerns.map(
       (concern) =>
@@ -293,15 +294,6 @@ function formatRuntimeSignalNarrative(state: CharacterState) {
       [signal.label, signal.summary, signal.considerations.join("；"), signal.cognitiveNarrative].filter(Boolean).join("："),
     )
     .join("\n");
-}
-
-function formatRecentConversation(state: CharacterState) {
-  return state.shortTermMemory.length > 0
-    ? state.shortTermMemory
-        .slice(-4)
-        .map((memory) => `${memory.speakerName}刚才说过：「${memory.content}」`)
-        .join("\n")
-    : "刚才没有直接上下文。";
 }
 
 function getRecord(value: unknown) {

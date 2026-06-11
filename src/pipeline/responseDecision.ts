@@ -87,7 +87,7 @@ function runDecisionModule(
     const normalized = normalizeResponseDecision(trace.output, mockOutput);
     return {
       ...trace,
-      output: stabilizeDecisionForCurrentState(normalized, event, appraisal, state),
+      output: stabilizeDecisionForCurrentState(normalized, event, appraisal, state, memoryRecallNarrative),
     };
   });
 }
@@ -158,9 +158,11 @@ function stabilizeDecisionForCurrentState(
   event: EventInput,
   appraisal: AppraisalResult,
   state: CharacterState,
+  memoryRecallNarrative: string,
 ): ResponseDecision {
   if (shouldAvoidChildSafetyDangerLoop(event, state)) return stabilizeDecisionForChildSafetyContinuity(decision, event);
   if (!isSevereRuntimeState(state) || !isCasualDiscontinuity(event.content)) return decision;
+  if (!hasRecentSevereAftermathEvidence(state, event, memoryRecallNarrative)) return decision;
   if (!decision.shouldRespond || decision.responseMode === "silence") return decision;
   if (decision.shouldLoseComposure || decision.shouldBreakPersona || decision.replyRhythm === "burst") return decision;
 
@@ -169,7 +171,7 @@ function stabilizeDecisionForCurrentState(
   if (!isSurfaceLowImpact) return decision;
 
   const rationale =
-    "确定性承接：她上一轮仍处在极低能量和强烈负面余波里，普通邀约与当下状态严重错位，不能继续按礼貌工作状态处理。";
+    "确定性承接：近期重大事件仍在同一关系里留下强烈余波，普通邀约与当下状态严重错位，不能继续按礼貌工作状态处理。";
 
   return {
     ...decision,
@@ -213,6 +215,54 @@ function isSevereRuntimeState(state: CharacterState) {
     state.runtime.derivedMood.valence <= -0.65 ||
     /极低|耗竭|强烈负面|极度负面|痛苦|震惊|崩溃|麻木|绝望|天塌|无法集中|警报/.test(labels)
   );
+}
+
+const severeAftermathWindowMs = 24 * 60 * 60 * 1000;
+const severeAftermathTerms =
+  /被辞退|绑架|撕票|遇害|死亡|去世|死了|威胁|危险|羞辱|背叛|伤害|崩溃|天塌|失控|家人.*(遇害|绑架|危险|死亡)|女儿.*(失踪|不见|被控制|危险)|孩子.*(失踪|不见|被控制|危险)/;
+
+function hasRecentSevereAftermathEvidence(
+  state: CharacterState,
+  event: EventInput,
+  memoryRecallNarrative: string,
+) {
+  const eventTime = Date.parse(event.timestamp);
+  const personaId = state.profile.id;
+  const recentShortTermTexts = state.shortTermMemory
+    .filter((memory) => {
+      const sameDialogue = memory.speakerId === personaId || (event.speakerId ? memory.speakerId === event.speakerId : false);
+      if (!sameDialogue) return false;
+      if (!Number.isFinite(eventTime)) return true;
+      const memoryTime = Date.parse(memory.timestamp);
+      return Number.isFinite(memoryTime) && eventTime - memoryTime >= 0 && eventTime - memoryTime <= severeAftermathWindowMs;
+    })
+    .map((memory) => memory.content);
+
+  const relationshipTexts = (state.relationshipMemory ?? [])
+    .filter((memory) => !event.speakerId || memory.targetUserId === event.speakerId)
+    .filter((memory) => {
+      if (!Number.isFinite(eventTime)) return true;
+      const updatedAt = Date.parse(memory.updatedAt);
+      return Number.isFinite(updatedAt) && eventTime - updatedAt >= 0 && eventTime - updatedAt <= severeAftermathWindowMs;
+    })
+    .flatMap((memory) => [
+      memory.impressionSummary,
+      memory.relationshipSummary,
+      memory.lastInteractionSummary,
+      ...memory.evidence,
+      ...memory.history.map((item) => item.summary),
+    ]);
+
+  const longTermTexts = state.longTermMemory
+    .filter((memory) => memory.importance >= 0.75 || memory.emotionalIntensity >= 0.7)
+    .filter((memory) => {
+      if (!Number.isFinite(eventTime)) return true;
+      const createdAt = Date.parse(memory.createdAt);
+      return Number.isFinite(createdAt) && eventTime - createdAt >= 0 && eventTime - createdAt <= severeAftermathWindowMs;
+    })
+    .map((memory) => memory.summary);
+
+  return severeAftermathTerms.test([memoryRecallNarrative, ...recentShortTermTexts, ...relationshipTexts, ...longTermTexts].join(" "));
 }
 
 function isCasualDiscontinuity(content: string) {

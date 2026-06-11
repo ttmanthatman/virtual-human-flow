@@ -21,8 +21,41 @@
 - 后台“删除记录”不能只删除可见审计条目；如果记录已经写入用户历史、角色短期/长期记忆或关系记忆，删除语义必须说明并级联清理关联运行态，且验证要覆盖这些 runtime 文件。
 - 后台删除审计后，前端不能把 localStorage 旧历史当作回填来源重新写回服务器；登录用户历史以服务端返回为准，返回空历史时必须同步清空内存消息桶和浏览器缓存。
 - 真实 LLM 的结构化输出必须有确定性归一化和 fallback，验证要覆盖模型形状漂移、截断、不可解析 JSON 以及 UI 是否仍能继续工作。
+- 同步对话 pipeline 不能让多个模块重复评估并覆盖同一份 runtime 状态；State Update 负责落盘和 runtime 展示信号写入，Runtime Signal Evaluation 只保留本地快照和 trace，不再同步外部复判覆盖。
+- 严重余波升级不能只看 `energy/valence` 或“强烈负面/痛苦/警报”等标签；必须能在近期同一关系的短期记忆、关系记忆、长期记忆或召回叙述里找到重大事件证据。
+- 短期上下文必须有时间感和说话者边界；跨天、跨用户或非同一角色的历史不能被写成“刚才说过”，也不能进入当前角色的自然短期浮现。
+- Reply LLM 的最终台词要剥离动作旁白和说话人标签；动作可以进心理流或 UI，但不能持久化进 `personaOutput` 当作真实聊天话语。
 - 弹窗、侧栏、记录列表这类受限容器必须同时验证“内容很多”时的可滚动性；grid/flex 子项需要明确 `min-height: 0` 或可分配高度，避免父级裁剪掉内容。
 - 错误记录要合并成可复用原则。新错误优先更新本摘要；只有出现新的错误类别、需要保留关键证据或修复路径时，才新增详细勘验。相同类别的后续错误应合并摘要或补一条短证据，不无限累加。
+
+## 2026-06-11 同步 pipeline 模块重复复判并让普通邀约误升级
+
+### 用户指出的问题
+
+用户指出 Appraisal、Memory Recall、State Update、Runtime Signal Evaluation 和 Response Decision 存在职责重叠：规则/确定性层已经完成大部分判断，LLM 模块常被用作复判或润色；Runtime Signal Evaluation 又在 State Update 之后覆盖刚写入的 `runtime`；普通邀约会被 severe 标签硬抬成失态路线。用户还指出 Reply prompt 过大、同步 LLM 调用串行导致延迟叠加。
+
+### 错误类型
+
+- 模块职责错误：状态写回和运行时信号展示重复拥有同一份 `runtime` 写权限。
+- 上下文边界错误：过期短期记忆和跨人物记忆会进入当前轮自然语境。
+- 验证标准错误：只验证严重余波不会被抹平，没有验证 severe-looking 标签缺少近期重大事件证据时不能误升级。
+
+### 根因
+
+此前为了防止重大事件余波被普通邀约抹平，把 `stabilizeDecisionForCurrentState` 写成主要依赖 runtime 标签和低能量阈值；而 Runtime Signal Evaluation 又是外部 LLM 复判，可能生成和 State Update 不一致的标签/摘要，导致下一轮被标签误导。短期记忆格式化统一写“刚才”，没有按事件时间和说话者过滤。Reply LLM 虽要求只输出台词，但出口没有剥离动作旁白。
+
+### 修正
+
+1. 新增 `conversationContext`，统一短期对话窗口、说话者格式和 Reply 台词清理。
+2. `Runtime Signal Evaluation` 改成本地读取 State Update 已写入的 runtime 快照，不再同步调用外部 LLM。
+3. State Update 同步写入一致的 `energy/derivedMood/signalProfiles` 文案，避免标签和摘要互相矛盾。
+4. Response Decision 的严重余波升级新增近期重大事件证据门槛。
+
+### 新增验证标准
+
+- `npm run verify:severe-state-continuity` 增加 severe-looking runtime 但无近期重大事件证据时不能升级爆发的断言。
+- `npm run verify:temporal-scene-and-reply-segments` 增加 Reply 输出剥离括号动作旁白的断言。
+- `npm run verify:mind-flow-streaming` 增加同步对话不再外部调用 `runtime_signal_evaluation` 的断言。
 
 ## 2026-06-10 孙小雅安全澄清后陷入旧危险循环且审计删除不级联
 

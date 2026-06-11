@@ -207,9 +207,6 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     event,
     llmOutput,
     {
-      appraisal: appraisal.output,
-      memoryRecall: memoryRecall.output,
-      decision: decision.output,
       stateUpdatePlan: stateUpdate.output,
     },
     llmConfig,

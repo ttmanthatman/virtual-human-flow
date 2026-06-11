@@ -347,7 +347,81 @@ function commitStateUpdates(
   const impact = computeInteractionImpact(context, event);
   const moodValence = round(clamp(impact >= 0.7 ? Math.min(moodFromConcerns, -0.65) : moodFromConcerns, -1, 1));
   const moodArousal = round(clamp(impact >= 0.7 ? Math.max(arousalFromConcerns, 0.62) : arousalFromConcerns, 0, 1));
+  const energyDrain = impact >= 0.7 ? 0.25 : moodValence < -0.25 ? 0.08 : 0.02;
+  const energy = round(clamp(state.runtime.energy - energyDrain, 0.05, 1));
+  const moodLabel = impact >= 0.7 ? "强烈震动，勉强压住" : moodValence < -0.25 ? "被旧事牵动，语气更轻" : moodValence > 0.25 ? "稍微放松" : "平稳克制";
+  const energyProfile =
+    impact >= 0.7
+      ? {
+          label: "能量被冲击压低",
+          summary: "这轮互动消耗很大，她只能用剩下的力气维持外表。",
+          considerations: ["重大事件余波压过普通社交", "身体和注意力都在省力"],
+          cognitiveNarrative: "她不是平静，而是在把有限能量优先留给不失控和处理现实。",
+        }
+      : moodValence < -0.25
+        ? {
+            label: "能量偏低，继续硬撑",
+            summary: "这轮话题牵动旧事，消耗了一部分回应余力。",
+            considerations: ["旧事或关系边界被带起", "仍能维持简短表达"],
+            cognitiveNarrative: "她还有回应能力，但会自然缩短解释，先保护自己的心理预算。",
+          }
+        : {
+            label: "能量维持",
+            summary: "这轮互动没有明显耗空她的精力。",
+            considerations: ["状态主要随具体话题轻微起伏"],
+            cognitiveNarrative: "她仍能按当前关系距离继续判断和回应。",
+          };
+  const valenceProfile =
+    impact >= 0.7
+      ? {
+          label: "强烈负面",
+          summary: "负面余波很重，普通闲聊也会被这层情绪压住。",
+          considerations: ["重大事件仍占据注意力", "表面克制不代表内在平稳"],
+          cognitiveNarrative: "这次互动的负面余波会压过普通闲聊和工作安排。",
+        }
+      : moodValence < -0.25
+        ? {
+            label: "局部偏负面",
+            summary: "负面感受集中在被触动的对象或关系上，不是全局崩溃。",
+            considerations: ["具体心事被带起", "仍能维持边界"],
+            cognitiveNarrative: "这是当前互动之后形成的局部情绪方向，不是她整个人的全局色彩。",
+          }
+        : moodValence > 0.25
+          ? {
+              label: "局部缓和",
+              summary: "这轮互动让她表层稍微松了一点。",
+              considerations: ["对方没有继续越界", "回应后压力有所下降"],
+              cognitiveNarrative: "缓和只发生在这一小段互动里，关系边界仍然保留。",
+            }
+          : {
+              label: "接近中性",
+              summary: "这轮互动没有明显把情绪推向负面或正面。",
+              considerations: ["主要处在观察和判断"],
+              cognitiveNarrative: "她的情绪方向保持克制，后续仍取决于话题和关系对象。",
+            };
+  const arousalProfile =
+    impact >= 0.7
+      ? {
+          label: "内部警报，外部压住",
+          summary: "身体和注意力已被强烈事件推高，但外表仍在硬压。",
+          considerations: ["重大事件余波仍在", "控制感被迫消耗"],
+          cognitiveNarrative: "她看起来可能没立刻爆发，但身体和注意力已经进入强烈应激。",
+        }
+      : moodArousal > 0.45
+        ? {
+            label: "内在被牵动，外表压低",
+            summary: "她心里有波动，外在表达会压低音量和长度。",
+            considerations: ["注意力短暂收紧", "仍努力维持体面"],
+            cognitiveNarrative: "她心里有波动，身体和注意力会先收紧，外在仍努力维持体面。",
+          }
+        : {
+            label: "外表平稳，内部观察",
+            summary: "她没有明显被推高，主要在观察对方意图。",
+            considerations: ["触动有限", "表达仍可控制"],
+            cognitiveNarrative: "她没有明显被推高，主要处在观察和判断对方意图的状态。",
+          };
 
+  runtimeChanges.push(`energy -> ${energy}`);
   runtimeChanges.push(`derivedMood -> valence ${moodValence}, arousal ${moodArousal}`);
 
   return {
@@ -360,51 +434,46 @@ function commitStateUpdates(
       relationshipMemory: relationshipMemory.slice(-80),
       runtime: {
         ...state.runtime,
+        energy,
         activeConcernIds,
         lastActiveAt: nowIso(),
         derivedMood: {
           valence: moodValence,
           arousal: moodArousal,
-          label: impact >= 0.7 ? "强烈震动，勉强压住" : moodValence < -0.25 ? "被旧事牵动，语气更轻" : moodValence > 0.25 ? "稍微放松" : "平稳克制",
+          label: moodLabel,
         },
         signalProfiles: {
           ...state.runtime.signalProfiles,
+          energy: energyProfile,
           mood: {
-            ...state.runtime.signalProfiles.mood,
-            label: impact >= 0.7 ? "痛苦压住外表" : moodValence < -0.25 ? "被旧事牵动，语气更轻" : moodValence > 0.25 ? "稍微放松" : "平稳克制",
+            label: moodLabel,
             summary:
               impact >= 0.7
                 ? "刚才的互动造成强烈冲击，她只能勉强维持外表，不代表内在平稳。"
                 : moodValence < -0.25
-                ? "刚才的互动让某个具体心事浮上来，表层仍克制。"
-                : moodValence > 0.25
-                  ? "刚才的互动稍微缓和了她的表层状态。"
-                  : "刚才的互动没有明显改变她的整体外显状态。",
+                  ? "刚才的互动让某个具体心事浮上来，表层仍克制。"
+                  : moodValence > 0.25
+                    ? "刚才的互动稍微缓和了她的表层状态。"
+                    : "刚才的互动没有明显改变她的整体外显状态。",
+            considerations:
+              impact >= 0.7
+                ? ["重大事件余波仍在", "外表克制不等于内在平稳"]
+                : moodValence < -0.25
+                  ? ["具体心事被带起", "仍在维持体面和边界"]
+                  : moodValence > 0.25
+                    ? ["表层压力略有下降", "关系边界仍在"]
+                    : ["没有明显状态跃迁"],
             cognitiveNarrative:
               impact >= 0.7
                 ? "她的注意力被冲击事件占住，身体和表达都在用力压制失控。"
                 : moodValence < -0.25
-                ? "回复后旧事余波仍在，心理预算更集中在维持体面和守住边界上。"
-                : moodValence > 0.25
-                  ? "回复后她稍微放松，但关系边界仍然清楚地留在心里。"
-                  : "回复后她保持平稳，后续反应仍主要取决于具体话题和关系对象。",
+                  ? "回复后旧事余波仍在，心理预算更集中在维持体面和守住边界上。"
+                  : moodValence > 0.25
+                    ? "回复后她稍微放松，但关系边界仍然清楚地留在心里。"
+                    : "回复后她保持平稳，后续反应仍主要取决于具体话题和关系对象。",
           },
-          valence: {
-            ...state.runtime.signalProfiles.valence,
-            label: impact >= 0.7 ? "强烈负面" : moodValence < -0.25 ? "局部偏负面" : moodValence > 0.25 ? "局部缓和" : "接近中性",
-            cognitiveNarrative:
-              impact >= 0.7 ? "这次互动的负面余波会压过普通闲聊和工作安排。" : "这是当前互动之后形成的局部情绪方向，不是她整个人的全局色彩。",
-          },
-          arousal: {
-            ...state.runtime.signalProfiles.arousal,
-            label: impact >= 0.7 ? "内部警报，外部压住" : moodArousal > 0.45 ? "内在被牵动，外表压低" : "外表平稳，内部观察",
-            cognitiveNarrative:
-              impact >= 0.7
-                ? "她看起来可能没立刻爆发，但身体和注意力已经进入强烈应激。"
-                : moodArousal > 0.45
-                  ? "她心里有波动，身体和注意力会先收紧，外在仍努力维持体面。"
-                  : "她没有明显被推高，主要处在观察和判断对方意图的状态。",
-          },
+          valence: valenceProfile,
+          arousal: arousalProfile,
         },
       },
     },

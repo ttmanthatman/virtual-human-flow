@@ -1,4 +1,5 @@
 import { CharacterState, EventInput, ExpressionLlmRequest, LlmConfig, ReplyOutput, ResponseDecision } from "../core/types";
+import { stripReplyStageDirections } from "./conversationContext";
 
 interface SimulateInput {
   event: EventInput;
@@ -78,7 +79,7 @@ async function readReplyEventStream(response: Response, onStream?: (output: stri
       if (parsed.error) throw new Error(parsed.error);
       if (typeof parsed.delta === "string") {
         accumulated += parsed.delta;
-        onStream?.(accumulated);
+        onStream?.(stripReplyStageDirections(accumulated));
       }
       if (parsed.final?.reply !== undefined) {
         finalReply = parsed.final.reply;
@@ -99,12 +100,13 @@ function normalizeReplyOutput(data: unknown, decision: ResponseDecision): ReplyO
       : isRecord(data) && typeof data.reply === "string"
         ? data.reply
         : "";
+  const spokenReply = stripReplyStageDirections(reply);
   const modelSegments = isRecord(data) && Array.isArray(data.segments)
     ? data.segments.filter((item): item is string => typeof item === "string")
     : undefined;
-  const segments = splitReplyIntoSegments(reply, decision.replyRhythm, modelSegments);
+  const segments = splitReplyIntoSegments(spokenReply, decision.replyRhythm, modelSegments?.map(stripReplyStageDirections));
   return {
-    reply,
+    reply: spokenReply,
     segments,
   };
 }

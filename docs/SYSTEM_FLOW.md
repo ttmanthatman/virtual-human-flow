@@ -24,9 +24,11 @@
 
 真实 LLM 的结构化输出必须先经过确定性归一化，再交给下游模块；自然语言输出则保留为 narrative，并用兼容字段承接旧下游。Memory Recall 和 State Update 等结构化模块有出口归一化层，用来处理数组缺失、关系对象变成字符串、未知 memory id 或枚举漂移等情况。如果外部结构化 JSON 被截断或无法解析，Cognitive Module Client 会记录 `fallbackReason` 并使用本地候选结果继续流程，不能让用户对话卡死。归一化层不能改变 Reply LLM 的自然语言边界，它只保护内部认知模块的数据契约。
 
-Memory Recall 不是敏感词召回。当前同步路径先在本地构建自然语言候选清单，包含短期上下文、长期记忆和关系记忆候选，再交给 Memory Recall LLM 复判；Memory Recall LLM 只选择短期/长期记忆 ID，不输出完整短期记忆、长期记忆摘要或召回因子，完整内容由本地候选表回填。未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
+Reply LLM 的自然语言结果也要过台词边界归一化：开头括号动作旁白和说话人标签会被剥离，最终写入聊天历史、状态更新和审计的 `ReplyOutput.reply` 只保留角色实际说出口的话。
 
-左侧 UI 里的 DeepSeek 预览、性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由 DeepSeek 预览缓存、专门的 Runtime Signal Evaluation LLM 模块、种子档案或管理员维护字段提供，不由 Reply LLM 直接控制台词。提交给 Reply LLM 的是 `fullLifeStory`、`lifeEvents`、`socialPersonaPattern`、`personalitySummary`、`personalityFacets`、`relationships`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
+Memory Recall 不是敏感词召回。当前同步路径先在本地构建自然语言候选清单，包含短期上下文、长期记忆和关系记忆候选，再交给 Memory Recall LLM 复判；Memory Recall LLM 只选择短期/长期记忆 ID，不输出完整短期记忆、长期记忆摘要或召回因子，完整内容由本地候选表回填。短期上下文只取同一说话者/本角色在短时间窗内的消息，跨天或其他用户历史不会被描述成“刚才”。未来异步生命路径也复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
+
+左侧 UI 里的 DeepSeek 预览、性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由 DeepSeek 预览缓存、State Update 确定性写入的 runtime 展示信号、种子档案或管理员维护字段提供，不由 Reply LLM 直接控制台词。Runtime Signal Evaluation 在同步对话里只保留本地快照和 trace，不再调用外部 LLM 覆盖 State Update 刚写入的 runtime。提交给 Reply LLM 的是 `fullLifeStory`、`lifeEvents`、`socialPersonaPattern`、`personalitySummary`、`personalityFacets`、`relationships`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
 
 对话开始后，系统不再把人物固定在档案初始场景。Conversation Pipeline 会先运行本地 `temporalSceneProgression`：根据 `CharacterState.location` 推断时区，用该地真实当前时间判断人物更可能在工作、通勤、住处、睡眠或临时外出场景，再把 `scene/location` 推进为同一地理范围内的自然现场。对话可以触发离开原场景，但只允许同城或同区域内合理移动；触发后的场景会写入角色全局运行态，刷新后和其他用户读取同一人物时都会承接。普通下一轮消息会先保持最近对话触发的移动或临时场景一段合理时间，不会立刻被 routine 拉回工作模板；超过合理时间后，routine 仍可继续推进上班、睡眠、通勤和回家。未来邀约不会立刻移动，跨城/跨国或世界观不可能的地点会被记录为 blocked 场景上下文，不会瞬移。
 
@@ -475,7 +477,7 @@ flowchart TD
 
 ### Response Decision
 
-Response Decision 消费 `EventInput`、完整 `AppraisalResult`、召回叙述和 `CharacterState` 运行时信号，把状态评估翻译为回复路由：是否回应、回应模式、单条/连续多条/短句爆发、是否失态、是否突破平常人设外壳。它仍不写角色台词；Prompt Generator 会把路由转成自然语言语境交给 Reply LLM。若角色上一轮仍处在极低能量、强烈负面、震惊、麻木或崩溃边缘，而 LLM 把新的普通邀约/工作安排判成低影响礼貌回应，`stabilizeDecisionForCurrentState` 会把路由确定性调回失态或爆发式承接，避免重大事件余波被普通场景抹平。
+Response Decision 消费 `EventInput`、完整 `AppraisalResult`、召回叙述和 `CharacterState` 运行时信号，把状态评估翻译为回复路由：是否回应、回应模式、单条/连续多条/短句爆发、是否失态、是否突破平常人设外壳。它仍不写角色台词；Prompt Generator 会把路由转成自然语言语境交给 Reply LLM。若角色处在极低能量、强烈负面、震惊、麻木或崩溃边缘，而 LLM 把新的普通邀约/工作安排判成低影响礼貌回应，`stabilizeDecisionForCurrentState` 还必须从近期短期记忆、关系记忆、长期记忆或召回叙述中看到同一关系里的重大事件证据，才会把路由确定性调回失态或爆发式承接；仅有 severe 标签或疲惫状态不能触发爆发。
 
 ```mermaid
 flowchart TD
@@ -554,6 +556,7 @@ flowchart TD
     COMMIT --> RMEM["写入/强化 relationshipMemory 关系记忆区"]
     COMMIT --> REL["更新 relationships"]
     COMMIT --> CONCERN["更新 concerns"]
+    COMMIT --> RUNTIME["写入 runtime.energy / derivedMood / signalProfiles"]
     COMMIT --> NEXT["nextState + StateDelta"]
     NEXT --> SIGNAL["Runtime Signal Evaluator"]
 ```
@@ -567,9 +570,8 @@ flowchart TD
     S["State after State Update"] --> EVAL["evaluateRuntimeSignals"]
     E["EventInput"] --> EVAL
     R["ReplyOutput"] --> EVAL
-    C["Appraisal/Memory/Decision/StateUpdate narrative"] --> EVAL
-    EVAL --> CLIENT["Runtime Signal Evaluation LLM JSON 出口"]
-    CLIENT --> RAW["RuntimeSignalEvaluationResult raw"]
+    C["StateUpdate narrative"] --> EVAL
+    EVAL --> RAW["本地 RuntimeSignalEvaluationResult 快照"]
     RAW --> NORM["normalizeRuntimeSignalEvaluation"]
     NORM --> APPLY["applyRuntimeSignalEvaluation"]
     APPLY --> ENERGY["runtime.energy"]

@@ -1,5 +1,6 @@
 import { CharacterState, CognitiveModuleTrace, EventInput, LlmConfig, LongTermMemory, MemoryRecallResult, MemoryRecallSource } from "../core/types";
 import { runCognitiveModule } from "./cognitiveModuleClient";
+import { formatDialogueMemoryForPrompt, selectRecentDialogueMemories } from "./conversationContext";
 
 interface MemoryRetrievalContext {
   source: MemoryRecallSource;
@@ -35,9 +36,12 @@ export async function retrieveMemory(
   onStream?: (output: string) => void,
 ): Promise<CognitiveModuleTrace<MemoryRecallResult>> {
   const retrievalContext = createMemoryRetrievalContext(event, appraisalNarrative, state, "sync_response");
-  const longTermMemoryCandidates = [...state.longTermMemory, ...buildRelationshipMemoryCandidates(state)];
+  const longTermMemoryCandidates = filterPersonaMemoryCandidates(
+    [...state.longTermMemory, ...buildRelationshipMemoryCandidates(state)],
+    state,
+  );
   const memoryCandidates = createMemoryCandidates(longTermMemoryCandidates);
-  const shortTermCandidates = state.shortTermMemory.slice(-4);
+  const shortTermCandidates = selectRecentDialogueMemories(state, event);
   const fallbackLongTermMemories = memoryCandidates
     .slice()
     .sort((a, b) => Date.parse(b.lastAccessedAt ?? b.createdAt) - Date.parse(a.lastAccessedAt ?? a.createdAt))
@@ -56,7 +60,7 @@ export async function retrieveMemory(
       factors: memory.factors,
     })),
   };
-  mockOutput.narrative = formatMemoryRecallNarrative(mockOutput);
+  mockOutput.narrative = formatMemoryRecallNarrative(mockOutput, state, event);
   const fallbackSelection: MemoryRecallSelectionResult = {
     source: mockOutput.source,
     retrievalMode: mockOutput.retrievalMode,
@@ -78,7 +82,7 @@ export async function retrieveMemory(
         "当前情境：",
         appraisalNarrative,
         "",
-        buildNaturalCandidateList(state, retrievalContext, event.speakerId),
+        buildNaturalCandidateList(state, event, retrievalContext, longTermMemoryCandidates),
         "",
         "请从上面的候选中选出此刻会自然浮现的记忆。",
         "选短期记忆：最多4条，列出它们的序号（短期1、短期2）。",
@@ -98,7 +102,7 @@ export async function retrieveMemory(
 
   return {
     ...trace,
-    output: normalizeMemoryRecallResult(trace.output, fallbackSelection, retrievalContext, shortTermCandidates, memoryCandidates, mockOutput),
+    output: normalizeMemoryRecallResult(trace.output, fallbackSelection, retrievalContext, shortTermCandidates, memoryCandidates, mockOutput, state, event),
   };
 }
 
@@ -151,24 +155,20 @@ function createMemoryRetrievalContext(
 
 const buildNaturalCandidateList = (
   state: CharacterState,
+  event: EventInput,
   context: MemoryRetrievalContext,
-  speechSpeakerId?: string,
+  longTermMemoryCandidates: LongTermMemory[],
 ): string => {
-  const stmLines = state.shortTermMemory
-    .slice(-4)
-    .map((memory, index) => "短期" + (index + 1) + "（ID=" + memory.id + "）：" + memory.speakerName + "说「" + memory.content + "」");
+  const stmLines = selectRecentDialogueMemories(state, event).map(
+    (memory, index) => "短期" + (index + 1) + "（ID=" + memory.id + "）：" + formatDialogueMemoryForPrompt(memory, state, event),
+  );
 
-  const ltmBase = state.longTermMemory.map((memory) => ({
+  const ltmBase = longTermMemoryCandidates.map((memory) => ({
     ...memory,
-    _source: "长期记忆",
+    _source: memory.id.startsWith("relationship_memory_") ? "关系记忆" : "长期记忆",
     _score: String(memory.importance),
   }));
-  const relBase = buildRelationshipMemoryCandidates(state).map((memory) => ({
-    ...memory,
-    _source: speechSpeakerId && memory.relatedPeople.includes(speechSpeakerId) ? "当前说话者关系记忆" : "关系记忆",
-    _score: String(memory.importance),
-  }));
-  const all = [...ltmBase, ...relBase];
+  const all = ltmBase;
 
   const candidateLines = all.slice(0, 20).map(
     (memory, index) =>
@@ -221,6 +221,33 @@ function buildRelationshipMemoryCandidates(state: CharacterState): LongTermMemor
   }));
 }
 
+const knownBuiltinPersonaNames = [
+  "林安",
+  "哈拿尼雅",
+  "米利暗",
+  "约珥",
+  "彼得",
+  "雅各",
+  "约翰",
+  "巴底买",
+  "王佳宁",
+  "刘海涛",
+  "张萌",
+  "赵瑞",
+  "李桂兰",
+  "陈博",
+  "孙小雅",
+];
+
+function filterPersonaMemoryCandidates(memories: LongTermMemory[], state: CharacterState) {
+  return memories.filter((memory) => !startsWithOtherPersonaName(memory.summary, state.profile.name));
+}
+
+function startsWithOtherPersonaName(summary: string, currentName: string) {
+  const normalized = summary.trim().replace(/^(长期记忆：|关系记忆区：)/, "");
+  return knownBuiltinPersonaNames.some((name) => name !== currentName && normalized.startsWith(name));
+}
+
 function normalizeMemoryRecallResult(
   result: unknown,
   fallbackSelection: MemoryRecallSelectionResult,
@@ -228,8 +255,10 @@ function normalizeMemoryRecallResult(
   shortTermCandidates: MemoryRecallResult["shortTermContext"],
   memoryCandidates: MemoryCandidate[],
   fallback: MemoryRecallResult,
+  state: CharacterState,
+  event: EventInput,
 ): MemoryRecallResult {
-  if (!isRecord(result)) return { ...fallback, narrative: fallback.narrative || formatMemoryRecallNarrative(fallback) };
+  if (!isRecord(result)) return { ...fallback, narrative: fallback.narrative || formatMemoryRecallNarrative(fallback, state, event) };
 
   const shortTermMemoryIds = Array.isArray(result.shortTermMemoryIds)
     ? result.shortTermMemoryIds.filter((value): value is string => typeof value === "string").slice(0, 4)
@@ -251,7 +280,7 @@ function normalizeMemoryRecallResult(
 
   return {
     ...normalizedResult,
-    narrative: formatMemoryRecallNarrative(normalizedResult),
+    narrative: formatMemoryRecallNarrative(normalizedResult, state, event),
   };
 }
 
@@ -289,10 +318,14 @@ function createMemoryCandidates(memories: LongTermMemory[]): Array<MemoryCandida
   }));
 }
 
-function formatMemoryRecallNarrative(result: Pick<MemoryRecallResult, "shortTermContext" | "longTermMemories">) {
+function formatMemoryRecallNarrative(
+  result: Pick<MemoryRecallResult, "shortTermContext" | "longTermMemories">,
+  state: CharacterState,
+  event: EventInput,
+) {
   const shortTermText =
     result.shortTermContext.length > 0
-      ? result.shortTermContext.map((memory) => `${memory.speakerName}刚才说过：「${memory.content}」`).join(" ")
+      ? result.shortTermContext.map((memory) => formatDialogueMemoryForPrompt(memory, state, event)).join(" ")
       : "没有明显的短期上下文浮上来。";
   const longTermText =
     result.longTermMemories.length > 0

@@ -238,6 +238,24 @@ if (decisionTrace.output.replyRhythm === "single") {
   throw new Error("Expected severe aftermath to avoid ordinary single polite response rhythm.");
 }
 
+const staleSevereRuntimeState = {
+  ...severeRuntimeState,
+  shortTermMemory: [],
+  longTermMemory: [],
+  relationshipMemory: [],
+};
+const staleDecisionTrace = await decideResponse(
+  inviteEvent,
+  lowImpactAppraisal,
+  "她只是疲惫，没有近期重大事件证据。",
+  staleSevereRuntimeState,
+  { provider: "external", endpoint: "http://fake.local/deepseek", model: "deepseek-v4-flash" },
+);
+
+if (staleDecisionTrace.output.responseMode === "emotional_outburst" || staleDecisionTrace.output.shouldLoseComposure) {
+  throw new Error("Expected severe-looking runtime labels without recent severe evidence not to force an outburst route.");
+}
+
 const sunSevereState = {
   ...severeRuntimeState,
   profile: {

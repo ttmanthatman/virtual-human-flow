@@ -49,9 +49,11 @@ const { seedState } = require(join(outDir, "data/seedState.js"));
 const { foldTransientMindFlowMessages, upsertMindFlowChatMessage } = require(join(outDir, "chat/mindFlowMessages.js"));
 
 let decisionRhythm = "multi_turn";
+const fetchedModules = [];
 
 globalThis.fetch = async (_url, init) => {
   const body = JSON.parse(String(init.body));
+  fetchedModules.push(body.moduleName);
   const final = createFixtureFinal(body.moduleName);
   if (body.outputMode === "natural_language") {
     return createSseResponse([
@@ -138,6 +140,9 @@ if (!chatMessages.some((message) => message.messageType === "mind_flow" && messa
 const followUpSegments = multiTurnResult.trace.llmOutput.segments.slice(1);
 if (followUpSegments.length < 1) {
   throw new Error("Expected multi-turn fixture to provide follow-up speech segments.");
+}
+if (fetchedModules.includes("runtime_signal_evaluation")) {
+  throw new Error("Expected runtime signal evaluation to use a local snapshot instead of an external LLM call.");
 }
 
 decisionRhythm = "single";

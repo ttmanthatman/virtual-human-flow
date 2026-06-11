@@ -6,7 +6,7 @@
 
 当前系统有三条主要数据流：
 
-1. 对话同步响应流：`App Shell -> Conversation Pipeline -> Appraisal -> Memory Recall -> Response Decision -> Prompt Generator -> Reply LLM -> State Update -> Runtime Signal Evaluation -> App Shell -> Server Support 持久化`。
+1. 对话同步响应流：`App Shell -> Conversation Pipeline -> Appraisal -> Memory Recall -> Response Decision -> Prompt Generator -> Reply LLM -> State Update -> Runtime Signal Snapshot -> App Shell -> Server Support 持久化`。
 2. 档案和场景生成流：`App Shell -> Generators -> Cognitive Module Client -> DeepSeek Proxy -> Generators 归一化 -> Profile Scene Consistency -> App Shell -> Server Support 共享档案持久化`。
 3. 登录、审计、历史和部署流：`App Shell -> Vite Dev Proxy 或 Production Server -> Server Support -> liao Chatroom / runtime JSON files / git working tree / DeepSeek API`。
 
@@ -26,12 +26,12 @@
 | 参数 | 类型 | 来源 | 用途 | 流向 |
 | --- | --- | --- | --- | --- |
 | `profile` | `CharacterProfile` | 种子、内置档案、生成器、角色全局运行态 | 人物稳定身份和表达材料 | UI、Prompt Generator、生成器、一致性检测 |
-| `concerns` | `Concern[]` | 种子、内置档案、生成器、State Update | 当前关切清单 | Appraisal、Memory Recall、Prompt Generator、Runtime Signal Evaluation |
+| `concerns` | `Concern[]` | 种子、内置档案、生成器、State Update | 当前关切清单 | Appraisal、Memory Recall、Prompt Generator |
 | `relationships` | `Record<string, Relationship>` | 种子、内置档案、State Update、关系余波 | 人物对用户或其他人物的关系 | Appraisal、Prompt Generator、Server relationship propagation |
 | `shortTermMemory` | `ShortTermMemory[]` | State Update | 最近对话原文 | Memory Recall、Prompt Generator |
 | `longTermMemory` | `LongTermMemory[]` | 种子、生成器、State Update、关系余波 | 长期摘要记忆 | Memory Recall、Prompt Generator |
 | `relationshipMemory` | `RelationshipMemory[]` | 种子、内置档案、State Update | 当前用户专属印象和关系总结 | Memory Recall、Prompt Generator、右侧 UI |
-| `runtime` | `RuntimeState` | 种子、生成器、State Update、Runtime Signal Evaluation | 当前能量、情绪、注意力和活跃关切 | UI、Prompt Generator、Decision、Runtime Signal Evaluation |
+| `runtime` | `RuntimeState` | 种子、生成器、State Update | 当前能量、情绪、注意力和活跃关切 | UI、Prompt Generator、Decision、Runtime Signal Snapshot |
 | `scene` | `SceneState?` | 种子、内置档案、场景生成器 | 当前场景语境 | UI、Prompt Generator、一致性检测 |
 | `location` | `CharacterLocation?` | 种子、内置档案、管理员手动字段 | 物理位置和地图语境 | UI、Prompt Generator |
 
@@ -452,7 +452,7 @@
 
 输出：`{ nextState, stateDelta, stateUpdate }`。`stateUpdate` 是 LLM 计划；`nextState` 是确定性写回后的状态；`stateDelta` 是写回摘要。
 
-确定性写回包括：更新关切数值、更新关系数值和备注、追加短期记忆、必要时追加长期记忆、写入或更新 `relationshipMemory`、重算活跃关切和基础 mood，再由 Runtime Signal Evaluator 做最终观察信号评估。
+确定性写回包括：更新关切数值、更新关系数值和备注、追加短期记忆、必要时追加长期记忆、写入或更新 `relationshipMemory`、重算活跃关切、energy、derivedMood 和 `signalProfiles`。Runtime Signal Evaluator 只读取这些结果生成 trace 快照，不再覆盖 State Update 写入的 runtime。
 
 ### Runtime Signal Evaluator: `src/pipeline/runtimeSignalEvaluator.ts`
 
@@ -461,14 +461,11 @@
 | `state` | `CharacterState` | State Update 后的状态。 |
 | `event` | `EventInput` | 当前事件。 |
 | `replyOutput` | `ReplyOutput` | 角色回复。 |
-| `context.appraisal` | `AppraisalResult` | 评估结果。 |
-| `context.memoryRecall` | `MemoryRecallResult` | 召回结果。 |
-| `context.decision` | `ResponseDecision` | 决策结果。 |
 | `context.stateUpdatePlan` | `StateUpdatePlan` | 状态更新计划。 |
-| `llmConfig` | `LlmConfig` | LLM 配置。 |
+| `llmConfig` | `LlmConfig` | 保留在接口中兼容调用方；同步路径不再用它调用外部 LLM。 |
 | `onStream` | callback? | 信号评估流式输出。 |
 
-输出：`CognitiveModuleTrace<RuntimeSignalEvaluationResult>`。随后 `applyRuntimeSignalEvaluation(state, stateDelta, evaluation)` 将能量、情绪、情绪倾向、唤醒度和自然语言 `signalProfiles` 写回 `runtime`。
+输出：`CognitiveModuleTrace<RuntimeSignalEvaluationResult>`。其中 `output` 是 State Update 后 runtime 的本地快照，`transport` 为本地/模拟 trace 语义，不发外部 DeepSeek 请求。随后 `applyRuntimeSignalEvaluation(state, stateDelta, evaluation)` 归一化并重放同一份快照到 `runtime`，用于保持 trace 和最终状态格式一致。
 
 ### Generators: `src/pipeline/generators.ts`
 
@@ -658,9 +655,9 @@ DeepSeek proxy 参数：
 5. Memory Retrieval 接收 `event/appraisal/state`，合成 `naturalLanguageQuery`，输出 `MemoryRecallResult`。
 6. Response Decision 接收 `appraisal/memoryRecall/state`，输出 `ResponseDecision`。
 7. Prompt Generator 接收 `event/state/appraisal/memoryRecall/decision/provider/model`，输出自然语言 `ExpressionLlmRequest.prompt`。
-8. Reply LLM Client 接收 `ExpressionLlmRequest/LlmConfig`，通过 `/api/deepseek-chat` 输出 `ReplyOutput.reply`。
+8. Reply LLM Client 接收 `ExpressionLlmRequest/LlmConfig`，通过 `/api/deepseek-chat` 输出 `ReplyOutput.reply`，并剥离开头动作旁白和说话人标签。
 9. State Updater 接收 `state/event/replyOutput/context/llmConfig`，输出 `StateUpdatePlan`，确定性写回 `nextState` 和 `StateDelta`。
-10. Runtime Signal Evaluator 接收 `stateAfterUpdate/event/replyOutput/context/llmConfig`，输出四项观察信号，再写回 `nextState.runtime`。
+10. Runtime Signal Evaluator 接收 `stateAfterUpdate/event/replyOutput/context/llmConfig`，输出四项观察信号快照；值来自 State Update 已写入的 `nextState.runtime`。
 11. `handleSend` 把回复消息写入本地历史桶。
 12. `persistConversationHistoryMessages` POST 当前用户和当前档案消息到 `.conversation-histories.local.json`。
 13. `syncConversationState` POST `nextState + interaction` 到 `.conversation-states.local.json`，并在当前用户范围内传播关系余波。

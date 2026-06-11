@@ -1,4 +1,5 @@
 import { CharacterState, EventInput, ExpressionLlmRequest } from "../core/types";
+import { formatRecentDialogueForPrompt } from "./conversationContext";
 import { buildChildSafetyContinuityNarrative } from "./safetyContinuity";
 
 export function generateNaturalPromptRequest(
@@ -30,9 +31,7 @@ export function generateNaturalPromptRequest(
   const memoryNarrative = "此刻浮现的记忆：" + memoryRecallNarrative;
 
   const recentConversationNarrative =
-    state.shortTermMemory.length > 0
-      ? state.shortTermMemory.slice(-4).map((memory) => `${memory.speakerName}刚才说过：「${memory.content}」`).join(" ")
-      : "刚才没有太多直接上下文。";
+    formatRecentDialogueForPrompt(state, event);
 
   const responseModeNarrative = "这一轮她的反应倾向：" + decisionNarrative;
   const childSafetyContinuityNarrative = buildChildSafetyContinuityNarrative(event, state);
