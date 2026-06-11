@@ -150,6 +150,9 @@ if (!fetchedModules.includes("role_turn")) {
 if (fetchedModules.some((moduleName) => ["appraisal", "memory_retrieval", "response_decision", "reply_generation"].includes(moduleName))) {
   throw new Error(`Expected split cognitive/reply modules to stay out of the main pipeline, got ${fetchedModules.join(", ")}`);
 }
+if (fetchedModules.includes("role_turn_probe")) {
+  throw new Error("Expected role_turn_probe to stay disabled by default.");
+}
 
 decisionRhythm = "single";
 const singleProgress = [];
@@ -163,6 +166,30 @@ await runConversationPipeline({
 const settleFrames = singleProgress.map((progress) => progress.mindFlow).filter((frame) => frame?.phase === "post_speech" && frame.kind === "settle");
 if (settleFrames.length < 1) {
   throw new Error("Expected single-reply post-speech continuation to settle into silence.");
+}
+
+const probeProgress = [];
+const probeResult = await runConversationPipeline({
+  content: "你是不是又把我当成标签了？",
+  state: seedState,
+  llmConfig: { provider: "external", endpoint: "http://fake.local/deepseek", model: "deepseek-v4-flash" },
+  speaker: { id: "user_b", name: "当前对话者" },
+  debug: { roleTurnProbeEnabled: true },
+  onProgress: (progress) => probeProgress.push(progress),
+});
+if (!fetchedModules.includes("role_turn_probe")) {
+  throw new Error("Expected enabled role_turn_probe to call the external audit probe.");
+}
+if (!probeResult.trace.roleTurnProbe) {
+  throw new Error("Expected PipelineTrace to keep the roleTurnProbe audit result when enabled.");
+}
+if (!probeResult.trace.roleTurnProbe.output.labelLockRisk.includes("标签")) {
+  throw new Error("Expected roleTurnProbe output to expose label lock risk.");
+}
+const stateDeltaIndex = probeProgress.findIndex((progress) => progress.step === "stateDelta" && progress.status === "completed");
+const probeIndex = probeProgress.findIndex((progress) => progress.step === "roleTurnProbe" && progress.status === "running");
+if (stateDeltaIndex < 0 || probeIndex < 0 || probeIndex < stateDeltaIndex) {
+  throw new Error("Expected roleTurnProbe to run only after stateDelta completes.");
 }
 
 console.log("mind-flow streaming verified");
@@ -195,6 +222,14 @@ function createFixtureFinal(moduleName) {
         : { reply: "还好，就是有点慢。", segments: ["还好，就是有点慢。"] };
     case "state_update":
       return "她说完之后，旧约定的余波还在，但已经能收住。这个互动值得作为关系里的轻微靠近和保留边界被记住。";
+    case "role_turn_probe":
+      return [
+        "决策路径：她先检查这句话是否在把自己简化成标签，再把不舒服收成一句能维持边界的回答。",
+        "关键心理证据：主脑输出里真正生效的是关系距离、被简化的不适和仍能收住的控制感；长期候选没有明显推动台词。",
+        "标签锁定风险：有轻微标签锁定风险，标签如果反复以高警觉、高边界感出现，会把她拉向固定防御。",
+        "上下文噪声：关系摘要和长期候选可能重复，旧模块术语不应进入主脑心理材料。",
+        "建议裁剪：保留可被角色体验到的记忆余波，裁掉重复候选和显式模块术语。",
+      ].join("\n");
     case "runtime_signal_evaluation":
       return {
         energy: 0.52,

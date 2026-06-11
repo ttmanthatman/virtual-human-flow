@@ -20,7 +20,7 @@
 
 重要约束：同步对话链路的主脑是 `roleTurn`。它在一次 LLM 调用里把人物档案、场景、最近对话、关系记忆、长期候选和 runtime narrative 放在同一个上下文中，直接模拟人物心理并产出台词。Appraisal、Memory Recall 和 Decision 在当前同步主路径里只是 `roleTurn` 输出的兼容视图，供 UI、审计、心流帧和 State Update 读取；不能重新变成多次独立 LLM 转述。
 
-认知模块是另一类 LLM 调用。当前同步路径只保留两个关键外部 LLM 节点：`roleTurn` 负责说话前的一次完整人物心理-表达回合，State Update 负责说话后的自然语言状态写回判断。历史上的 Appraisal、Memory Recall、Decision 和 Reply Generation 模块文件仍保留，供兼容脚本、未来实验或局部回滚使用，但 Conversation Pipeline 主路径不再逐个调用它们。
+认知模块是另一类 LLM 调用。当前同步路径只保留两个会影响对话结果的关键外部 LLM 节点：`roleTurn` 负责说话前的一次完整人物心理-表达回合，State Update 负责说话后的自然语言状态写回判断。历史上的 Appraisal、Memory Recall、Decision 和 Reply Generation 模块文件仍保留，供兼容脚本、未来实验或局部回滚使用，但 Conversation Pipeline 主路径不再逐个调用它们。`roleTurnProbe` 是默认关闭的旁路审计节点；开启时也只在 State Update、Runtime Signal Evaluation 和 `stateDelta` 完成后观察主脑输入输出，不参与台词、状态或记忆。
 
 真实 LLM 的自然语言输出保留为 narrative，并用兼容字段承接旧 UI 和审计。`roleTurn` 输出四段自然语言：心理状态、记忆浮现、开口倾向、说出口；这不是 JSON 或字段表，而是为了把内部摘要与最终台词分离。Cognitive Module Client 仍保留结构化 fallback 能力，供人物/场景生成预览、兼容脚本或未来结构化模块使用。如果外部结构化 JSON 被截断或无法解析，Cognitive Module Client 会记录 `fallbackReason` 并使用本地候选结果继续流程，不能让用户对话卡死。
 
@@ -144,6 +144,10 @@ flowchart TD
     R --> S
     S --> G[信号评估模块: 评估能量/情绪/情绪倾向/唤醒度]
     G --> W[确定性写回: clamp/append/commit]
+    W --> P{心理探针开关}
+    P -- 开启 --> PROBE[Role Turn Probe: 旁路审计标签锁定和上下文噪声]
+    PROBE --> T
+    P -- 关闭 --> T
     W --> C[聊天室显示回复]
     W --> T[流程追踪面板显示每个模块输入/输出/状态]
     W --> AUDIT[后台审计: 记录用户输入和虚拟人输出]
@@ -444,6 +448,9 @@ flowchart TD
     RESULT --> REPLY["ReplyOutput.reply + segments"]
     RESULT --> VIEWS["Appraisal/Memory/Decision 兼容视图"]
     RESULT --> TRACE["流程追踪 + mindFlow"]
+    RESULT -. "开关开启且状态写回后" .-> PROBE["roleTurnProbe 旁路审计"]
+    PROMPT -. "只供审计读取" .-> PROBE
+    PROBE -. "不回灌主链路" .-> TRACE
 ```
 
 ### Appraisal
@@ -822,6 +829,7 @@ flowchart LR
 | 用户关系印象记忆 | initialized | `CharacterState.relationshipMemory` 作为长期记忆中的关系记忆区，按当前说话用户保存自然语言印象、关系总结、证据和最近互动，并进入召回、回复提示词和右侧展示 |
 | 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，包含用户输入、虚拟人输出、conversationEventId、history message ids 和每个 pipeline 模块的输入输出；仅管理员可查看、删除单条、清空、导出所选或完整导出所有用户所有记录；删除会级联清理同轮历史和角色运行态记忆 |
 | 心理流 streaming | initialized | `PipelineTrace.mindFlow` 和 `PipelineStepProgress.mindFlow` 承接每轮说话前/说话后的心理、动作、场景和余波；App Shell 只把它作为临时聊天消息展示，第一句完成后折叠 pre-speech，整轮完成后折叠 post-speech |
+| 心理探针 | initialized | `roleTurnProbe` 默认关闭；开启后在状态写回和 `stateDelta` 完成后旁路审计主脑决策路径、标签锁定风险和上下文噪声，只进入 trace 和模块审计 |
 | 人物档案生成 | initialized | 通过 Dossier Interpretation LLM 重新解读用户素材，生成 profile、concerns、longTermMemory 和 runtime 预览 |
 | 人物档案预览 | initialized | 左侧只展示 `profile.displaySummary` 等摘要信息，用户确认后应用 |
 | 生成监视 | initialized | 右侧展示人物短预览、人物档案和场景生成的输入、流式输出和状态；生成不阻塞聊天发送 |

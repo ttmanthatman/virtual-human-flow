@@ -1,9 +1,10 @@
-import { CharacterState, CognitiveModuleTrace, LlmConfig, MindFlowFrame, PipelineStepProgress, PipelineTrace } from "../core/types";
+import { CharacterState, CognitiveModuleTrace, LlmConfig, MindFlowFrame, PipelineStepProgress, PipelineTrace, RoleTurnProbeResult } from "../core/types";
 import {
   buildAppraisalTraceFromRoleTurn,
   buildDecisionTraceFromRoleTurn,
   buildMemoryTraceFromRoleTurn,
   runRoleTurn,
+  runRoleTurnProbe,
 } from "./roleTurn";
 import { applyStateUpdates } from "./stateUpdater";
 import { applyRuntimeSignalEvaluation, evaluateRuntimeSignals } from "./runtimeSignalEvaluator";
@@ -17,10 +18,13 @@ interface RunConversationPipelineInput {
     id: string;
     name: string;
   };
+  debug?: {
+    roleTurnProbeEnabled?: boolean;
+  };
   onProgress?: (progress: PipelineStepProgress) => void;
 }
 
-export async function runConversationPipeline({ content, state, llmConfig, speaker, onProgress }: RunConversationPipelineInput): Promise<{
+export async function runConversationPipeline({ content, state, llmConfig, speaker, debug, onProgress }: RunConversationPipelineInput): Promise<{
   nextState: CharacterState;
   trace: PipelineTrace;
 }> {
@@ -240,6 +244,40 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
         : "她说完后仍有余波，但这一轮没有形成第二句能说出口的话。",
   });
 
+  let roleTurnProbe: CognitiveModuleTrace<RoleTurnProbeResult> | undefined;
+  if (debug?.roleTurnProbeEnabled) {
+    emit({
+      step: "roleTurnProbe",
+      status: "running",
+      input: "旁路心理探针输入\n\n人物主脑 prompt、主脑输出和本轮用户原话。探针不进入回复、状态写回或记忆。",
+      output: "等待心理探针审计...",
+      transport: "external_llm",
+    });
+    try {
+      roleTurnProbe = await runRoleTurnProbe(event, sceneAwareState, roleTurn, llmConfig, (output) =>
+        emit({ step: "roleTurnProbe", status: "streaming", output: summarizeText(output), transport: "external_llm" }),
+      );
+      emit({
+        step: "roleTurnProbe",
+        status: "completed",
+        input: roleTurnProbe.request.prompt,
+        output: formatCognitiveTraceOutput(roleTurnProbe),
+        transport: roleTurnProbe.transport,
+      });
+    } catch (caught) {
+      const reason = caught instanceof Error ? caught.message : String(caught);
+      roleTurnProbe = buildFailedRoleTurnProbeTrace(event, roleTurn, reason);
+      emit({
+        step: "roleTurnProbe",
+        status: "failed",
+        input: roleTurnProbe.request.prompt,
+        output: formatCognitiveTraceOutput(roleTurnProbe),
+        error: reason,
+        transport: "local",
+      });
+    }
+  }
+
   return {
     nextState,
     trace: {
@@ -247,6 +285,7 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
       sceneContext,
       mindFlow,
       roleTurn,
+      roleTurnProbe,
       appraisal,
       memoryRecall,
       decision,
@@ -256,6 +295,41 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
       runtimeSignalEvaluation,
       stateDelta: finalStateDelta,
     },
+  };
+}
+
+function buildFailedRoleTurnProbeTrace(
+  event: { content: string; speakerName?: string },
+  roleTurn: CognitiveModuleTrace<{ innerStateNarrative: string; memoryNarrative: string; decisionNarrative: string }>,
+  reason: string,
+): CognitiveModuleTrace<RoleTurnProbeResult> {
+  const decisionPath = "心理探针未完成；本轮人物主脑、台词、状态写回和记忆仍按已完成结果保留。";
+  return {
+    moduleName: "role_turn_probe",
+    request: {
+      moduleName: "role_turn_probe",
+      inputMode: "natural_language",
+      outputMode: "natural_language",
+      prompt: [
+        "旁路心理探针失败时的本地 trace。",
+        `用户原话：${event.speakerName ?? "对方"}：「${event.content}」`,
+        "人物主脑输出：",
+        roleTurn.output.innerStateNarrative,
+        roleTurn.output.memoryNarrative,
+        roleTurn.output.decisionNarrative,
+      ].join("\n"),
+      outputContract: "探针失败记录；不影响对话结果。",
+    },
+    output: {
+      narrative: decisionPath,
+      decisionPath,
+      psychologicalEvidence: "外部探针失败，未获得额外审计证据。",
+      labelLockRisk: "探针失败，无法判断标签锁定风险。",
+      contextNoise: "探针失败，无法判断上下文噪声。",
+      suggestedTrim: "保持主链路结果不变；修复探针连接后重跑审计。",
+    },
+    transport: "local",
+    fallbackReason: `心理探针失败，已跳过旁路审计：${reason}`,
   };
 }
 

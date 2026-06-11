@@ -1090,6 +1090,34 @@ textarea {
   padding: 10px;
 }
 
+.probe-toggle {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dce7e5;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 18px 1fr;
+  padding: 8px;
+}
+
+.llm-settings .probe-toggle input {
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  width: 16px;
+}
+
+.probe-toggle span {
+  display: grid;
+  gap: 2px;
+}
+
+.probe-toggle strong {
+  color: #203139;
+  font-size: 12px;
+}
+
 .audit-box {
   align-items: center;
   background: #fffaf1;

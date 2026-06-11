@@ -46,6 +46,7 @@ const traceSteps: { key: keyof PipelineTrace; label: string; icon: typeof Activi
   { key: "event", label: "事件", icon: Play },
   { key: "sceneContext", label: "时空场景", icon: MapPin },
   { key: "roleTurn", label: "人物主脑", icon: Brain },
+  { key: "roleTurnProbe", label: "心理探针", icon: Eye },
   { key: "appraisal", label: "评估", icon: Brain },
   { key: "memoryRecall", label: "记忆召回", icon: Database },
   { key: "decision", label: "回应决策", icon: ChevronsRight },
@@ -178,6 +179,7 @@ type AppUpdateLogEntry = {
 
 const distortionPassword = "扭曲时空密码";
 const authTokenStorageKey = "virtualHumanFlowAuthToken";
+const roleTurnProbeStorageKey = "virtualHumanFlowRoleTurnProbeEnabled";
 const conversationHistoryStoragePrefix = "virtualHumanFlowConversationHistory";
 const maxConversationHistoryMessages = 160;
 
@@ -370,6 +372,7 @@ export function App() {
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
   const [deepseekStatus, setDeepseekStatus] = useState("正在检查 DeepSeek 连接");
   const [deepseekConnected, setDeepseekConnected] = useState(false);
+  const [roleTurnProbeEnabled, setRoleTurnProbeEnabled] = useState(() => localStorage.getItem(roleTurnProbeStorageKey) === "true");
   const [isGeneratingDossier, setIsGeneratingDossier] = useState(false);
   const [isGeneratingScene, setIsGeneratingScene] = useState(false);
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(authTokenStorageKey) || "");
@@ -1122,6 +1125,14 @@ export function App() {
     }));
   }
 
+  function handleRoleTurnProbeToggle() {
+    setRoleTurnProbeEnabled((current) => {
+      const next = !current;
+      localStorage.setItem(roleTurnProbeStorageKey, next ? "true" : "false");
+      return next;
+    });
+  }
+
   function updateActiveDossier(patch: Partial<Pick<PersonaDossier, "state" | "dossierDescription" | "sceneDescription" | "title" | "groupName">>) {
     setDossiers((items) =>
       items.map((item) =>
@@ -1380,6 +1391,9 @@ export function App() {
         state,
         llmConfig,
         speaker: activeConversationSpeaker,
+        debug: {
+          roleTurnProbeEnabled,
+        },
         onProgress: (progress) => {
           updateMonitorProgress(progress);
           if (progress.mindFlow) {
@@ -2060,6 +2074,13 @@ export function App() {
           {deepseekConnected ? (
             <div className="llm-settings connected-summary">
               <small>{deepseekStatus}</small>
+              <label className="probe-toggle">
+                <input type="checkbox" checked={roleTurnProbeEnabled} onChange={handleRoleTurnProbeToggle} />
+                <span>
+                  <strong>心理探针</strong>
+                  <small>回复和状态写回完成后旁路运行，只写入本轮审计。</small>
+                </span>
+              </label>
               <button className="secondary-button" type="button" onClick={handleTestDeepseekConfig}>
                 测试连接
               </button>
@@ -2089,6 +2110,13 @@ export function App() {
                 </button>
               </div>
               <small>{deepseekStatus}</small>
+              <label className="probe-toggle">
+                <input type="checkbox" checked={roleTurnProbeEnabled} onChange={handleRoleTurnProbeToggle} />
+                <span>
+                  <strong>心理探针</strong>
+                  <small>需要 DeepSeek 可用；开启后只增加旁路审计，不影响回复。</small>
+                </span>
+              </label>
             </div>
           )}
 
@@ -2416,6 +2444,16 @@ function isPipelineTraceStep(step: MonitorStepKey): step is keyof PipelineTrace 
 function buildCompletedTraceProgress(step: keyof PipelineTrace, trace: PipelineTrace | undefined): TraceDisplayProgress | undefined {
   if (!trace) return undefined;
   const data = trace[step];
+
+  if (step === "roleTurnProbe" && !trace.roleTurnProbe) {
+    return {
+      step,
+      status: "completed",
+      input: "心理探针开关关闭",
+      output: "本轮未开启心理探针；人物主脑、台词、状态写回和记忆没有读取任何探针结果。",
+      transport: "local",
+    };
+  }
 
   if (step === "event") {
     return {

@@ -6,6 +6,7 @@ import {
   LlmConfig,
   MemoryRecallResult,
   ResponseDecision,
+  RoleTurnProbeResult,
   RoleTurnResult,
 } from "../core/types";
 import { runCognitiveModule } from "./cognitiveModuleClient";
@@ -43,6 +44,34 @@ export async function runRoleTurn(
   return {
     ...trace,
     output: parseRoleTurnNarrative(trace.output, fallback),
+  };
+}
+
+export async function runRoleTurnProbe(
+  event: EventInput,
+  state: CharacterState,
+  roleTurn: CognitiveModuleTrace<RoleTurnResult>,
+  llmConfig: LlmConfig,
+  onStream?: (output: string) => void,
+): Promise<CognitiveModuleTrace<RoleTurnProbeResult>> {
+  const fallback = buildFallbackRoleTurnProbe(event, state, roleTurn);
+  const prompt = buildRoleTurnProbePrompt(event, state, roleTurn);
+  const trace = await runCognitiveModule<string>(
+    {
+      moduleName: "role_turn_probe",
+      inputMode: "natural_language",
+      outputMode: "natural_language",
+      prompt,
+      outputContract: "自然语言审计探针：决策路径、关键心理证据、标签锁定风险、上下文噪声、建议裁剪。只观察，不改写台词或状态。",
+    },
+    llmConfig,
+    serializeRoleTurnProbeFallback(fallback),
+    { onStream },
+  );
+
+  return {
+    ...trace,
+    output: parseRoleTurnProbeNarrative(trace.output, fallback),
   };
 }
 
@@ -254,6 +283,53 @@ function buildFallbackRoleTurn(event: EventInput, state: CharacterState): RoleTu
   };
 }
 
+function buildRoleTurnProbePrompt(event: EventInput, state: CharacterState, roleTurn: CognitiveModuleTrace<RoleTurnResult>) {
+  return [
+    "你是虚拟人对话系统的旁路心理探针，只做本轮审计，不参与角色思考，不给角色新指令，不改写台词。",
+    "下面的主脑输入和输出已经发生，最终回复、状态写回和记忆写入都不会读取你的结论。",
+    "你的任务是帮助开发者看清：主脑如何从人物/关系/场景/记忆走到这句回复；人物标签有没有把表达锁死；上下文是否有重复、旧模块术语或过量材料污染。",
+    "",
+    `角色：${state.profile.name}`,
+    `用户原话：${event.speakerName ?? "对方"}：「${event.content}」`,
+    "",
+    "人物主脑本轮原始输入：",
+    roleTurn.request.prompt,
+    "",
+    "人物主脑本轮输出：",
+    formatRoleTurnProbeSource(roleTurn.output),
+    "",
+    "请只输出下面五段自然语言，段首必须使用这些标题。不要 JSON，不要代码块，不要提出会影响下一轮角色回复的指令。",
+    "决策路径：用 3-5 句说明她从身体状态、关系距离、记忆余波到开口选择的心理变化。",
+    "关键心理证据：列出本轮真正影响回复的证据；区分主脑自己用到的证据和只是 prompt 里出现但未明显生效的材料。",
+    "标签锁定风险：判断人物档案里的稳定标签是否把她锁成固定反应；如果有，指出是哪类标签/措辞在拉偏。",
+    "上下文噪声：指出重复内容、旧模块术语、过量候选或与此刻无关的材料是否可能污染主脑。",
+    "建议裁剪：只给面向开发者的 prompt/context 调整建议，不要给角色下一轮应如何说话的建议。",
+  ].join("\n\n");
+}
+
+function buildFallbackRoleTurnProbe(event: EventInput, state: CharacterState, roleTurn: CognitiveModuleTrace<RoleTurnResult>): RoleTurnProbeResult {
+  const decisionPath = `${state.profile.name}先承接「${event.content}」带来的关系距离，再把身体状态、记忆浮现和开口倾向收束成当前回复。`;
+  const psychologicalEvidence = [roleTurn.output.innerStateNarrative, roleTurn.output.memoryNarrative, roleTurn.output.decisionNarrative].filter(Boolean).join("\n");
+  return {
+    narrative: decisionPath,
+    decisionPath,
+    psychologicalEvidence: psychologicalEvidence || "本轮主脑输出较短，只能从最终台词和开口倾向粗略回看。",
+    labelLockRisk: "未运行外部探针；无法细判标签锁定，只能提示稳定人格标签不应被当作硬规则。",
+    contextNoise: "未运行外部探针；无法细判重复上下文，只能提示关系记忆、近期摘要和长期候选需要避免重复。",
+    suggestedTrim: "保持探针旁路观察；若发现重复关系记忆，可再裁剪 roleTurn prompt 的候选清单。",
+  };
+}
+
+function serializeRoleTurnProbeFallback(fallback: RoleTurnProbeResult) {
+  return [
+    `决策路径：${fallback.decisionPath}`,
+    `关键心理证据：${fallback.psychologicalEvidence}`,
+    `标签锁定风险：${fallback.labelLockRisk}`,
+    `上下文噪声：${fallback.contextNoise}`,
+    `建议裁剪：${fallback.suggestedTrim}`,
+  ].join("\n");
+}
+
 function serializeRoleTurnFallback(fallback: RoleTurnResult) {
   return [
     `心理状态：${fallback.innerStateNarrative}`,
@@ -261,6 +337,24 @@ function serializeRoleTurnFallback(fallback: RoleTurnResult) {
     `开口倾向：${fallback.decisionNarrative}`,
     `说出口：${fallback.replyOutput.reply || "（沉默）"}`,
   ].join("\n");
+}
+
+function parseRoleTurnProbeNarrative(text: string, fallback: RoleTurnProbeResult): RoleTurnProbeResult {
+  const rawText = typeof text === "string" && text.trim() ? text.trim() : serializeRoleTurnProbeFallback(fallback);
+  const sections = extractProbeSections(rawText);
+  const decisionPath = sections.decisionPath || fallback.decisionPath;
+  const psychologicalEvidence = sections.psychologicalEvidence || fallback.psychologicalEvidence;
+  const labelLockRisk = sections.labelLockRisk || fallback.labelLockRisk;
+  const contextNoise = sections.contextNoise || fallback.contextNoise;
+  const suggestedTrim = sections.suggestedTrim || fallback.suggestedTrim;
+  return {
+    narrative: [decisionPath, labelLockRisk, contextNoise].filter(Boolean).join("\n"),
+    decisionPath,
+    psychologicalEvidence,
+    labelLockRisk,
+    contextNoise,
+    suggestedTrim,
+  };
 }
 
 function parseRoleTurnNarrative(text: string, fallback: RoleTurnResult): RoleTurnResult {
@@ -309,6 +403,43 @@ function extractNaturalSections(text: string) {
     if (heading === "说出口" || heading === "最终说出口" || heading === "台词") sections.reply = value;
   }
   return sections;
+}
+
+function extractProbeSections(text: string) {
+  const cleanText = text.replace(/\*\*/g, "").trim();
+  const headingPattern = /(?:^|\n)\s*[#*\-\s]{0,6}(决策路径|关键心理证据|心理证据|标签锁定风险|上下文噪声|建议裁剪)\s*[：:]\s*/g;
+  const matches = [...cleanText.matchAll(headingPattern)];
+  const sections: {
+    decisionPath?: string;
+    psychologicalEvidence?: string;
+    labelLockRisk?: string;
+    contextNoise?: string;
+    suggestedTrim?: string;
+  } = {};
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    const next = matches[index + 1];
+    const heading = match[1];
+    const start = (match.index ?? 0) + match[0].length;
+    const end = next?.index ?? cleanText.length;
+    const value = cleanText.slice(start, end).trim();
+    if (!value) continue;
+    if (heading === "决策路径") sections.decisionPath = value;
+    if (heading === "关键心理证据" || heading === "心理证据") sections.psychologicalEvidence = value;
+    if (heading === "标签锁定风险") sections.labelLockRisk = value;
+    if (heading === "上下文噪声") sections.contextNoise = value;
+    if (heading === "建议裁剪") sections.suggestedTrim = value;
+  }
+  return sections;
+}
+
+function formatRoleTurnProbeSource(roleTurn: RoleTurnResult) {
+  return [
+    `心理状态：${roleTurn.innerStateNarrative}`,
+    `记忆浮现：${roleTurn.memoryNarrative}`,
+    `开口倾向：${roleTurn.decisionNarrative}`,
+    `说出口：${roleTurn.replyOutput.reply || "（沉默）"}`,
+  ].join("\n");
 }
 
 function extractLastQuotedReply(text: string) {

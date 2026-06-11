@@ -278,7 +278,7 @@
 | `StateDelta` | `relationshipChanges` | `string[]` | 已写回的关系变化摘要。 |
 | `StateDelta` | `memoryWrites` | `string[]` | 已写入的记忆摘要。 |
 | `StateDelta` | `runtimeChanges` | `string[]` | 已写回的运行态变化摘要。 |
-| `PipelineTrace` | `event/appraisal/memoryRecall/decision/llmRequest/llmOutput/stateUpdate/runtimeSignalEvaluation/stateDelta` | mixed | 一轮对话完整审计链。 |
+| `PipelineTrace` | `event/roleTurn/roleTurnProbe?/appraisal/memoryRecall/decision/llmRequest/llmOutput/stateUpdate/runtimeSignalEvaluation/stateDelta` | mixed | 一轮对话完整审计链；`roleTurnProbe` 默认关闭且只作旁路审计。 |
 | `PipelineStepProgress` | `step/status/input/output/error/transport` | mixed | 右侧流程追踪实时显示参数。 |
 
 ## 模块参数说明
@@ -381,6 +381,18 @@
 内部派生：`buildRoleTurnPrompt` 将人物稳定背景、成长经历、性格面、表达样本、当前场景、当前位置、runtime narrative、最近 6 小时直接对话、过去 6 小时关系/状态/场景摘要、长期记忆候选、关系记忆候选和用户原话组织为同一个自然语言心理回合。
 
 输出：`CognitiveModuleTrace<RoleTurnResult>`。`output.innerStateNarrative`、`output.memoryNarrative`、`output.decisionNarrative` 分别派生 Appraisal/Memory/Decision 兼容视图；`output.replyOutput` 进入聊天历史、State Update 和审计。
+
+### Role Turn Probe: `src/pipeline/roleTurn.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `event` | `EventInput` | 本轮用户事件。 |
+| `state` | `CharacterState` | 与 `roleTurn` 相同的场景感知状态，仅供审计理解角色和场景。 |
+| `roleTurn` | `CognitiveModuleTrace<RoleTurnResult>` | 已完成的人物主脑输入和输出。 |
+| `llmConfig` | `LlmConfig` | LLM 配置。 |
+| `onStream` | callback? | 探针自然语言输出流式回调。 |
+
+输出：`CognitiveModuleTrace<RoleTurnProbeResult>`。它只解释主脑决策路径、关键心理证据、标签锁定风险、上下文噪声和建议裁剪；只进入 `PipelineTrace.roleTurnProbe`、右侧 trace 和模块审计，不进入 `ReplyOutput`、State Update、关系记忆或长期记忆。
 
 ### Appraisal: `src/pipeline/appraisal.ts`
 
@@ -668,15 +680,16 @@ DeepSeek proxy 参数：
 
 1. 用户输入框 `input` 进入 `handleSend`。
 2. `handleSend` 用 `activeConversationSpeaker` 生成 `speaker.id/name`，把用户消息写入本地历史桶。
-3. `runConversationPipeline` 接收 `content/state/llmConfig/speaker/onProgress`，生成 `EventInput`。
+3. `runConversationPipeline` 接收 `content/state/llmConfig/speaker/debug/onProgress`，生成 `EventInput`。
 4. `advanceSceneForCurrentTime` 根据人物位置时区和真实时间推进 `scene/location`。
 5. `runRoleTurn` 接收 `event/sceneAwareState/llmConfig`，一次性输出 `RoleTurnResult.innerStateNarrative/memoryNarrative/decisionNarrative/replyOutput`。
 6. `buildAppraisalTraceFromRoleTurn`、`buildMemoryTraceFromRoleTurn` 和 `buildDecisionTraceFromRoleTurn` 生成兼容 trace，供 UI、审计和 State Update 读取。
 7. `ReplyOutput.reply` 来自 `roleTurn` 的“说出口”段落，并剥离开头动作旁白和说话人标签；`replyOutput.segments` 由本地分段生成。
 8. State Updater 接收 `state/event/replyOutput/context/llmConfig`，输出自然语言 `StateUpdatePlan.narrative` 和兼容壳，写回 `nextState` 和 `StateDelta`。
 9. Runtime Signal Evaluator 接收 `stateAfterUpdate/event/replyOutput/context/llmConfig`，输出四项观察信号快照；值来自 State Update 已写入的 `nextState.runtime`。
-10. `handleSend` 把回复消息写入本地历史桶。
-11. `persistConversationHistoryMessages` POST 当前用户和当前档案消息到 `.conversation-histories.local.json`。
+10. 如果 `debug.roleTurnProbeEnabled` 为真，`runRoleTurnProbe` 在 `stateDelta` 完成后旁路审计；关闭时不调用。
+11. `handleSend` 把回复消息写入本地历史桶。
+12. `persistConversationHistoryMessages` POST 当前用户和当前档案消息到 `.conversation-histories.local.json`。
 13. `syncConversationState` POST `nextState + interaction` 到 `.conversation-states.local.json`，并在当前用户范围内传播关系余波。
 14. `recordConversationAudit` POST `PipelineTrace` 派生的 `moduleCalls` 到 `.conversation-audits.local.json`。
 

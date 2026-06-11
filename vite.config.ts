@@ -409,6 +409,7 @@ async function streamDeepseek(body: Record<string, unknown>, config: ReturnType<
 
 async function fetchDeepseek(body: Record<string, unknown>, config: ReturnType<typeof readDeepseekConfig>, apiKey: string, stream: boolean) {
   const outputMode = body.outputMode === "structured_json" ? "structured_json" : "natural_language";
+  const moduleName = typeof body.moduleName === "string" ? body.moduleName : "unknown";
   const prompt = typeof body.prompt === "string" ? body.prompt : "";
   const outputContract = typeof body.outputContract === "string" ? body.outputContract : "";
   const requestedModel = typeof body.model === "string" && body.model.trim() ? body.model.trim() : config.model;
@@ -422,7 +423,7 @@ async function fetchDeepseek(body: Record<string, unknown>, config: ReturnType<t
         ]
           .filter(Boolean)
           .join("\n")
-      : "你只返回最终文本，不要解释，不要附加标签。";
+      : buildNaturalLanguageSystemPrompt(moduleName);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), deepseekRequestTimeoutMs);
 
@@ -443,9 +444,30 @@ async function fetchDeepseek(body: Record<string, unknown>, config: ReturnType<t
       thinking: { type: "disabled" },
       stream,
       temperature: 0.4,
-      max_tokens: outputMode === "structured_json" ? 2600 : 700,
+      max_tokens: outputMode === "structured_json" ? 2600 : moduleName === "role_turn" ? 1200 : moduleName === "role_turn_probe" ? 900 : 700,
     }),
   }).finally(() => clearTimeout(timeout));
+}
+
+function buildNaturalLanguageSystemPrompt(moduleName: string) {
+  if (moduleName === "role_turn") {
+    return [
+      "你是虚拟人对话系统的一次角色主脑回合。",
+      "你要遵循用户提示里的自然语言段落格式，把心理摘要和最终说出口的话分开。",
+      "不要输出 JSON、Markdown 代码块、调试说明或系统解释。",
+    ].join("\n");
+  }
+  if (moduleName === "role_turn_probe") {
+    return [
+      "你是虚拟人对话系统的旁路审计探针。",
+      "你只解释已经完成的主脑决策路径、标签锁定风险和上下文噪声。",
+      "不要改写角色台词，不要给角色下一轮指令，不要输出 JSON 或 Markdown 代码块。",
+    ].join("\n");
+  }
+  if (moduleName === "reply_generation") {
+    return "你只返回角色最终说出口的聊天文本，不要解释，不要附加标签。";
+  }
+  return "你只返回最终文本，不要解释，不要附加标签。";
 }
 
 function parseJsonContent(content: string) {

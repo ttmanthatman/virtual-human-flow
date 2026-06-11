@@ -56,7 +56,7 @@ npm run start
 
 后台会记录每个登录用户的一次输入、虚拟人输出和本轮对话每个模块的调用记录，写入运行时文件 `.conversation-audits.local.json`；只有管理员可以在右侧“输入输出审计”里查看、选择导出、完整导出所有用户所有记录、删除单条或清空这些记录。所有登录用户都可以在当前人物的中间栏上方选择某个用户，只读查看该用户与该人物的历史消息；查看别人历史时不能发送，必须切回“我的历史”后再继续对话。`.conversation-histories.local.json`、`.conversation-states.local.json`、`.conversation-audits.local.json`、`.persona-dossiers.local.json` 和 `.deepseek.local.json` 都被 `.gitignore` 忽略，不能提交。
 
-当前 LLM 入口固定为真实 DeepSeek 本地代理，不再在 UI 中提供模拟语言模型选项。同步对话说话前的主路径是 `roleTurn` 人物主脑：一次 DeepSeek 调用读取人物、场景、位置、最近对话、关系记忆、长期候选和用户原话，输出心理状态、记忆浮现、开口倾向和最终台词。Appraisal、Memory Recall 和 Decision 在当前主路径里是由人物主脑输出派生的兼容视图，不再逐个外部调用；State Update 仍在说话后用自然语言判断状态和记忆写回。Runtime Signal Evaluation 在同步路径中保留为本地派生的展示信号快照，不再额外调用 LLM 覆盖 State Update 写入的 runtime。
+当前 LLM 入口固定为真实 DeepSeek 本地代理，不再在 UI 中提供模拟语言模型选项。同步对话说话前的主路径是 `roleTurn` 人物主脑：一次 DeepSeek 调用读取人物、场景、位置、最近对话、关系记忆、长期候选和用户原话，输出心理状态、记忆浮现、开口倾向和最终台词。Appraisal、Memory Recall 和 Decision 在当前主路径里是由人物主脑输出派生的兼容视图，不再逐个外部调用；State Update 仍在说话后用自然语言判断状态和记忆写回。Runtime Signal Evaluation 在同步路径中保留为本地派生的展示信号快照，不再额外调用 LLM 覆盖 State Update 写入的 runtime。右侧 DeepSeek 设置里可以打开默认关闭的“心理探针”：它只在回复、状态写回和状态变化完成后旁路审计 `roleTurn` 的决策路径、标签锁定风险和上下文噪声，不会影响本轮台词、状态或记忆。
 
 Memory Recall 当前不是敏感词召回。系统会构建自然语言召回语境，把短时间窗内的同一对话短期上下文、长期记忆和关系记忆转成候选清单，直接放进 `roleTurn` 上下文，由同一个 LLM 在角色心理里判断此刻什么会自然浮现。长期记忆里包含独立的 `relationshipMemory` 关系记忆区，专门存自然语言的“对这个用户的印象”和“当前关系总结”，不使用数值展示。右侧 pipeline 下方会展示当前登录用户对应的印象、关系、最近互动和证据。这个入口也预留了未来异步生命路径使用的召回来源字段。
 

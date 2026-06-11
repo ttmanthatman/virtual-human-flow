@@ -489,7 +489,7 @@ async function fetchDeepseek(body, config, apiKey, stream) {
       thinking: { type: "disabled" },
       stream,
       temperature: 0.4,
-      max_tokens: outputMode === "structured_json" ? 2600 : moduleName === "role_turn" ? 1200 : 700,
+      max_tokens: outputMode === "structured_json" ? 2600 : moduleName === "role_turn" ? 1200 : moduleName === "role_turn_probe" ? 900 : 700,
     }),
   }).finally(() => clearTimeout(timeout));
 }
@@ -500,6 +500,13 @@ function buildNaturalLanguageSystemPrompt(moduleName) {
       "你是虚拟人对话系统的一次角色主脑回合。",
       "你要遵循用户提示里的自然语言段落格式，把心理摘要和最终说出口的话分开。",
       "不要输出 JSON、Markdown 代码块、调试说明或系统解释。",
+    ].join("\n");
+  }
+  if (moduleName === "role_turn_probe") {
+    return [
+      "你是虚拟人对话系统的旁路审计探针。",
+      "你只解释已经完成的主脑决策路径、标签锁定风险和上下文噪声。",
+      "不要改写角色台词，不要给角色下一轮指令，不要输出 JSON 或 Markdown 代码块。",
     ].join("\n");
   }
   if (moduleName === "reply_generation") {

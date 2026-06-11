@@ -141,17 +141,24 @@
 
 | 函数名 | 文件 | 责任 | 参数 | 返回 | 副作用 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `runConversationPipeline` | `src/pipeline/conversationPipeline.ts` | 运行完整对话 pipeline，并把当前登录用户作为事件说话者 | content, state, llmConfig, speaker | nextState, trace | 写入状态 | implemented |
+| `runConversationPipeline` | `src/pipeline/conversationPipeline.ts` | 运行完整对话 pipeline，并把当前登录用户作为事件说话者，可按 debug 开关运行旁路心理探针 | content, state, llmConfig, speaker, debug? | nextState, trace | 写入状态 | implemented |
 | `runCognitiveModule` | `src/pipeline/cognitiveModuleClient.ts` | 执行一个认知脑区式 LLM 模块；同步对话模块可读取自然语言 final，结构化兼容模块仍在解析失败时记录 fallbackReason | request, config, mockOutput | CognitiveModuleTrace | 可调用外部 endpoint | implemented |
 | `runRoleTurn` | `src/pipeline/roleTurn.ts` | 调用同步对话人物主脑 LLM，让同一模型在同一上下文中模拟心理并产出台词 | event, state, llmConfig, onStream? | `CognitiveModuleTrace<RoleTurnResult>` | 可调用外部 endpoint | implemented |
+| `runRoleTurnProbe` | `src/pipeline/roleTurn.ts` | 在主脑回复和状态写回完成后旁路审计主脑决策路径、标签锁定风险和上下文噪声 | event, state, roleTurn, llmConfig, onStream? | `CognitiveModuleTrace<RoleTurnProbeResult>` | 可调用外部 endpoint；不写状态 | implemented |
 | `buildRoleTurnPrompt` | `src/pipeline/roleTurn.ts` | 将人物档案、场景、位置、runtime、最近对话、关系记忆、长期候选和用户原话合成主脑自然语言 prompt | event, state | string | 无 | implemented |
+| `buildRoleTurnProbePrompt` | `src/pipeline/roleTurn.ts` | 将主脑原始输入、主脑输出和本轮用户原话合成旁路审计 prompt | event, state, roleTurn | string | 无 | implemented |
 | `buildFallbackRoleTurn` | `src/pipeline/roleTurn.ts` | 为主脑外部输出为空时提供可继续流程的本地自然语言候选 | event, state | `RoleTurnResult` | 无 | implemented |
+| `buildFallbackRoleTurnProbe` | `src/pipeline/roleTurn.ts` | 为心理探针输出为空或不可用时提供可展示的本地审计占位 | event, state, roleTurn | `RoleTurnProbeResult` | 无 | implemented |
 | `serializeRoleTurnFallback` | `src/pipeline/roleTurn.ts` | 将本地主脑候选序列化成四段自然语言文本，供 fallback streaming 展示 | fallback | string | 无 | implemented |
+| `serializeRoleTurnProbeFallback` | `src/pipeline/roleTurn.ts` | 将本地心理探针候选序列化成五段自然语言文本 | fallback | string | 无 | implemented |
 | `parseRoleTurnNarrative` | `src/pipeline/roleTurn.ts` | 从主脑四段自然语言输出中提取心理状态、记忆浮现、开口倾向和说出口台词 | text, fallback | `RoleTurnResult` | 无 | implemented |
+| `parseRoleTurnProbeNarrative` | `src/pipeline/roleTurn.ts` | 从心理探针自然语言输出中提取决策路径、心理证据、标签锁定风险、上下文噪声和裁剪建议 | text, fallback | `RoleTurnProbeResult` | 无 | implemented |
 | `buildAppraisalTraceFromRoleTurn` | `src/pipeline/roleTurn.ts` | 将 `roleTurn.innerStateNarrative` 派生为 Appraisal 兼容 trace | event, state, roleTurn | `CognitiveModuleTrace<AppraisalResult>` | 无 | implemented |
 | `buildMemoryTraceFromRoleTurn` | `src/pipeline/roleTurn.ts` | 将 `roleTurn.memoryNarrative` 和本地候选上下文派生为 Memory Recall 兼容 trace | event, state, roleTurn | `CognitiveModuleTrace<MemoryRecallResult>` | 无 | implemented |
 | `buildDecisionTraceFromRoleTurn` | `src/pipeline/roleTurn.ts` | 将 `roleTurn.decisionNarrative` 和最终台词派生为 Response Decision 兼容 trace | event, roleTurn | `CognitiveModuleTrace<ResponseDecision>` | 无 | implemented |
 | `extractNaturalSections` | `src/pipeline/roleTurn.ts` | 从主脑自然语言段落标题中切出心理状态、记忆浮现、开口倾向和说出口段落 | text | section object | 无 | implemented |
+| `extractProbeSections` | `src/pipeline/roleTurn.ts` | 从心理探针自然语言段落标题中切出五段审计内容 | text | section object | 无 | implemented |
+| `formatRoleTurnProbeSource` | `src/pipeline/roleTurn.ts` | 将 `RoleTurnResult` 重新格式化为心理探针可读证据材料 | roleTurn | string | 无 | implemented |
 | `extractLastQuotedReply` | `src/pipeline/roleTurn.ts` | 当主脑输出缺少段落标题时，从最后一段引号内容尝试恢复台词 | text | string | 无 | implemented |
 | `normalizeSpokenReply` | `src/pipeline/roleTurn.ts` | 清理主脑“说出口”段落，把沉默标记转成空台词并剥离动作/说话人标签 | reply | string | 无 | implemented |
 | `derivedRequest` | `src/pipeline/roleTurn.ts` | 为由 `roleTurn` 派生的 Appraisal/Memory/Decision trace 构造兼容 request | moduleName, roleTurn, description | `CognitiveModuleRequest`-like object | 无 | implemented |
@@ -183,7 +190,8 @@
 | `normalizeReplyOutput` | `src/pipeline/llmClient.ts` | 将外部或模拟 Reply 输出归一化为 `reply` 和自然消息分段 | data, decision | ReplyOutput | 无 | implemented |
 | `splitReplyIntoSegments` | `src/pipeline/llmClient.ts` | 按换行和标点把 `multi_turn`/`burst` 自然语言回复拆成多条聊天消息 | reply, rhythm, modelSegments? | string[] | 无 | implemented |
 | `formatRoleTurnOutput` | `src/pipeline/conversationPipeline.ts` | 将主脑心理状态、记忆浮现、开口倾向和台词合成右侧 trace 展示文本 | roleTurn output | string | 无 | implemented |
-| `buildNaturalLanguageSystemPrompt` | `server.mjs` | 为 DeepSeek 代理里的自然语言模块选择系统提示；`role_turn` 允许四段自然语言格式，旧 reply 仍只返回台词 | moduleName | string | 无 | implemented |
+| `buildFailedRoleTurnProbeTrace` | `src/pipeline/conversationPipeline.ts` | 心理探针失败时生成本地 trace，保证旁路审计失败不影响对话结果 | event, roleTurn, reason | `CognitiveModuleTrace<RoleTurnProbeResult>` | 无 | implemented |
+| `buildNaturalLanguageSystemPrompt` | `server.mjs`, `vite.config.ts` | 为 DeepSeek 代理里的自然语言模块选择系统提示；`role_turn` 允许四段自然语言格式，`role_turn_probe` 只作旁路审计 | moduleName | string | 无 | implemented |
 | `applyStateUpdates` | `src/pipeline/stateUpdater.ts` | 调用 State Update LLM 并写回状态 | state, event, replyOutput, context, llmConfig | nextState, StateDelta, stateUpdate | 写入记忆和状态 | implemented |
 | `stateUpdatePlanFromNarrative` | `src/pipeline/stateUpdater.ts` | 将 State Update LLM 自然语言判断落成兼容写回壳，保留 narrative 作为语义主干 | narrative, fallback, event | StateUpdatePlan | 无 | implemented |
 | `strengthenUserRelationshipMemoryForCurrentEvent` | `src/pipeline/stateUpdater.ts` | 把本轮实际事件、角色回复和上游自然语言判断合入当前用户关系记忆，避免旧印象覆盖新关系推进 | memory, event, replyOutput, context | StateUpdatePlan.userRelationshipMemory | 无 | implemented |
@@ -341,10 +349,16 @@
 | `pipelineTrace.sceneContext` | `PipelineTrace` | `TemporalSceneProgression` | Event 后、Appraisal 前的时空场景推进结果 | temporalSceneProgression | Pipeline Debug Panel/audit | implemented |
 | `pipelineTrace.mindFlow` | `PipelineTrace` | `MindFlowFrame[]` | 本轮说话前和说话后的心理、场景、动作和余波 streaming 帧集合 | conversationPipeline | App Shell temporary chat/Pipeline Debug Panel | implemented |
 | `pipelineTrace.roleTurn` | `PipelineTrace` | `CognitiveModuleTrace<RoleTurnResult>` | 同步对话主脑 LLM 调用记录；Appraisal/Memory/Decision 兼容视图由它派生 | roleTurn | Pipeline Debug Panel/audit | implemented |
+| `pipelineTrace.roleTurnProbe` | `PipelineTrace` | `CognitiveModuleTrace<RoleTurnProbeResult>?` | 默认关闭的旁路心理探针 trace；开启后只审计主脑决策路径、标签锁定风险和上下文噪声 | roleTurnProbe | Pipeline Debug Panel/audit | implemented |
 | `roleTurnResult.innerStateNarrative` | `RoleTurnResult` | `string` | 主脑输出的心理状态段落：身体感、情绪、关系距离和控制感 | roleTurn | mindFlow/Appraisal view/State Update | implemented |
 | `roleTurnResult.memoryNarrative` | `RoleTurnResult` | `string` | 主脑输出的记忆浮现段落：最近对话、关系余波或长期记忆如何在此刻浮上来 | roleTurn | mindFlow/Memory view/State Update | implemented |
 | `roleTurnResult.decisionNarrative` | `RoleTurnResult` | `string` | 主脑输出的开口倾向段落：沉默、短答、追问、连续补充、转移、拒绝或失态的自然语言理由 | roleTurn | mindFlow/Decision view/State Update | implemented |
 | `roleTurnResult.replyOutput` | `RoleTurnResult` | `ReplyOutput` | 主脑“说出口”段落归一化后的聊天台词和分段 | roleTurn | App Shell/history/State Update/audit | implemented |
+| `roleTurnProbeResult.decisionPath` | `RoleTurnProbeResult` | `string` | 旁路审计说明主脑从身体状态、关系距离、记忆余波到开口选择的路径 | roleTurnProbe | Pipeline Debug Panel/audit | implemented |
+| `roleTurnProbeResult.psychologicalEvidence` | `RoleTurnProbeResult` | `string` | 旁路审计区分真正影响回复的证据和只出现在 prompt 中的材料 | roleTurnProbe | Pipeline Debug Panel/audit | implemented |
+| `roleTurnProbeResult.labelLockRisk` | `RoleTurnProbeResult` | `string` | 旁路审计说明人物稳定标签是否可能把表达锁成固定反应 | roleTurnProbe | Pipeline Debug Panel/audit | implemented |
+| `roleTurnProbeResult.contextNoise` | `RoleTurnProbeResult` | `string` | 旁路审计说明重复内容、旧模块术语或过量候选是否污染上下文 | roleTurnProbe | Pipeline Debug Panel/audit | implemented |
+| `roleTurnProbeResult.suggestedTrim` | `RoleTurnProbeResult` | `string` | 旁路审计给开发者的 prompt/context 裁剪建议，不给角色下一轮话术 | roleTurnProbe | Pipeline Debug Panel/audit | implemented |
 | `mindFlowFrame.phase` | `MindFlowFrame` | `pre_speech/post_speech` | 区分发言前心理变化和发言后余波 | conversationPipeline | App Shell folding logic | implemented |
 | `mindFlowFrame.kind` | `MindFlowFrame` | enum | 标识心理流内容类型：场景、内部状态、记忆、关系、动作、继续发言或收住 | conversationPipeline | App Shell display/verification | implemented |
 | `formatRecentSituationSummaryForPrompt` | function | string | 生成过去 6 小时关系、状态和场景的自然语言摘要，供 Appraisal、Memory Recall、Decision 和表达模块共用 | conversationContext | cognitive modules/expression module | implemented |
@@ -384,10 +398,13 @@
 | `TraceDisplayProgress` | App Shell type | `Omit<PipelineStepProgress, "output"> & { output?: unknown }` | 右侧流程追踪面板的本地展示态，允许完成态 trace 保留带 `narrative` 的原始输出对象 | App Shell | Pipeline Debug Panel | implemented |
 | `cognitiveModuleTrace.fallbackReason` | `CognitiveModuleTrace` | `string?` | 外部结构化输出无法解析时的回退原因，右侧流程追踪会展示 | cognitiveModuleClient | Pipeline Debug Panel | implemented |
 | `generationMonitorStep` | Core type | `GenerationMonitorStep` | 右侧生成监视可选步骤：`dossierSummaryGeneration`、`dossierGeneration`、`sceneGeneration` | App Shell/generators | live trace UI | implemented |
+| `role_turn_probe` | `CognitiveModuleName` | string literal | 旁路心理探针模块名；只审计已完成的 `role_turn`，不影响回复和状态 | App Shell `/api/deepseek-chat` | DeepSeek proxy | implemented |
 | `dossier_summary_generation` | `CognitiveModuleName` | string literal | 人物短预览自然语言生成模块名，只写 `personaDossier.previewSummary` | App Shell `/api/deepseek-chat` | DeepSeek proxy | implemented |
 | `liveTrace` | App state | `TraceDisplayState` | 同时保存对话流程和生成监视的实时输入、输出、状态 | conversation pipeline/generators/preview cache | right panel | implemented |
 | `deepseekConnected` | App state | `boolean` | 顶部显示 DeepSeek 是否已有本地密钥并可作为真实 LLM 入口 | `/api/deepseek-config` / 测试连接 | App Shell | implemented |
 | `deepseekStatus` | App state | `string` | DeepSeek 密钥保存和真实连接测试的人类可读状态 | `/api/deepseek-config` / `/api/deepseek-chat` | App Shell | implemented |
+| `roleTurnProbeEnabled` | App state | `boolean` | 右侧 DeepSeek 设置中的心理探针开关；默认关闭，开启后传入 `debug.roleTurnProbeEnabled` | localStorage | App Shell / Conversation Pipeline | implemented |
+| `roleTurnProbeStorageKey` | App constant | `string` | 心理探针开关的浏览器本地持久化键 | App Shell | localStorage | implemented |
 | `appVersionLabel` | App constant | `string` | 页面左上角显示的版本号，如 `v0.1.0` | `package.json` | App Shell | implemented |
 | `package.version` | `package.json` / `package-lock.json` | semver string | 应用版本源；每个完成的 reviewable step 都要同步递增 | release workflow | App Shell / build metadata | implemented |
 | `githubRepositoryUrl` | App constant | `string` | 页面左上角 GitHub 链接地址 | GitHub remote | App Shell | implemented |

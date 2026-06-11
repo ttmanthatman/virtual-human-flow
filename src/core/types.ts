@@ -343,8 +343,18 @@ export interface RoleTurnResult {
   replyOutput: ReplyOutput;
 }
 
+export interface RoleTurnProbeResult {
+  narrative?: string;
+  decisionPath: string;
+  psychologicalEvidence: string;
+  labelLockRisk: string;
+  contextNoise: string;
+  suggestedTrim: string;
+}
+
 export type CognitiveModuleName =
   | "role_turn"
+  | "role_turn_probe"
   | "appraisal"
   | "memory_retrieval"
   | "response_decision"
@@ -464,6 +474,7 @@ export interface PipelineTrace {
   sceneContext: TemporalSceneProgression;
   mindFlow: MindFlowFrame[];
   roleTurn: CognitiveModuleTrace<RoleTurnResult>;
+  roleTurnProbe?: CognitiveModuleTrace<RoleTurnProbeResult>;
   appraisal: CognitiveModuleTrace<AppraisalResult>;
   memoryRecall: CognitiveModuleTrace<MemoryRecallResult>;
   decision: CognitiveModuleTrace<ResponseDecision>;
