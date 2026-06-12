@@ -421,10 +421,7 @@ export function App() {
   const allVisibleAuditEntriesSelected = auditEntries.length > 0 && auditEntries.every((entry) => selectedAuditIdSet.has(entry.id));
   const isAuthenticated = Boolean(authToken && authUser);
   const isAdmin = Boolean(authUser?.isAdmin);
-  const activeConcernTitles = useMemo(
-    () => state.concerns.filter((concern) => state.runtime.activeConcernIds.includes(concern.id)).map((concern) => concern.title),
-    [state.concerns, state.runtime.activeConcernIds],
-  );
+  const activeContextTags = useMemo(() => formatActiveContextTags(state), [state]);
   const activeDossier = useMemo(() => dossiers.find((dossier) => dossier.id === activeDossierId) ?? dossiers[0], [activeDossierId, dossiers]);
   const activeConversationHistoryKey = useMemo(() => createConversationHistoryKey(authUser, activeDossierId), [authUser, activeDossierId]);
   const activeRoomHistoryKey = useMemo(() => createRoomConversationHistoryKey(activeDossierId), [activeDossierId]);
@@ -2162,7 +2159,7 @@ export function App() {
             </div>
           </div>
           <div className="active-context">
-            {activeConcernTitles.map((title) => (
+            {activeContextTags.map((title) => (
               <span key={title}>{title}</span>
             ))}
           </div>
@@ -2866,6 +2863,20 @@ function formatGlobalSceneStatus(state: CharacterState) {
   const locationLabel = location ? `${location.label} · ${motionStateLabels[location.motionState]}` : "位置未设定";
   const mood = state.runtime.derivedMood.label ? ` · ${state.runtime.derivedMood.label}` : "";
   return `全局记忆 · ${locationLabel}${mood}`;
+}
+
+function formatActiveContextTags(state: CharacterState) {
+  const tags: string[] = [];
+  const activity = state.runtime.currentActivity;
+  if (activity?.headingLabel) tags.push(activity.headingLabel);
+  if (activity?.summary) tags.push(compactContextTag(activity.summary));
+  if (!tags.length && state.runtime.attentionFocus) tags.push(compactContextTag(state.runtime.attentionFocus));
+  return Array.from(new Set(tags.filter(Boolean))).slice(0, 2);
+}
+
+function compactContextTag(value: string) {
+  const compacted = value.replace(/\s+/g, "");
+  return compacted.length > 14 ? `${compacted.slice(0, 14)}...` : compacted;
 }
 
 function PanelTitle({ icon: Icon, title }: { icon: typeof Activity; title: string }) {

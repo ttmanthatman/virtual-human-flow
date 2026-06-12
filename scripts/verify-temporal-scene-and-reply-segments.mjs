@@ -38,7 +38,7 @@ execFileSync(
 );
 
 const require = createRequire(import.meta.url);
-const { advanceSceneForCurrentTime, deriveCurrentActivityFromEventActivity, formatCurrentActivitySnapshot } = require(join(outDir, "pipeline/temporalScene.js"));
+const { advanceSceneForCurrentTime, deriveCurrentActivityFromEventActivity, deriveCurrentActivityFromStateUpdateNarrative, formatCurrentActivitySnapshot } = require(join(outDir, "pipeline/temporalScene.js"));
 const { runEventActivity, formatEventActivityDetails } = require(join(outDir, "pipeline/eventActivity.js"));
 const { runLlm } = require(join(outDir, "pipeline/llmClient.js"));
 const { seedState } = require(join(outDir, "data/seedState.js"));
@@ -232,6 +232,80 @@ const expiredActivityState = {
 const expiredActivityResult = advanceSceneForCurrentTime(expiredActivityState, urgentWorkEvent, new Date("2026-06-12T07:20:00.000Z"));
 if (expiredActivityResult.nextState.runtime.currentActivity) {
   throw new Error("Expected expired current activity to be cleared before routine scene progression.");
+}
+
+const barbecueMeetupState = {
+  ...movingState,
+  shortTermMemory: [
+    {
+      id: "stm_bbq_1",
+      timestamp: "2026-06-12T10:13:00.000Z",
+      speakerId: "user:qoo",
+      speakerName: "Qoo",
+      content: "微信：我把你女儿接回来了，在路上我们买了一些你爱吃的烧烤，快来一起吃呀",
+      eventId: "bbq_invite",
+    },
+    {
+      id: "stm_bbq_2",
+      timestamp: "2026-06-12T10:16:00.000Z",
+      speakerId: "user:qoo",
+      speakerName: "Qoo",
+      content: "面对面：就在小区门口右手边第一家，店名叫“大腰子烧烤”",
+      eventId: "bbq_location",
+    },
+  ],
+};
+const barbecueEvent = {
+  ...ordinaryEvent,
+  id: "bbq_turn",
+  type: "user_message",
+  timestamp: "2026-06-12T10:17:00.000Z",
+  speakerId: "user:qoo",
+  speakerName: "Qoo",
+  channel: "wechat",
+  channelLabel: "微信",
+  content: "没有点辣的，你放心吧，我照顾你女儿你就把心放到肚子里吧",
+};
+const barbecueActivity = deriveCurrentActivityFromStateUpdateNarrative(
+  barbecueMeetupState,
+  barbecueEvent,
+  { reply: "嗯，我出门了。" },
+  "她确认女儿已经被接到，注意力从上班催促转到小区门口的烧烤店和女儿身上。她说自己出门了，接下来是在小区附近去和他们会合。",
+  new Date("2026-06-12T10:17:00.000Z"),
+);
+if (!barbecueActivity || barbecueActivity.status !== "moving" || /上班|工作|通勤/.test(barbecueActivity.summary + barbecueActivity.headingLabel)) {
+  throw new Error("Expected barbecue meetup dialogue to replace stale going-to-work activity with nearby meetup movement.");
+}
+const barbecueScene = advanceSceneForCurrentTime(
+  {
+    ...barbecueMeetupState,
+    runtime: {
+      ...barbecueMeetupState.runtime,
+      currentActivity: barbecueActivity,
+    },
+  },
+  barbecueEvent,
+  new Date("2026-06-12T10:18:00.000Z"),
+);
+if (/上班|工作|通勤/.test(barbecueScene.nextState.scene.title + barbecueScene.nextState.runtime.attentionFocus)) {
+  throw new Error("Expected barbecue meetup activity not to render as commuting to work.");
+}
+const reconciledBarbecueScene = advanceSceneForCurrentTime(
+  barbecueMeetupState,
+  {
+    ...barbecueEvent,
+    id: "bbq_activity_check",
+    type: "internal_trigger",
+    speakerId: "system:activity_check",
+    speakerName: "当前活动",
+    channel: "scene_event",
+    channelLabel: "当前活动",
+    content: "查看人物现在在干什么",
+  },
+  new Date("2026-06-12T10:18:00.000Z"),
+);
+if (/上班|工作|通勤/.test(reconciledBarbecueScene.nextState.scene.title + reconciledBarbecueScene.nextState.runtime.attentionFocus)) {
+  throw new Error("Expected current-activity check to reconcile stale work activity from recent meetup dialogue.");
 }
 
 const streamedEventActivity = [];

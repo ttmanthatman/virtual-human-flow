@@ -1,4 +1,4 @@
-import { CharacterLocation, CharacterState, EventActivityResult, EventInput, RuntimeCurrentActivity, SceneState, TemporalSceneProgression } from "../core/types";
+import { CharacterLocation, CharacterState, EventActivityResult, EventInput, ReplyOutput, RuntimeCurrentActivity, SceneState, TemporalSceneProgression } from "../core/types";
 import { makeId } from "../core/utils";
 
 type SchedulePhase = TemporalSceneProgression["schedulePhase"];
@@ -54,7 +54,19 @@ export function advanceSceneForCurrentTime(
   const localClock = getLocalClock(now, timezone);
   const archetype = inferArchetype(state);
   const scheduledPhase = chooseScheduledPhase(archetype, localClock.hour);
-  const currentActivity = getActiveCurrentActivity(state, now);
+  const activeCurrentActivity = getActiveCurrentActivity(state, now);
+  const stateWithActiveActivity = activeCurrentActivity === state.runtime.currentActivity
+    ? state
+    : {
+        ...state,
+        runtime: {
+          ...state.runtime,
+          currentActivity: activeCurrentActivity,
+        },
+      };
+  const currentActivity = activeCurrentActivity
+    ? deriveCurrentActivityFromStateUpdateNarrative(stateWithActiveActivity, event, { reply: "" }, undefined, now) ?? activeCurrentActivity
+    : undefined;
   const target = currentActivity ? buildCurrentActivitySceneTarget(state, archetype, localClock, currentActivity, now) : buildScheduledSceneTarget(state, archetype, scheduledPhase, localClock);
   const previousSceneTitle = state.scene?.title;
   const nextScene = buildScene(state, target, localClock);
@@ -183,6 +195,44 @@ export function deriveCurrentActivityFromEventActivity(
     speedKmh: state.location?.speedKmh ?? 0,
     headingLabel: state.location?.headingLabel ?? "原地",
   };
+}
+
+export function deriveCurrentActivityFromStateUpdateNarrative(
+  state: CharacterState,
+  event: EventInput,
+  replyOutput: Pick<ReplyOutput, "reply">,
+  narrative: string | undefined,
+  now: Date = new Date(),
+): RuntimeCurrentActivity | undefined {
+  const current = state.runtime.currentActivity;
+  const recentContext = state.shortTermMemory
+    .slice(-8)
+    .map((memory) => memory.content)
+    .join(" ");
+  const text = [recentContext, event.content, replyOutput.reply, narrative, current?.summary, current?.detail].filter(Boolean).join(" ");
+  const hasNearbyMeetup = /烧烤|吃饭|饭店|店名|小区门口|门口|右手边|会合|一起吃|接回来了|女儿/.test(text);
+  const hasLeavingSignal = /出门|马上到|快到|过去|过去了|去找|去会合|换好鞋|路上/.test(text);
+  const childIsHandled = /女儿.*(接回|接到|带着|照顾|听话|没闹)|照顾你女儿|别让她吃太多辣/.test(text);
+  const existingWorkActivity = current?.status === "going_to_work" || /上班|工作|通勤|班表|岗位/.test([current?.summary, current?.headingLabel, current?.detail].filter(Boolean).join(" "));
+
+  if (hasNearbyMeetup && hasLeavingSignal && (childIsHandled || existingWorkActivity)) {
+    const region = state.location?.region || "当前区域";
+    return {
+      id: makeId("activity"),
+      status: "moving",
+      summary: "她正在去小区门口附近的烧烤店和女儿、对方会合。",
+      detail: compactActivityText(text),
+      startedAt: now.toISOString(),
+      expectedUntil: addMinutes(now, 30).toISOString(),
+      sourceEventId: event.id,
+      locationLabel: `${region}小区门口附近`,
+      motionState: "walking",
+      speedKmh: 4,
+      headingLabel: "去小区门口会合",
+    };
+  }
+
+  return undefined;
 }
 
 export function formatCurrentActivitySnapshot(state: CharacterState, progression: TemporalSceneProgression) {
@@ -435,7 +485,7 @@ function buildCurrentActivitySceneTarget(
     return buildActivityPreparingTarget(state, localClock, activity);
   }
   if (activity.status === "working") return buildActivityWorkTarget(state, archetype, localClock, activity);
-  if (activity.status === "moving") return buildActivityCommuteTarget(state, localClock, activity);
+  if (activity.status === "moving") return buildActivityMovingTarget(state, localClock, activity);
   if (activity.status === "resting") return buildActivityRestTarget(state, localClock, activity);
   return buildActivityHandlingTarget(state, localClock, activity);
 }
@@ -495,6 +545,30 @@ function buildActivityCommuteTarget(state: CharacterState, localClock: LocalCloc
     headingDeg: state.location?.headingDeg ?? 0,
     reason: `持续活动优先于普通作息：${activity.summary}`,
     plausibility: `只在${region}内移动，不跨城、不瞬移。`,
+  };
+}
+
+function buildActivityMovingTarget(state: CharacterState, localClock: LocalClock, activity: RuntimeCurrentActivity): SceneTarget {
+  const region = state.location?.region || "当前区域";
+  const label = activity.locationLabel || `${region}附近移动中`;
+  return {
+    phase: "errand",
+    title: label,
+    description: `${localClock.label}，她正在同一区域内按刚确认的生活动线移动。${activity.summary}`,
+    atmosphere: "路上、分心，但目标更贴近日常生活",
+    visibleCues: ["手机", "路口", "附近店铺"],
+    activeObjects: ["手机", "随身物品"],
+    sensoryProfile: "街边声音、脚步和手机消息一起进入她的注意力。",
+    interactionPressure: "她可以短句回应，但会被下一步会合或处理生活事项打断。",
+    cognitiveNarrative: `${state.profile.name}正在承接持续活动：${activity.summary}`,
+    locationLabel: label,
+    address: `${region}内，${label}`,
+    motionState: activity.motionState ?? "walking",
+    speedKmh: activity.speedKmh ?? 4,
+    headingLabel: activity.headingLabel ?? "同城移动",
+    headingDeg: state.location?.headingDeg ?? 0,
+    reason: `持续活动优先于普通作息：${activity.summary}`,
+    plausibility: `仍在${region}内移动，不跨城、不瞬移，也不把生活外出误写成上班通勤。`,
   };
 }
 

@@ -31,7 +31,7 @@
 | 关系档案 | `relationship` | domain entity | 虚拟人对某个对象的独立关系状态 | `friendship` |
 | 场景 | `scene` | domain entity | 当前对话发生的环境和氛围 | `background` |
 | 时间场景推进 | `temporalSceneProgression` | pipeline workflow | 每轮对话在 Appraisal 前根据人物位置时区和真实时间推进 `scene/location`；不按用户话语关键词移动或瞬移 | `sceneAutoSwap`, `timeJump`, `teleportScene` |
-| 当前持续活动 | `runtime.currentActivity` | runtime field/domain object | 角色因现场事件产生的持续动作或移动意图，时间场景推进会在有效期内优先承接 | `eventStateOnly`, `activityLog`, `currentTaskText` |
+| 当前持续活动 | `runtime.currentActivity` | runtime field/domain object | 角色因现场事件或 State Update 对聊天行动意图的写回产生的持续动作/移动，时间场景推进会在有效期内优先承接 | `eventStateOnly`, `activityLog`, `currentTaskText` |
 | 当前活动状态 | `CurrentActivityStatus` | domain enum | 当前持续活动的类别，例如处理事件、准备/前往工作、移动或休息 | `activityKind`, `taskMode` |
 | 人物位置 | `characterLocation` | domain object | 角色当前物理位置、速度、方向和地图上下文 | `geoPoint`, `placeInfo` |
 | 地图上下文 | `mapContext` | domain object | 位置周边道路、地点、建筑和环境摘要；当前可由种子或人工维护，未来可由地图服务解析 | `mapDataDump`, `poiText` |
@@ -107,7 +107,7 @@
 | Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport/fallbackReason；同步主路径由 `roleTurn` 和 State Update 使用 | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Role Turn/State Update/Generators/compat modules | 外部 LLM endpoint |
 | Cognitive Module Fallback Verification | `scripts/verify-cognitive-module-fallback.mjs` | 伪造未闭合 SSE JSON，验证认知模块会 fallback 而不是抛错卡住 | 无 | pass/fail | npm script | TypeScript compiler |
 | Severe State Continuity Verification | `scripts/verify-severe-state-continuity.mjs` | 伪造重大坏消息和后续普通邀约，验证自然语言 Appraisal/Decision/State Update 能承接余波且不会依赖本地强制路由 | 无 | pass/fail | npm script | Appraisal, State Updater, Response Decision, Expression Module |
-| Temporal Scene And Reply Segments Verification | `scripts/verify-temporal-scene-and-reply-segments.mjs` | 验证真实时间场景推进不会瞬移，现场事件活动 LLM 能 streaming 并解析活动段落，紧急工作事件会派生并承接当前活动，连续/爆发回复会归一化为多条消息 | 无 | pass/fail | npm script | Temporal Scene Progression, Event Activity, LLM Client |
+| Temporal Scene And Reply Segments Verification | `scripts/verify-temporal-scene-and-reply-segments.mjs` | 验证真实时间场景推进不会瞬移，现场事件活动 LLM 能 streaming 并解析活动段落，紧急工作事件会派生并承接当前活动，后续会合对话和当前活动查看能替换旧活动，连续/爆发回复会归一化为多条消息 | 无 | pass/fail | npm script | Temporal Scene Progression, Event Activity, LLM Client |
 | Update Button Clickable Verification | `scripts/verify-update-button-clickable.mjs` | 用 Playwright mock 有新版本状态，验证未登录时“更新服务器”按钮仍可点击并进入权限反馈路径 | 无 | pass/fail | npm script | App Shell |
 | Role Turn | `src/pipeline/roleTurn.ts` | 同步对话主脑：一次 LLM 调用读取人物、场景、位置、消息渠道、最近对话、关系记忆、长期候选和用户原话，输出心理状态、记忆浮现、开口倾向和台词 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<RoleTurnResult>` | Conversation Pipeline | Cognitive Module Client, Memory Retrieval helpers, Conversation Channels |
 | Conversation Channels | `src/core/conversationChannels.ts` | 定义可选消息渠道、渠道标签和写入主脑 prompt 的现实约束叙述 | `ConversationChannel`, `EventInput`, `CharacterState` | channel options / label / prompt narrative | App Shell, Conversation Pipeline | Core Types |
@@ -119,7 +119,7 @@
 | Conversation Context | `src/pipeline/conversationContext.ts` | 统一格式化最近 6 小时短期对话、过去 6 小时关系/状态/场景摘要和清理 Reply 台词，避免过期/跨用户消息被说成“刚才” | `CharacterState`, `EventInput`, `ShortTermMemory`, reply text | prompt-safe context lines, situation summary, sanitized reply text | Appraisal/Memory Retrieval/Decision/Expression Module/LLM Client | Core Types |
 | Prompt Builder | `src/pipeline/promptBuilder.ts` | 旧统一表达 helper：把前序自然语言材料综合成 Reply LLM prompt；当前同步主路径已由 `roleTurn` 取代 | event, state, appraisal, recall, decision | `ExpressionLlmRequest` | LLM Client `runExpressionLlm` | Core Types |
 | LLM Client | `src/pipeline/llmClient.ts` | 调用旧 Reply LLM 并提供回复清洗/分段 helper；当前同步主路径复用其分段函数处理 `roleTurn` 台词 | `ExpressionLlmRequest`, `LlmConfig` or reply text | `ReplyOutput` / segments | Role Turn/compat scripts | 外部 LLM endpoint |
-| State Updater | `src/pipeline/stateUpdater.ts` | 通过 State Update LLM 输出自然语言状态写回判断，再落成兼容写回壳，写入短期记忆、长期记忆、关系记忆和 runtime 展示信号 | state, event, replyOutput, context, llmConfig | next state, `StateDelta`, `stateUpdate` | Conversation Pipeline | Cognitive Module Client |
+| State Updater | `src/pipeline/stateUpdater.ts` | 通过 State Update LLM 输出自然语言状态写回判断，再落成兼容写回壳，写入短期记忆、长期记忆、关系记忆、`runtime.currentActivity` 和 runtime 展示信号 | state, event, replyOutput, context, llmConfig | next state, `StateDelta`, `stateUpdate` | Conversation Pipeline | Cognitive Module Client |
 | Runtime Signal Evaluator | `src/pipeline/runtimeSignalEvaluator.ts` | 本地读取 State Update 已写入的 runtime 形成可审计展示信号快照，不再同步调用外部 LLM 覆盖状态 | state, event, replyOutput, stateUpdatePlan, llmConfig | `runtimeSignalEvaluation`, same runtime signals | Conversation Pipeline | State Updater |
 | Mind Flow Messages | `src/chat/mindFlowMessages.ts` | 将 `MindFlowFrame` 转成中间栏消息，负责 streaming upsert、折叠和只过滤 transient 消息 | `MindFlowFrame`, `ChatMessage[]` | `ChatMessage[]` | App Shell, verification scripts | Core Types |
 | Conversation Pipeline | `src/pipeline/conversationPipeline.ts` | 串联一轮同步响应路径，并在认知模块前接入时间场景推进、消息渠道和心流 streaming | content, channel, state, llmConfig | next state, trace + `mindFlow` | App Shell | pipeline steps, Temporal Scene Progression, Conversation Channels |
@@ -192,6 +192,7 @@
 | `stripReplyStageDirections` | `src/pipeline/conversationContext.ts` | 从 Reply LLM 输出中剥离开头括号动作旁白和说话人标签，只保留角色说出口的话 | reply | string | 无 | implemented |
 | `advanceSceneForCurrentTime` | `src/pipeline/temporalScene.ts` | 在一轮对话的 Appraisal 前按真实当地时间、人物生活节奏和未过期当前活动推进场景与位置；不再按用户话语关键词触发移动 | state, event, now? | nextState, `TemporalSceneProgression` | 写入运行态 scene/location，并清理过期 `currentActivity` | implemented |
 | `deriveCurrentActivityFromEventActivity` | `src/pipeline/temporalScene.ts` | 将非聊天事件活动的心理、动作、位移和外显输出派生为持续活动状态 | state, event, activity, now? | `RuntimeCurrentActivity` | 无 | implemented |
+| `deriveCurrentActivityFromStateUpdateNarrative` | `src/pipeline/temporalScene.ts` | 从 State Update 自然语言写回、角色台词和近期短期上下文中保守识别明确的新行动，用生活会合等当前活动替换过时持续活动 | state, event, replyOutput, narrative, now? | `RuntimeCurrentActivity?` | 无 | implemented |
 | `formatCurrentActivitySnapshot` | `src/pipeline/temporalScene.ts` | 将当前场景、位置、移动状态和持续活动整理为中间栏可折叠活动卡内容 | state, progression | `{ content, details }` | 无 | implemented |
 | `getActiveCurrentActivity` | `src/pipeline/temporalScene.ts` | 读取未过期且时间有效的当前持续活动，过期或非法时返回空 | state, now | `RuntimeCurrentActivity?` | 无 | implemented |
 | `buildCurrentActivitySceneTarget` | `src/pipeline/temporalScene.ts` | 根据当前持续活动决定准备出门、通勤、工作、休息或现场处理目标场景 | state, archetype, localClock, activity, now | `SceneTarget` | 无 | implemented |
@@ -257,6 +258,8 @@
 | `buildConversationModuleCalls` | `src/App.tsx` | 将 `PipelineTrace` 转成可持久化的模块调用记录列表，可按开关过滤旧兼容视图 | trace, includeLegacyTrace | ConversationModuleCall[] | 无 | implemented |
 | `syncConversationState` | `src/App.tsx` | 一轮对话完成后把角色最新状态写回全局对话运行态 | nextState, interaction | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-state` 并更新已叠加全局运行态的档案列表 | implemented |
 | `formatGlobalSceneStatus` | `src/App.tsx` | 将当前角色全局场景、位置、移动状态和 runtime 心情摘要格式化给中间栏场景条 | state | string | 中间栏 scene strip | implemented |
+| `formatActiveContextTags` | `src/App.tsx` | 将当前活动或注意力焦点整理成中间栏顶部短标签，避免把长期关切直接当作当前上下文展示 | state | string[] | 中间栏 active context chips | implemented |
+| `compactContextTag` | `src/App.tsx` | 将当前上下文标签压缩成适合顶部小标签的短文本 | value | string | 无 | implemented |
 | `formatDossierDetailForPreview` | `src/App.tsx` | 将详细人物档案整理成 DeepSeek 预览生成输入 | dossier | string | 无 | implemented |
 | `updateMonitorProgress` | `src/App.tsx` | 将对话流程或生成监视的一步进度写入右侧 live trace，并切换当前查看步骤 | progress | void | 更新 `activeStep` 和 `liveTrace` | implemented |
 | `readNaturalLanguageEventStream` | `src/App.tsx` | 读取人物短预览自然语言 SSE，累积 delta 并兼容最终文本或 reply 对象 | response, onStream? | string | 调用 onStream 更新生成监视 | implemented |
@@ -455,7 +458,7 @@
 | `conversationChannel` | App state | `ConversationChannel` | 当前发送消息使用的渠道选择 | App Shell | handleSend/runConversationPipeline | implemented |
 | `isTriggeringEvent` | App state | `boolean` | 现场事件触发中的 UI 状态 | App Shell | event trigger form | implemented |
 | `isCheckingActivity` | App state | `boolean` | 当前活动快照生成中的 UI 状态 | App Shell | current activity check button | implemented |
-| `RuntimeState.currentActivity` | `CharacterState.runtime` | `RuntimeCurrentActivity?` | 未过期现场事件造成的持续活动，会影响后续真实时间场景推进 | Event Activity/Temporal Scene | App Shell/Conversation Pipeline | implemented |
+| `RuntimeState.currentActivity` | `CharacterState.runtime` | `RuntimeCurrentActivity?` | 未过期现场事件或 State Update 对聊天行动意图写回造成的持续活动，会影响后续真实时间场景推进 | Event Activity/State Updater/Temporal Scene | App Shell/Conversation Pipeline | implemented |
 | `userConversationHistoryEntry` | `.conversation-histories.local.json` | object | 某个用户在某个档案上的中间栏消息历史 | `/api/persona-dossiers/:id/conversation-history` | App Shell chat panel | implemented |
 | `roomConversationHistory` | `/api/conversation-histories?room=1` | `ChatMessage[]` | 同一角色下所有用户私有历史合并后的房间时间线 | Server Support | App Shell room timeline | implemented |
 | `conversationHistorySummary` | `/api/conversation-histories` | object | 登录用户可见的某人物下用户历史摘要，包含用户、消息数和更新时间 | Server Support | App Shell shared history selector | implemented |

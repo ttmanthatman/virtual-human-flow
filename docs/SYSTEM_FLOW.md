@@ -28,9 +28,9 @@
 
 Memory Recall 不是敏感词召回。当前同步主路径会把最近 6 小时最多 10 条同房间短期对话/事件、过去 6 小时关系/状态/场景摘要、长期记忆候选和关系记忆候选整理成自然语言清单，直接放进 `roleTurn` 上下文，由同一个 LLM 在人物心理里判断此刻什么会浮现。短期上下文可以包含当前说话者、其他用户、角色自己和现场事件；用户消息会带渠道标签，避免把微信、电话、门外声音和面对面共处混成同一种现实。当前说话者的关系记忆仍单独进入 `当前关系`，避免多人房间覆盖一对一关系感。`memoryRecall` trace 仍保留短期上下文和长期候选，只是由 `roleTurn.memoryNarrative` 派生，不再单独调用 Memory Recall LLM。跨天历史不会被描述成“刚才”。未来异步生命路径仍可复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
 
-左侧 UI 里的 DeepSeek 预览、性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由 DeepSeek 预览缓存、State Update 确定性写入的 runtime 展示信号、种子档案或管理员维护字段提供，不由兼容字段直接控制台词。Runtime Signal Evaluation 在同步对话里只保留本地快照和 trace，不再调用外部 LLM 覆盖 State Update 刚写入的 runtime。提交给 `roleTurn` 的是 `fullLifeStory`、`lifeEvents`、`socialPersonaPattern`、`personalitySummary`、`personalityFacets`、`relationships`、`relationshipMemory`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
+左侧 UI 里的 DeepSeek 预览、性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由 DeepSeek 预览缓存、State Update 确定性写入的 runtime 展示信号、种子档案或管理员维护字段提供，不由兼容字段直接控制台词。中间栏顶部的短标签只展示当前活动或注意力焦点，不把长期关切列表直接当作当下事件标签；长期关切仍留在左侧详情里解释。Runtime Signal Evaluation 在同步对话里只保留本地快照和 trace，不再调用外部 LLM 覆盖 State Update 刚写入的 runtime。提交给 `roleTurn` 的是 `fullLifeStory`、`lifeEvents`、`socialPersonaPattern`、`personalitySummary`、`personalityFacets`、`relationships`、`relationshipMemory`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
 
-对话开始后，系统不再把人物固定在档案初始场景。Conversation Pipeline 会先运行本地 `temporalSceneProgression`：根据 `CharacterState.location` 推断时区，用该地真实当前时间和未过期 `runtime.currentActivity` 判断人物更可能在工作、通勤、住处、睡眠、临时外出或某个持续活动里，再把 `scene/location` 推进为同一地理范围内的自然现场。同步聊天路径不再用用户话语关键词触发移动或瞬移；用户聊天话语对行动意图的影响交给后续 LLM 自然语言模块评价，并由 State Update 决定是否写成关系、状态或长期记忆。现场事件活动可以写入 `runtime.currentActivity`，在有效期内优先于普通 routine；例如接到临时上班电话后，人物会先准备出门、再通勤、再回到工作责任，而不是被 14 点 home routine 拉回鞋柜旁边。routine 仍可继续推进上班、睡眠、通勤和回家，跨城/跨国或世界观不可能的地点不会瞬移。
+对话开始后，系统不再把人物固定在档案初始场景。Conversation Pipeline 会先运行本地 `temporalSceneProgression`：根据 `CharacterState.location` 推断时区，用该地真实当前时间和未过期 `runtime.currentActivity` 判断人物更可能在工作、通勤、住处、睡眠、临时外出或某个持续活动里，再把 `scene/location` 推进为同一地理范围内的自然现场。同步聊天路径不在时间推进模块里用用户话语关键词触发移动或瞬移；用户聊天话语对行动意图的影响交给后续 LLM 自然语言模块评价，并由 State Update 写入、替换或清理 `runtime.currentActivity`。如果已有未过期活动和近期短期记忆明显冲突，“查看现在”这类内部触发也会先用近期对话校正旧活动，再做时间推进。现场事件活动也可以写入 `runtime.currentActivity`，在有效期内优先于普通 routine；例如接到临时上班电话后，人物会先准备出门、再通勤、再回到工作责任，而后续对话若明确显示她改为去小区门口和女儿会合，则 State Update 会用新的生活移动覆盖旧上班活动。routine 仍可继续推进上班、睡眠、通勤和回家，跨城/跨国或世界观不可能的地点不会瞬移。
 
 现场事件触发不是聊天输入。App Shell 接收一段现场文字，例如“杯子掉了”，构造 `room_event` 事件并用 `scene_event` 渠道标记它不是某个人说话；系统按角色所在地真实时间调用 `advanceSceneForCurrentTime(state, event)` 校准当前现场，随后调用 `runEventActivity` 让 LLM 进入一次非聊天人物活动回合，streaming 生成心理活动、动作、位移、关系影响、短期记忆写入和可能的外显输出。完成后写入一条可折叠 `event_activity` 房间活动卡，并由 `deriveCurrentActivityFromEventActivity` 把可能持续的动作/移动写入 `runtime.currentActivity`。事件活动可以持久化到当前用户私有历史并通过房间时间线被其他用户看到，但它不会调用 `roleTurn` 强制角色说话。触发区旁边的“查看现在”会构造 `internal_trigger`，只推进真实时间并把当前活动快照保存为折叠活动卡。
 
@@ -564,12 +564,13 @@ flowchart TD
     COMMIT --> RMEM["写入/强化 relationshipMemory 关系记忆区"]
     COMMIT --> REL["更新 relationships"]
     COMMIT --> CONCERN["保留 concerns 兼容字段"]
+    COMMIT --> ACTIVITY["必要时写入/替换 runtime.currentActivity"]
     COMMIT --> RUNTIME["写入 runtime.energy / derivedMood / signalProfiles"]
     COMMIT --> NEXT["nextState + StateDelta"]
     NEXT --> SIGNAL["Runtime Signal Evaluator"]
 ```
 
-State Update 不再要求 LLM 输出 JSON delta。LLM 用自然语言判断说完后的身体/情绪/注意力余波、当前用户关系印象、哪些内容只留短期、哪些值得成为长期记忆；本地只把这段 narrative 落成兼容运行态、关系记忆和审计 trace。
+State Update 不再要求 LLM 输出 JSON delta。LLM 用自然语言判断说完后的身体/情绪/注意力余波、当前用户关系印象、哪些内容只留短期、哪些值得成为长期记忆，以及角色是否已经明确改变当下行动；本地只把这段 narrative 落成兼容运行态、关系记忆、`runtime.currentActivity` 和审计 trace。
 
 ### Runtime Signal Evaluator
 
@@ -837,7 +838,7 @@ flowchart LR
 | 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`；连续回复会按 `replyOutput.segments` 写成多条角色消息；渠道标签、现场事件活动卡、当前活动快照和折叠后的真实心理流记录会随历史保存 |
 | 房间时间线 | initialized | 中间栏默认通过 `readConversationRoomMessages(dossierId)` 合并同一角色所有用户私有历史，Qoo、当前用户和虚拟人的消息会同时可见；发送仍只写当前用户私有桶 |
 | 共享角色历史查看 | initialized | 登录用户可在当前人物下列出所有用户历史摘要，并选择某个用户以只读方式查看该用户与该人物的私有历史；查看时禁用发送和事件触发 |
-| 角色全局对话运行态 | initialized | 登录用户对话后按 `dossierId` 写入 `.conversation-states.local.json`，读取档案时叠加同一人物的全局记忆、runtime、`runtime.currentActivity`、scene 和 location |
+| 角色全局对话运行态 | initialized | 登录用户对话后按 `dossierId` 写入 `.conversation-states.local.json`，读取档案时叠加同一人物的全局记忆、runtime、`runtime.currentActivity`、scene 和 location；`currentActivity` 可由现场事件或 State Update 对明确聊天行动的写回产生 |
 | 当前角色重置 | initialized | 管理员通过 `/api/persona-dossiers/:id/reset-conversation` 清理该档案全部用户历史、全局运行态和对应审计；共享档案底稿不变，前端同步清理消息桶和 localStorage |
 | 用户关系印象记忆 | initialized | `CharacterState.relationshipMemory` 作为长期记忆中的关系记忆区，按当前说话用户保存自然语言印象、关系总结、证据和最近互动，并进入召回、回复提示词和右侧展示 |
 | 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，包含用户输入、虚拟人输出、conversationEventId、history message ids 和每个 pipeline 模块的输入输出；仅管理员可查看、删除单条、清空、导出所选或完整导出所有用户所有记录；删除会级联清理同轮历史和角色运行态记忆 |
@@ -852,7 +853,7 @@ flowchart LR
 | 场景生成 | initialized | 通过 Scene Interpretation LLM 重新解读用户素材，生成 scene、状态影响、人物影响、关切和记忆预览 |
 | 场景预览 | initialized | 先显示场景摘要和状态影响预览，用户确认后应用完整状态 |
 | 人物场景一致性检测 | initialized | Profile Scene Consistency LLM 判断人物和场景是否硬冲突；硬冲突需要扭曲时空密码继续 |
-| 时间场景推进 | initialized | `temporalSceneProgression` 在 Event 后、Role Turn 前根据位置时区、真实时间和未过期 `runtime.currentActivity` 推进 `scene/location`；同步聊天不再用用户话语关键词触发移动 |
+| 时间场景推进 | initialized | `temporalSceneProgression` 在 Event 后、Role Turn 前根据位置时区、真实时间和未过期 `runtime.currentActivity` 推进 `scene/location`；同步聊天不在时间推进模块里用用户话语关键词触发移动，行动变化由后续 State Update 写回当前活动 |
 | 同步对话路径 | initialized | 登录用户身份 + 消息渠道 -> 事件 -> 时间场景推进 -> Role Turn 人物主脑 -> Appraisal/Memory/Decision 兼容视图 -> 回应输出/分段 -> State Update 自然语言写回 -> 信号快照 -> 状态变化；旧兼容视图默认隐藏 |
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
 | 结构化输出回退 | initialized | Cognitive Module Client 对仍使用结构化输出的生成/兼容模块保留 JSON 截断 fallback；同步对话认知模块使用自然语言 narrative |

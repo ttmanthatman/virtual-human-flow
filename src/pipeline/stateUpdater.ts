@@ -12,6 +12,7 @@ import {
 } from "../core/types";
 import { clamp, makeId, nowIso, round } from "../core/utils";
 import { runCognitiveModule } from "./cognitiveModuleClient";
+import { deriveCurrentActivityFromStateUpdateNarrative } from "./temporalScene";
 
 export async function applyStateUpdates(
   state: CharacterState,
@@ -278,6 +279,8 @@ function commitStateUpdates(
   }
 
   const activeConcernIds = nextConcerns.filter((concern) => concern.status === "active" && concern.intensity > 0.15).map((concern) => concern.id);
+  const nextCurrentActivity = deriveCurrentActivityFromStateUpdateNarrative(state, event, replyOutput, stateUpdatePlan.narrative ?? stateUpdatePlan.internalStateNote);
+  if (nextCurrentActivity) runtimeChanges.push(`currentActivity -> ${nextCurrentActivity.summary}`);
   const moodFromConcerns = nextConcerns.reduce((sum, concern) => sum + concern.valence * concern.intensity, 0) / Math.max(nextConcerns.length, 1);
   const arousalFromConcerns = nextConcerns.reduce((sum, concern) => sum + concern.arousal * concern.intensity, 0) / Math.max(nextConcerns.length, 1);
   const impact = computeInteractionImpact(context);
@@ -370,6 +373,7 @@ function commitStateUpdates(
       relationshipMemory: relationshipMemory.slice(-80),
       runtime: {
         ...state.runtime,
+        currentActivity: nextCurrentActivity ?? state.runtime.currentActivity,
         energy,
         activeConcernIds,
         lastActiveAt: nowIso(),
