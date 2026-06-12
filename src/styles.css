@@ -1041,15 +1041,20 @@ textarea {
   border-radius: 8px;
   flex: 1;
   height: 38px;
+  min-width: 0;
   padding: 0 11px;
 }
 
 .event-trigger button {
+  align-items: center;
   background: #f7fbfa;
   border: 1px solid #cfe1dd;
   border-radius: 8px;
   color: #23534d;
+  display: inline-flex;
+  gap: 6px;
   height: 38px;
+  justify-content: center;
   min-width: 118px;
 }
 

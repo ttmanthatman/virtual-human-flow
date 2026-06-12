@@ -17,13 +17,13 @@ Server Support 负责 Node/Vite/生产服务共享的后端能力：登录会话
 ## 输入输出
 
 - 输入：HTTP request、本地 runtime JSON、`builtinPersonaDossiers`、liao 登录响应、git 工作树状态。
-- 输出：auth session、persona dossiers、当前用户 conversation history（含渠道标签、现场事件活动卡和折叠心理流记录）、当前角色房间 room messages、当前角色下所有用户 history summaries/messages、conversation states、conversation audits、conversation audit export、审计删除级联清理结果、角色重置清理结果、update status/SSE。
+- 输出：auth session、persona dossiers、当前用户 conversation history（含渠道标签、现场事件活动卡、当前活动快照和折叠心理流记录）、当前角色房间 room messages、当前角色下所有用户 history summaries/messages、conversation states（含 `runtime.currentActivity`）、conversation audits、conversation audit export、审计删除级联清理结果、角色重置清理结果、update status/SSE。
 
 ## 不变量
 
 - `.deepseek.local.json`、`.persona-dossiers.local.json`、`.conversation-histories.local.json`、`.conversation-states.local.json`、`.conversation-audits.local.json` 不能提交。
 - 共享档案底稿和角色全局运行态必须分开。
-- 登录用户只能向自己的 `userId + dossierId` 中间栏消息历史写入；角色记忆、runtime、scene 和 location 是同一人物的全局运行态。
+- 登录用户只能向自己的 `userId + dossierId` 中间栏消息历史写入；角色记忆、runtime、`runtime.currentActivity`、scene 和 location 是同一人物的全局运行态。
 - 登录用户默认可以读取当前角色的房间时间线；房间时间线由同一 `dossierId` 下所有私有历史合并、按时间排序、去重生成，不提供冒充其他用户写入能力。
 - 消息历史 sanitizer 必须保留 `channel`、`channelLabel`、`messageType: "mind_flow" | "event_activity"`、`collapsed` 和 `details`，让渠道现实约束、现场事件和真实心理流记录能在刷新后继续显示。
 - 登录用户可以通过共享历史入口只读查看当前角色下某个用户的中间栏消息；不能通过该入口写入或冒充其他用户。

@@ -150,8 +150,25 @@ export interface RelationshipMemory {
   }[];
 }
 
+export type CurrentActivityStatus = "handling_event" | "going_to_work" | "working" | "resting" | "moving";
+
+export interface RuntimeCurrentActivity {
+  id: string;
+  status: CurrentActivityStatus;
+  summary: string;
+  detail: string;
+  startedAt: string;
+  expectedUntil?: string;
+  sourceEventId?: string;
+  locationLabel?: string;
+  motionState?: CharacterLocation["motionState"];
+  speedKmh?: number;
+  headingLabel?: string;
+}
+
 export interface RuntimeState {
   attentionFocus?: string;
+  currentActivity?: RuntimeCurrentActivity;
   energy: number;
   derivedMood: {
     valence: number;

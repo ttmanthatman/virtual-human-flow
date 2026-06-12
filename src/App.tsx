@@ -38,7 +38,7 @@ import { runConversationPipeline } from "./pipeline/conversationPipeline";
 import { formatEventActivityDetails, runEventActivity } from "./pipeline/eventActivity";
 import { generateDossierFromDescription, generateSceneFromDescription } from "./pipeline/generators";
 import { evaluateProfileSceneConsistency } from "./pipeline/profileSceneConsistency";
-import { advanceSceneForCurrentTime } from "./pipeline/temporalScene";
+import { advanceSceneForCurrentTime, deriveCurrentActivityFromEventActivity, formatCurrentActivitySnapshot } from "./pipeline/temporalScene";
 import { filterPersistableConversationMessages, foldTransientMindFlowMessages, upsertMindFlowChatMessage } from "./chat/mindFlowMessages";
 import packageInfo from "../package.json";
 
@@ -381,6 +381,7 @@ export function App() {
   const [activeStep, setActiveStep] = useState<MonitorStepKey>("event");
   const [isRunning, setIsRunning] = useState(false);
   const [isTriggeringEvent, setIsTriggeringEvent] = useState(false);
+  const [isCheckingActivity, setIsCheckingActivity] = useState(false);
   const [error, setError] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
   const [deepseekStatus, setDeepseekStatus] = useState("正在检查 DeepSeek 连接");
@@ -1608,6 +1609,7 @@ export function App() {
       });
       const details = formatEventActivityDetails(activity.output);
       const eventSummary = (activity.output.externalOutput || activity.output.action || activity.output.psychologicalActivity).slice(0, 260);
+      const currentActivity = deriveCurrentActivityFromEventActivity(sceneAwareState, eventInput, activity.output, new Date(eventIso));
       const activityMessage: ChatMessage = {
         id: activityMessageId,
         speaker: "persona",
@@ -1625,7 +1627,8 @@ export function App() {
         ...sceneAwareState,
         runtime: {
           ...sceneAwareState.runtime,
-          attentionFocus: activity.output.psychologicalActivity.slice(0, 160) || sceneAwareState.runtime.attentionFocus,
+          attentionFocus: currentActivity.summary || activity.output.psychologicalActivity.slice(0, 160) || sceneAwareState.runtime.attentionFocus,
+          currentActivity,
         },
         shortTermMemory: [
           ...sceneAwareState.shortTermMemory,
@@ -1650,8 +1653,65 @@ export function App() {
       });
       setEventTextInput("");
       if (isAuthenticated) await loadSharedConversationHistorySummaries(activeDossierId);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "触发现场事件失败。");
     } finally {
       setIsTriggeringEvent(false);
+    }
+  }
+
+  async function handleCheckCurrentActivity() {
+    if (!requireLogin("查看当前活动")) return;
+    if (isViewingSharedUserHistory) {
+      setError("正在查看单个用户历史；切回房间时间线后再查看当前活动。");
+      return;
+    }
+    if (isCheckingActivity) return;
+
+    setIsCheckingActivity(true);
+    setError("");
+    const eventIso = nowIso();
+    const eventInput = {
+      id: `activity_check_${Date.now()}`,
+      type: "internal_trigger" as const,
+      timestamp: eventIso,
+      speakerId: "system:activity_check",
+      speakerName: "当前活动",
+      roomId: "main_room",
+      channel: "scene_event" as const,
+      channelLabel: "当前活动",
+      content: "查看人物现在在干什么",
+    };
+
+    try {
+      const { nextState, progression } = advanceSceneForCurrentTime(state, eventInput);
+      const snapshot = formatCurrentActivitySnapshot(nextState, progression);
+      const activityMessage: ChatMessage = {
+        id: makeId("current_activity"),
+        speaker: "persona",
+        speakerName: `${nextState.profile.name} · 现在`,
+        channel: "scene_event",
+        channelLabel: "当前活动",
+        content: `现在：${snapshot.content}`,
+        timestamp: eventIso,
+        messageType: "event_activity",
+        transient: false,
+        collapsed: true,
+        details: snapshot.details,
+      };
+      setState(nextState);
+      updateActiveDossier({ state: nextState, title: nextState.profile.name });
+      setMessagesForHistory(activeRoomHistoryKey, (items) => [...items, activityMessage]);
+      await persistConversationHistoryMessages(activeDossierId, [activityMessage]);
+      await syncConversationState(nextState, {
+        userInput: activityMessage.content,
+        personaOutput: snapshot.details.join("；"),
+      });
+      if (isAuthenticated) await loadSharedConversationHistorySummaries(activeDossierId);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "查看当前活动失败。");
+    } finally {
+      setIsCheckingActivity(false);
     }
   }
 
@@ -2160,6 +2220,9 @@ export function App() {
             <input value={eventTextInput} onChange={(event) => setEventTextInput(event.target.value)} placeholder="现场事件，例如：杯子掉了" disabled={isTriggeringEvent || isViewingSharedUserHistory} />
             <button type="submit" disabled={isTriggeringEvent || isViewingSharedUserHistory}>
               <Activity size={16} /> {isTriggeringEvent ? "触发中" : "触发事件"}
+            </button>
+            <button type="button" onClick={handleCheckCurrentActivity} disabled={isCheckingActivity || isTriggeringEvent || isViewingSharedUserHistory}>
+              <MapPin size={16} /> {isCheckingActivity ? "查看中" : "查看现在"}
             </button>
           </form>
 

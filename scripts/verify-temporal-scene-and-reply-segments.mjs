@@ -38,7 +38,7 @@ execFileSync(
 );
 
 const require = createRequire(import.meta.url);
-const { advanceSceneForCurrentTime } = require(join(outDir, "pipeline/temporalScene.js"));
+const { advanceSceneForCurrentTime, deriveCurrentActivityFromEventActivity, formatCurrentActivitySnapshot } = require(join(outDir, "pipeline/temporalScene.js"));
 const { runEventActivity, formatEventActivityDetails } = require(join(outDir, "pipeline/eventActivity.js"));
 const { runLlm } = require(join(outDir, "pipeline/llmClient.js"));
 const { seedState } = require(join(outDir, "data/seedState.js"));
@@ -133,6 +133,105 @@ if (goHomeCommandResult.progression.schedulePhase !== "work") {
 }
 if (goHomeCommandResult.nextState.location.label !== workResult.nextState.location.label) {
   throw new Error("Expected go-home wording not to change location through local keyword logic.");
+}
+
+const zhengzhouStationSecurityHomeState = {
+  ...seedState,
+  profile: {
+    ...seedState.profile,
+    id: "persona_sun_xiaoya",
+    name: "孙小雅",
+    displaySummary: "郑州东站安检员，带着孩子生活，轮班和临时顶班会直接压到她身上。",
+    background: "她住在郑州市郑东新区，平时在郑州东站做安检，轮班、顶岗和领导临时电话都会打乱她回家的节奏。",
+    speakingStyle: "郑州生活口语，紧绷、克制，忙起来句子短。",
+  },
+  scene: {
+    ...seedState.scene,
+    id: "scene_sun_home",
+    title: "郑州市郑东新区住处",
+    description: "她刚回到家，站在玄关鞋柜旁，钥匙还攥在手里。",
+    atmosphere: "刚进门的安静和被工作打断的疲惫叠在一起",
+  },
+  location: {
+    ...seedState.location,
+    label: "郑州市郑东新区住处",
+    address: "郑州市郑东新区一处出租屋",
+    region: "郑州市郑东新区",
+    coordinate: { lng: 113.78, lat: 34.76 },
+    speedKmh: 0,
+    headingLabel: "原地",
+    motionState: "stationary",
+    source: "manual",
+    mapContext: {
+      ...seedState.location.mapContext,
+      environmentSummary: "普通住宅小区，离郑州东站有一段同城通勤距离。",
+      source: "manual",
+    },
+  },
+};
+
+const urgentWorkEvent = {
+  ...ordinaryEvent,
+  id: "urgent_work_call",
+  type: "room_event",
+  timestamp: "2026-06-12T06:54:00.000Z",
+  speakerId: "system:room_event",
+  speakerName: "现场事件",
+  channel: "scene_event",
+  channelLabel: "现场事件",
+  content: "领导打电话给她，说岗位缺人，让她快来上班！",
+};
+const urgentActivity = {
+  psychologicalActivity: "领导催她快来上班，那种刚回家就被叫回去的烦躁和责任感一起压上来。",
+  action: "她看了一眼手机，抓紧钥匙和包，开始确认班表。",
+  movement: "她没有继续站在鞋柜旁边，身体已经往门口和楼道方向动。",
+  relationshipShift: "她对领导更烦，但也知道岗位缺人不是一句不去就能解决。",
+  memoryNote: "这通电话留下了被临时顶班催走的余波。",
+  externalOutput: "",
+};
+const currentActivity = deriveCurrentActivityFromEventActivity(zhengzhouStationSecurityHomeState, urgentWorkEvent, urgentActivity, new Date("2026-06-12T06:54:00.000Z"));
+if (currentActivity.status !== "going_to_work") {
+  throw new Error(`Expected urgent work event to create going_to_work activity, got ${currentActivity.status}.`);
+}
+const movingState = {
+  ...zhengzhouStationSecurityHomeState,
+  runtime: {
+    ...zhengzhouStationSecurityHomeState.runtime,
+    currentActivity,
+  },
+};
+const preparingResult = advanceSceneForCurrentTime(movingState, urgentWorkEvent, new Date("2026-06-12T06:55:00.000Z"));
+if (preparingResult.progression.schedulePhase !== "commute" || !preparingResult.nextState.scene.title.includes("准备出门")) {
+  throw new Error("Expected urgent work activity to override routine home phase and move into preparing-to-leave state.");
+}
+if (preparingResult.nextState.location.motionState === "stationary" || /鞋柜旁/.test(preparingResult.nextState.scene.description)) {
+  throw new Error("Expected urgent work activity not to leave the persona standing at the shoe cabinet.");
+}
+const commuteResult = advanceSceneForCurrentTime(movingState, urgentWorkEvent, new Date("2026-06-12T06:59:00.000Z"));
+if (commuteResult.progression.schedulePhase !== "commute" || !commuteResult.nextState.scene.title.includes("通勤路上")) {
+  throw new Error("Expected sustained work activity to progress from preparing to commute after a few minutes.");
+}
+const arrivedWorkResult = advanceSceneForCurrentTime(movingState, urgentWorkEvent, new Date("2026-06-12T07:35:00.000Z"));
+if (arrivedWorkResult.progression.schedulePhase !== "work" || /住处/.test(arrivedWorkResult.nextState.location.label)) {
+  throw new Error("Expected sustained work activity to reach a work scene without leaving the location label at home.");
+}
+const activitySnapshot = formatCurrentActivitySnapshot(preparingResult.nextState, preparingResult.progression);
+if (!activitySnapshot.content.includes("准备") || !activitySnapshot.details.some((detail) => detail.includes("当前活动"))) {
+  throw new Error("Expected current-activity snapshot to report what the persona is doing now.");
+}
+const expiredActivityState = {
+  ...movingState,
+  runtime: {
+    ...movingState.runtime,
+    currentActivity: {
+      ...currentActivity,
+      expectedUntil: "2026-06-12T06:55:00.000Z",
+    },
+  },
+};
+const expiredActivityResult = advanceSceneForCurrentTime(expiredActivityState, urgentWorkEvent, new Date("2026-06-12T07:20:00.000Z"));
+if (expiredActivityResult.nextState.runtime.currentActivity) {
+  throw new Error("Expected expired current activity to be cleared before routine scene progression.");
 }
 
 const streamedEventActivity = [];

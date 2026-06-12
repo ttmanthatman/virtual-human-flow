@@ -7,7 +7,7 @@
 当前系统有三条主要数据流：
 
 1. 对话同步响应流：`App Shell -> Conversation Pipeline -> Role Turn -> Appraisal/Memory/Decision 兼容视图 -> State Update -> Runtime Signal Snapshot -> App Shell -> Server Support 持久化`。
-2. 非聊天现场事件流：`App Shell -> Temporal Scene Progression -> Event Activity -> App Shell 活动卡 -> Server Support 持久化`。
+2. 非聊天现场事件流：`App Shell -> Temporal Scene Progression -> Event Activity -> runtime.currentActivity -> App Shell 活动卡/当前活动快照 -> Server Support 持久化`。
 3. 档案和场景生成流：`App Shell -> Generators -> Cognitive Module Client -> DeepSeek Proxy -> Generators 归一化 -> Profile Scene Consistency -> App Shell -> Server Support 共享档案持久化`。
 4. 登录、审计、历史和部署流：`App Shell -> Vite Dev Proxy 或 Production Server -> Server Support -> liao Chatroom / runtime JSON files / git working tree / DeepSeek API`。
 
@@ -159,6 +159,7 @@
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `runtime.attentionFocus` | `string?` | 当前注意力焦点。 |
+| `runtime.currentActivity` | `RuntimeCurrentActivity?` | 当前持续活动；来自现场事件活动派生，时间场景推进会在有效期内优先承接。 |
 | `runtime.energy` | `number` | UI 能量值，0-1。 |
 | `runtime.derivedMood.valence` | `number` | 情绪倾向，-1 到 1。 |
 | `runtime.derivedMood.arousal` | `number` | 唤醒度，0-1。 |
@@ -170,6 +171,22 @@
 | `RuntimeSignalProfile.summary` | `string` | 指标摘要。 |
 | `RuntimeSignalProfile.considerations` | `string[]` | 形成指标的因素。 |
 | `RuntimeSignalProfile.cognitiveNarrative` | `string` | 只描述内部状态，不写回复指令。 |
+
+### `RuntimeCurrentActivity`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `string` | 当前活动 ID。 |
+| `status` | `"handling_event" \| "going_to_work" \| "working" \| "resting" \| "moving"` | 当前活动类别。 |
+| `summary` | `string` | 人物现在正在做什么的自然语言摘要。 |
+| `detail` | `string` | 事件活动内容压缩后的来源说明。 |
+| `startedAt` | `string` | 活动开始时间。 |
+| `expectedUntil` | `string?` | 活动预期有效期；过期后按 routine 校准。 |
+| `sourceEventId` | `string?` | 造成活动的现场事件 ID。 |
+| `locationLabel` | `string?` | 活动倾向的位置标签。 |
+| `motionState` | `CharacterLocation.motionState?` | 活动倾向的移动状态。 |
+| `speedKmh` | `number?` | 活动倾向速度。 |
+| `headingLabel` | `string?` | 活动倾向方向。 |
 
 ### `SceneState`
 
@@ -273,6 +290,7 @@
 | `EventActivityResult` | `relationshipShift` | `string` | 非聊天事件对房间关系距离的影响。 |
 | `EventActivityResult` | `memoryNote` | `string` | 非聊天事件写入短期记忆的余味。 |
 | `EventActivityResult` | `externalOutput` | `string` | 外显输出；可为空，不等同于聊天回复。 |
+| `RuntimeCurrentActivity` | `status/summary/detail/startedAt/expectedUntil` | mixed | 从 `EventActivityResult` 派生的持续活动层，供后续时间推进和当前活动快照读取。 |
 | `ChatMessage` | `channel` | `ConversationChannel?` | 中间栏消息渠道；用于刷新后保留现实媒介。 |
 | `ChatMessage` | `channelLabel` | `string?` | 中间栏显示的渠道标签。 |
 | `ChatMessage` | `messageType` | `"normal" / "mind_flow" / "event_activity"?` | 中间栏消息类型；心理流和现场事件使用活动卡展示。 |
@@ -344,7 +362,8 @@
 | `handleSaveDeepseekConfig` | 无 | 管理员保存 DeepSeek key。 | POST `/api/deepseek-config`，服务端写 `.deepseek.local.json`。 |
 | `handleTestDeepseekConfig` | 无 | 测试 DeepSeek。 | POST `/api/deepseek-chat`。 |
 | `handleSend` | form event | 对话发送主入口。 | 运行 pipeline、保存历史、同步状态、记录审计。 |
-| `handleTriggerRoomEvent` | form event | 非聊天现场事件触发入口。 | 根据文字构造 `room_event`/`scene_event`，调 `advanceSceneForCurrentTime` 校准当前现场后运行 `runEventActivity`，streaming 更新 `event_activity` 活动卡，并写短期记忆、房间历史和角色全局运行态。 |
+| `handleTriggerRoomEvent` | form event | 非聊天现场事件触发入口。 | 根据文字构造 `room_event`/`scene_event`，调 `advanceSceneForCurrentTime` 校准当前现场后运行 `runEventActivity`，streaming 更新 `event_activity` 活动卡，并写短期记忆、`runtime.currentActivity`、房间历史和角色全局运行态。 |
+| `handleCheckCurrentActivity` | 无 | 查看人物现在在做什么。 | 构造 `internal_trigger`，调 `advanceSceneForCurrentTime` 和 `formatCurrentActivitySnapshot`，保存折叠活动快照并同步全局运行态。 |
 | `handleGenerateDossier` | 无 | 管理员生成档案预览。 | 调 `generateDossierFromDescription`。 |
 | `handleApplyDossier` | 无 | 应用人物预览。 | 调 `applyCandidateState`。 |
 | `handleGenerateScene` | 无 | 管理员生成场景预览。 | 调 `generateSceneFromDescription`。 |
@@ -370,7 +389,7 @@
 
 输出：`{ nextState, trace }`。`nextState` 回到 App Shell 并保存到角色全局运行态；`trace` 显示在右侧并保存到审计。
 
-数据流顺序：`content -> event -> temporalSceneProgression -> roleTurn -> appraisal/memory/decision compatibility traces -> replyOutput -> stateUpdate narrative -> runtimeSignalEvaluation -> stateDelta -> nextState/trace`。
+数据流顺序：`content -> event -> temporalSceneProgression(读取未过期 runtime.currentActivity) -> roleTurn -> appraisal/memory/decision compatibility traces -> replyOutput -> stateUpdate narrative -> runtimeSignalEvaluation -> stateDelta -> nextState/trace`。
 
 ### Cognitive Module Client: `src/pipeline/cognitiveModuleClient.ts`
 

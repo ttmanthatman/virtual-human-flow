@@ -1,4 +1,4 @@
-import { CharacterLocation, CharacterState, EventInput, SceneState, TemporalSceneProgression } from "../core/types";
+import { CharacterLocation, CharacterState, EventActivityResult, EventInput, RuntimeCurrentActivity, SceneState, TemporalSceneProgression } from "../core/types";
 import { makeId } from "../core/utils";
 
 type SchedulePhase = TemporalSceneProgression["schedulePhase"];
@@ -54,7 +54,8 @@ export function advanceSceneForCurrentTime(
   const localClock = getLocalClock(now, timezone);
   const archetype = inferArchetype(state);
   const scheduledPhase = chooseScheduledPhase(archetype, localClock.hour);
-  const target = buildScheduledSceneTarget(state, archetype, scheduledPhase, localClock);
+  const currentActivity = getActiveCurrentActivity(state, now);
+  const target = currentActivity ? buildCurrentActivitySceneTarget(state, archetype, localClock, currentActivity, now) : buildScheduledSceneTarget(state, archetype, scheduledPhase, localClock);
   const previousSceneTitle = state.scene?.title;
   const nextScene = buildScene(state, target, localClock);
   const nextLocation = buildLocation(state, target, now);
@@ -84,9 +85,124 @@ export function advanceSceneForCurrentTime(
       runtime: {
         ...state.runtime,
         attentionFocus: refineAttentionFocus(state, target),
+        currentActivity,
       },
     },
     progression,
+  };
+}
+
+export function deriveCurrentActivityFromEventActivity(
+  state: CharacterState,
+  event: EventInput,
+  activity: EventActivityResult,
+  now: Date = new Date(),
+): RuntimeCurrentActivity {
+  const text = [event.content, activity.psychologicalActivity, activity.action, activity.movement, activity.memoryNote, activity.externalOutput].filter(Boolean).join(" ");
+  const startedAt = now.toISOString();
+  const urgentWorkDemand = /领导|排班|班表|岗位|工作|安检|上班/.test(text) && /快|马上|立刻|赶|到岗|顶班|缺人/.test(text);
+  const workCall = /领导|排班|班表|岗位|工作|安检|上班/.test(text) && /电话|来电|手机|屏幕|接听|铃声|震动/.test(text);
+  const movement = /出门|离开|往外|走到|下楼|路上|赶去|去上班|去工作|通勤/.test(text);
+  const resting = /睡|躺|休息|关灯|床/.test(text);
+  const region = state.location?.region || "当前区域";
+
+  if (urgentWorkDemand) {
+    return {
+      id: makeId("activity"),
+      status: "going_to_work",
+      summary: "接到工作催促后，她正在从停滞里抽出来，准备确认班表、拿手机钥匙并往工作方向动。",
+      detail: compactActivityText(text),
+      startedAt,
+      expectedUntil: addMinutes(now, 360).toISOString(),
+      sourceEventId: event.id,
+      locationLabel: `${region}住处准备出门`,
+      motionState: "walking",
+      speedKmh: 2,
+      headingLabel: "准备去上班",
+    };
+  }
+
+  if (workCall) {
+    return {
+      id: makeId("activity"),
+      status: "handling_event",
+      summary: "她正在处理领导来电带来的排班压力，注意力被工作和休息日被打断的烦躁占住。",
+      detail: compactActivityText(text),
+      startedAt,
+      expectedUntil: addMinutes(now, 20).toISOString(),
+      sourceEventId: event.id,
+      locationLabel: state.location?.label,
+      motionState: state.location?.motionState ?? "stationary",
+      speedKmh: state.location?.speedKmh ?? 0,
+      headingLabel: state.location?.headingLabel ?? "原地",
+    };
+  }
+
+  if (movement) {
+    return {
+      id: makeId("activity"),
+      status: "moving",
+      summary: "她已经离开原来的停顿点，正在按现场发生的事移动。",
+      detail: compactActivityText(text),
+      startedAt,
+      expectedUntil: addMinutes(now, 30).toISOString(),
+      sourceEventId: event.id,
+      locationLabel: `${region}附近移动中`,
+      motionState: "walking",
+      speedKmh: 4,
+      headingLabel: "同城移动",
+    };
+  }
+
+  if (resting) {
+    return {
+      id: makeId("activity"),
+      status: "resting",
+      summary: "她把注意力收回身体和休息里，短时间内不太想处理外界互动。",
+      detail: compactActivityText(text),
+      startedAt,
+      expectedUntil: addMinutes(now, 60).toISOString(),
+      sourceEventId: event.id,
+      locationLabel: state.location?.label,
+      motionState: "stationary",
+      speedKmh: 0,
+      headingLabel: "原地",
+    };
+  }
+
+  return {
+    id: makeId("activity"),
+    status: "handling_event",
+    summary: activity.action || activity.psychologicalActivity || "她正在处理刚刚发生的现场事件。",
+    detail: compactActivityText(text),
+    startedAt,
+    expectedUntil: addMinutes(now, 10).toISOString(),
+    sourceEventId: event.id,
+    locationLabel: state.location?.label,
+    motionState: state.location?.motionState ?? "stationary",
+    speedKmh: state.location?.speedKmh ?? 0,
+    headingLabel: state.location?.headingLabel ?? "原地",
+  };
+}
+
+export function formatCurrentActivitySnapshot(state: CharacterState, progression: TemporalSceneProgression) {
+  const activity = state.runtime.currentActivity;
+  const location = state.location;
+  const motion = location ? `${formatMotionState(location.motionState)}，约 ${location.speedKmh} km/h，${location.headingLabel}` : "位置未设定";
+  const content = activity?.summary
+    ? `${state.profile.name}现在在${location?.label ?? "当前场景"}，${motion}。${activity.summary}`
+    : `${state.profile.name}现在在${location?.label ?? state.scene?.title ?? "当前场景"}，${motion}。${state.runtime.attentionFocus ? `注意力在：${state.runtime.attentionFocus}` : "没有额外活动记录。"}`;
+  return {
+    content,
+    details: [
+      `时间：${progression.localTimeLabel}`,
+      `场景：${state.scene?.title ?? "未设定"}。${state.scene?.description ?? ""}`,
+      `位置：${location ? `${location.label}，${location.address}，${location.region}` : "未设定"}`,
+      `移动：${motion}`,
+      activity ? `当前活动：${activity.summary}` : "当前活动：没有额外持续活动，按真实时间和作息校准。",
+      activity?.detail ? `活动来源：${activity.detail}` : "",
+      `校准理由：${progression.reason}`,
+    ].filter(Boolean),
   };
 }
 
@@ -233,6 +349,7 @@ function buildScheduledSceneTarget(
   }
 
   if (phase === "work") {
+    const isAlreadyAtWorkplace = state.location?.label === workplace;
     return {
       phase,
       title: workplace,
@@ -243,11 +360,11 @@ function buildScheduledSceneTarget(
       sensoryProfile: state.scene?.sensoryProfile || "现场的声音、气味和时间压力会进入她的表达。",
       interactionPressure: state.scene?.interactionPressure || "她很难把对话和手头责任完全切开。",
       cognitiveNarrative: `${localClock.label} 的当地时间让她处在${workplace}这类工作现场；她说话会被职业责任、场地声音和现实压力牵动。`,
-      locationLabel: state.location?.label || workplace,
-      address: state.location?.address || `${region}内的工作现场`,
-      motionState: state.location?.motionState && state.location.motionState !== "unknown" ? state.location.motionState : "stationary",
-      speedKmh: state.location?.speedKmh ?? 0,
-      headingLabel: state.location?.headingLabel ?? "原地",
+      locationLabel: workplace,
+      address: isAlreadyAtWorkplace && state.location?.address ? state.location.address : `${region}内的工作现场`,
+      motionState: isAlreadyAtWorkplace && state.location?.motionState && state.location.motionState !== "unknown" ? state.location.motionState : "stationary",
+      speedKmh: isAlreadyAtWorkplace ? (state.location?.speedKmh ?? 0) : 0,
+      headingLabel: isAlreadyAtWorkplace ? (state.location?.headingLabel ?? "原地") : "已到工作现场",
       headingDeg: state.location?.headingDeg ?? 0,
       reason: `当地时间 ${localClock.label} 属于${archetypeLabel}的工作/主要任务段。`,
       plausibility: `沿用档案里的${region}工作位置，不改变城市或世界观。`,
@@ -304,6 +421,141 @@ function buildScheduledSceneTarget(
   };
 }
 
+function buildCurrentActivitySceneTarget(
+  state: CharacterState,
+  archetype: PersonaArchetype,
+  localClock: LocalClock,
+  activity: RuntimeCurrentActivity,
+  now: Date,
+): SceneTarget {
+  const elapsedMinutes = Math.max(0, (now.getTime() - new Date(activity.startedAt).getTime()) / 60000);
+  if (activity.status === "going_to_work") {
+    if (elapsedMinutes >= 35) return buildActivityWorkTarget(state, archetype, localClock, activity);
+    if (elapsedMinutes >= 3) return buildActivityCommuteTarget(state, localClock, activity);
+    return buildActivityPreparingTarget(state, localClock, activity);
+  }
+  if (activity.status === "working") return buildActivityWorkTarget(state, archetype, localClock, activity);
+  if (activity.status === "moving") return buildActivityCommuteTarget(state, localClock, activity);
+  if (activity.status === "resting") return buildActivityRestTarget(state, localClock, activity);
+  return buildActivityHandlingTarget(state, localClock, activity);
+}
+
+function getActiveCurrentActivity(state: CharacterState, now: Date) {
+  const activity = state.runtime.currentActivity;
+  if (!activity) return undefined;
+  const startedAt = new Date(activity.startedAt);
+  if (!Number.isFinite(startedAt.getTime())) return undefined;
+  const expectedUntil = activity.expectedUntil ? new Date(activity.expectedUntil) : addMinutes(startedAt, 20);
+  if (Number.isFinite(expectedUntil.getTime()) && now.getTime() > expectedUntil.getTime()) return undefined;
+  return activity;
+}
+
+function buildActivityPreparingTarget(state: CharacterState, localClock: LocalClock, activity: RuntimeCurrentActivity): SceneTarget {
+  const region = state.location?.region || "当前区域";
+  const home = inferHomeLabel(state, inferArchetype(state));
+  return {
+    phase: "commute",
+    title: `${home}准备出门`,
+    description: `${localClock.label}，她没有继续钉在原地；刚发生的事把她推向下一步，正在从住处往出门动作里过渡。`,
+    atmosphere: "匆忙、压低火气，现实动作开始接管",
+    visibleCues: ["手机", "钥匙", "门口鞋柜", "随身包"],
+    activeObjects: ["手机", "钥匙", "外套"],
+    sensoryProfile: "室内声响和手机震动还在，但身体已经开始进入移动前的整理。",
+    interactionPressure: "如果这时收到消息，她会边准备边短促回应，很难展开解释。",
+    cognitiveNarrative: `${state.profile.name}正在承接持续活动：${activity.summary}`,
+    locationLabel: `${home}准备出门`,
+    address: `${region}住处门口到楼道之间`,
+    motionState: "walking",
+    speedKmh: activity.speedKmh ?? 2,
+    headingLabel: activity.headingLabel ?? "准备出门",
+    headingDeg: state.location?.headingDeg ?? 0,
+    reason: `持续活动优先于普通作息：${activity.summary}`,
+    plausibility: `仍在${region}内，只是从住处静止转入准备出门。`,
+  };
+}
+
+function buildActivityCommuteTarget(state: CharacterState, localClock: LocalClock, activity: RuntimeCurrentActivity): SceneTarget {
+  const region = state.location?.region || "当前区域";
+  const workplace = inferWorkplaceLabel(state);
+  return {
+    phase: "commute",
+    title: `${region}通勤路上`,
+    description: `${localClock.label}，她正在同一区域内往${workplace}方向移动。`,
+    atmosphere: "路上、分心、带着被催动后的紧绷",
+    visibleCues: ["手机", "路口", "人流"],
+    activeObjects: ["手机", "钥匙", "随身物品"],
+    sensoryProfile: "路声和脚步会把回复切短，现实动线会打断对话。",
+    interactionPressure: "她能看到消息，但注意力会被路线、时间和工作压力分走。",
+    cognitiveNarrative: `${state.profile.name}没有停在旧场景里；持续活动正在把她推向工作地点。${activity.summary}`,
+    locationLabel: `${region}通勤路上`,
+    address: `${region}内，从住处去${workplace}的路上`,
+    motionState: "walking",
+    speedKmh: activity.speedKmh && activity.speedKmh > 2 ? activity.speedKmh : 4,
+    headingLabel: activity.headingLabel ?? "往工作地点移动",
+    headingDeg: state.location?.headingDeg ?? 0,
+    reason: `持续活动优先于普通作息：${activity.summary}`,
+    plausibility: `只在${region}内移动，不跨城、不瞬移。`,
+  };
+}
+
+function buildActivityWorkTarget(state: CharacterState, archetype: PersonaArchetype, localClock: LocalClock, activity: RuntimeCurrentActivity): SceneTarget {
+  const scheduled = buildScheduledSceneTarget(state, archetype, "work", localClock);
+  return {
+    ...scheduled,
+    title: inferWorkplaceLabel(state),
+    reason: `持续活动已经把她带回工作责任里：${activity.summary}`,
+    cognitiveNarrative: `${scheduled.cognitiveNarrative} 这不是单纯按时钟切换，而是前一事件留下的行动惯性。`,
+  };
+}
+
+function buildActivityHandlingTarget(state: CharacterState, localClock: LocalClock, activity: RuntimeCurrentActivity): SceneTarget {
+  const region = state.location?.region || "当前区域";
+  const label = activity.locationLabel || state.location?.label || state.scene?.title || `${region}当前现场`;
+  return {
+    phase: "home",
+    title: label,
+    description: `${localClock.label}，她还在处理刚才发生的现场事件。${activity.summary}`,
+    atmosphere: state.scene?.atmosphere || "被刚才的事牵住",
+    visibleCues: state.scene?.visibleCues?.length ? state.scene.visibleCues : ["手机", "手边物件"],
+    activeObjects: state.scene?.activeObjects?.length ? state.scene.activeObjects : ["手机"],
+    sensoryProfile: state.scene?.sensoryProfile || "刚发生的事还在影响身体和注意力。",
+    interactionPressure: state.scene?.interactionPressure || "回复会被当前活动打断。",
+    cognitiveNarrative: `${state.profile.name}正在承接持续活动：${activity.summary}`,
+    locationLabel: label,
+    address: state.location?.address || `${region}内当前现场`,
+    motionState: activity.motionState ?? state.location?.motionState ?? "stationary",
+    speedKmh: activity.speedKmh ?? state.location?.speedKmh ?? 0,
+    headingLabel: activity.headingLabel ?? state.location?.headingLabel ?? "原地",
+    headingDeg: state.location?.headingDeg ?? 0,
+    reason: `持续活动优先于普通作息：${activity.summary}`,
+    plausibility: `仍在${region}内承接上一事件，没有跨地理范围移动。`,
+  };
+}
+
+function buildActivityRestTarget(state: CharacterState, localClock: LocalClock, activity: RuntimeCurrentActivity): SceneTarget {
+  const region = state.location?.region || "当前区域";
+  const home = inferHomeLabel(state, inferArchetype(state));
+  return {
+    phase: "home",
+    title: home,
+    description: `${localClock.label}，她把注意力收回身体和休息里。${activity.summary}`,
+    atmosphere: "低声、疲惫、把外界推远",
+    visibleCues: ["手机", "室内灯光", "随身物品"],
+    activeObjects: ["手机"],
+    sensoryProfile: "身体疲惫会让她更短、更慢地回应。",
+    interactionPressure: "外界消息会打断她的休息感。",
+    cognitiveNarrative: `${state.profile.name}正在承接休息活动：${activity.summary}`,
+    locationLabel: home,
+    address: `${region}内与人物档案相符的住处`,
+    motionState: "stationary",
+    speedKmh: 0,
+    headingLabel: "原地",
+    headingDeg: state.location?.headingDeg ?? 0,
+    reason: `持续活动优先于普通作息：${activity.summary}`,
+    plausibility: `仍在${region}内，没有跳出档案地理范围。`,
+  };
+}
+
 function buildScene(state: CharacterState, target: SceneTarget, localClock: LocalClock): SceneState {
   return {
     id: state.scene?.id ?? makeId("scene"),
@@ -352,6 +604,29 @@ function refineAttentionFocus(state: CharacterState, target: SceneTarget) {
   if (target.phase === "errand") return "临时事项和对方意图";
   if (target.phase === "home") return "私人空间里的余波";
   return state.runtime.attentionFocus ?? target.title;
+}
+
+function addMinutes(date: Date, minutes: number) {
+  return new Date(date.getTime() + minutes * 60 * 1000);
+}
+
+function compactActivityText(text: string) {
+  return text.replace(/\s+/g, " ").trim().slice(0, 420);
+}
+
+function formatMotionState(motionState: CharacterLocation["motionState"]) {
+  switch (motionState) {
+    case "stationary":
+      return "停留";
+    case "walking":
+      return "步行";
+    case "riding":
+      return "骑行";
+    case "driving":
+      return "驾车";
+    default:
+      return "移动状态未知";
+  }
 }
 
 function inferWorkplaceLabel(state: CharacterState) {
