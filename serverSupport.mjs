@@ -666,16 +666,20 @@ function sanitizeConversationHistoryMessages(messages) {
     .map((message) => {
       const speaker = ["user", "persona", "system"].includes(message.speaker) ? message.speaker : "system";
       const timestamp = typeof message.timestamp === "string" && message.timestamp ? message.timestamp : new Date().toISOString();
-      const messageType = message.messageType === "event_activity" ? "event_activity" : undefined;
+      const messageType = ["event_activity", "mind_flow"].includes(message.messageType) ? message.messageType : undefined;
       const details = Array.isArray(message.details)
         ? message.details.filter((item) => typeof item === "string" && item.trim()).map((item) => item.slice(0, 1600)).slice(0, 12)
         : undefined;
+      const channel = ["face_to_face", "wechat", "sms", "phone", "outside_door", "scene_event"].includes(message.channel) ? message.channel : undefined;
+      const channelLabel = typeof message.channelLabel === "string" && message.channelLabel.trim() ? message.channelLabel.slice(0, 80) : undefined;
       return {
         id: typeof message.id === "string" && message.id ? message.id.slice(0, 120) : randomBytes(8).toString("base64url"),
         speaker,
         speakerName: typeof message.speakerName === "string" ? message.speakerName.slice(0, 120) : "",
         content: typeof message.content === "string" ? message.content.slice(0, 8000) : "",
         timestamp,
+        ...(channel ? { channel } : {}),
+        ...(channelLabel ? { channelLabel } : {}),
         ...(messageType ? { messageType, collapsed: message.collapsed !== false, details } : {}),
       };
     })

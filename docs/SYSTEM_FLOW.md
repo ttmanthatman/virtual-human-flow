@@ -16,23 +16,23 @@
 
 人物档案显示分成预览和详细。详细档案直接来自 `CharacterProfile` 的 `fullLifeStory`、`lifeEvents`、`personalityFacets` 和 `relationships`；预览短文由 DeepSeek 生成，不由源码手写。角色缺少 `personaDossier.previewSummary` 时，UI 显示“预览生成中”并在左侧档案卡显示扫光动画；登录用户打开该角色后，前端调用 DeepSeek 生成短预览，再通过 `/api/persona-dossiers/:id/preview` 全局保存。短预览生成和管理员人物/场景生成使用独立生成状态，不设置聊天 `isRunning`，因此生成过程中仍可发送对话。
 
-后台会记录每个登录用户的一次输入、虚拟人输出和本轮对话的模块调用记录，并在新审计记录里保存本轮 `conversationEventId` 和中间栏消息 ID，作为删除同轮运行态的锚点。审计记录写入 `.conversation-audits.local.json`，中间栏历史按 `userId + dossierId` 写入 `.conversation-histories.local.json`，角色全局对话运行态写入 `.conversation-states.local.json`，共享档案写入 `.persona-dossiers.local.json`；这些都是运行时文件，被 `.gitignore` 忽略。中间栏默认显示房间时间线：Server Support 通过 `readConversationRoomMessages(dossierId)` 合并同一角色下所有用户私有历史，按时间排序、去重后返回。中间栏心理流来自 `PipelineStepProgress.mindFlow`，只在当前轮 streaming 展示并折叠成可展开卡，不写入后台历史。只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计，也可以通过 `/api/conversation-audits/export` 导出所选记录或完整导出所有用户的所有输入输出审计记录；删除审计时会级联清理同轮中间栏消息、短期记忆、长期记忆和关系记忆片段，前端同步清理当前消息桶和 localStorage，避免旧缓存回填。所有登录用户可以通过 `/api/conversation-histories` 按人物只读查看房间时间线或各用户中间栏历史；旧 `/api/admin/conversation-histories` 路由保留兼容但同样只要求登录。管理员还可以通过 `/api/persona-dossiers/:id/reset-conversation` 将当前角色恢复到共享档案底稿，同时清理该角色所有用户历史、全局运行态和对应审计。
+后台会记录每个登录用户的一次输入、虚拟人输出和本轮对话的模块调用记录，并在新审计记录里保存本轮 `conversationEventId` 和中间栏消息 ID，作为删除同轮运行态的锚点。审计记录写入 `.conversation-audits.local.json`，中间栏历史按 `userId + dossierId` 写入 `.conversation-histories.local.json`，角色全局对话运行态写入 `.conversation-states.local.json`，共享档案写入 `.persona-dossiers.local.json`；这些都是运行时文件，被 `.gitignore` 忽略。中间栏默认显示房间时间线：Server Support 通过 `readConversationRoomMessages(dossierId)` 合并同一角色下所有用户私有历史，按时间排序、去重后返回。中间栏心理流来自 `PipelineStepProgress.mindFlow`，是 pipeline 中真实流出的心理、记忆、动作和余波帧；App Shell 会先 streaming 展示，完成后折叠成可展开 `mind_flow` 消息，并随本轮历史保存，刷新后仍可展开查看。只有管理员可以通过 `/api/conversation-audits` 读取、删除单条或清空审计，也可以通过 `/api/conversation-audits/export` 导出所选记录或完整导出所有用户的所有输入输出审计记录；删除审计时会级联清理同轮中间栏消息、短期记忆、长期记忆和关系记忆片段，前端同步清理当前消息桶和 localStorage，避免旧缓存回填。所有登录用户可以通过 `/api/conversation-histories` 按人物只读查看房间时间线或各用户中间栏历史；旧 `/api/admin/conversation-histories` 路由保留兼容但同样只要求登录。管理员还可以通过 `/api/persona-dossiers/:id/reset-conversation` 将当前角色恢复到共享档案底稿，同时清理该角色所有用户历史、全局运行态和对应审计。
 
 重要约束：同步对话链路的主脑是 `roleTurn`。它在一次 LLM 调用里把人物档案、场景、最近对话、关系记忆、长期候选和 runtime narrative 放在同一个上下文中，直接模拟人物心理并产出台词。Appraisal、Memory Recall 和 Decision 在当前同步主路径里只是 `roleTurn` 输出的兼容视图，供 UI、审计、心流帧和 State Update 读取；不能重新变成多次独立 LLM 转述。
 
-认知模块是另一类 LLM 调用。当前同步对话路径只保留两个会影响对话结果的关键外部 LLM 节点：`roleTurn` 负责说话前的一次完整人物心理-表达回合，State Update 负责说话后的自然语言状态写回判断。非聊天时间/环境事件另走 `eventActivity`：它不生成聊天台词，而是生成心理、动作、位移、关系和记忆活动卡。历史上的 Appraisal、Memory Recall、Decision 和 Reply Generation 模块文件仍保留，供兼容脚本、未来实验或局部回滚使用，但 Conversation Pipeline 主路径不再逐个调用它们。`roleTurnProbe` 是默认关闭的旁路审计节点；开启时也只在 State Update、Runtime Signal Evaluation 和 `stateDelta` 完成后观察主脑输入输出，不参与台词、状态或记忆。
+认知模块是另一类 LLM 调用。当前同步对话路径只保留两个会影响对话结果的关键外部 LLM 节点：`roleTurn` 负责说话前的一次完整人物心理-表达回合，State Update 负责说话后的自然语言状态写回判断。非聊天现场/环境事件另走 `eventActivity`：它不生成聊天台词，而是生成心理、动作、位移、关系和记忆活动卡。历史上的 Appraisal、Memory Recall、Decision 和 Reply Generation 模块文件仍保留，供兼容脚本、未来实验或局部回滚使用，但 Conversation Pipeline 主路径不再逐个调用它们。右侧“显示旧兼容管线”开关默认关闭，用来隐藏这些派生兼容视图，不影响真实主脑、状态写回和心理流记录。`roleTurnProbe` 是默认关闭的旁路审计节点；开启时也只在 State Update、Runtime Signal Evaluation 和 `stateDelta` 完成后观察主脑输入输出，不参与台词、状态或记忆。
 
 真实 LLM 的自然语言输出保留为 narrative，并用兼容字段承接旧 UI 和审计。`roleTurn` 输出四段自然语言：心理状态、记忆浮现、开口倾向、说出口；这不是 JSON 或字段表，而是为了把内部摘要与最终台词分离。Cognitive Module Client 仍保留结构化 fallback 能力，供人物/场景生成预览、兼容脚本或未来结构化模块使用。如果外部结构化 JSON 被截断或无法解析，Cognitive Module Client 会记录 `fallbackReason` 并使用本地候选结果继续流程，不能让用户对话卡死。
 
 `roleTurn` 的“说出口”段落要过台词边界归一化：开头括号动作旁白和说话人标签会被剥离，最终写入聊天历史、状态更新和审计的 `ReplyOutput.reply` 只保留角色实际说出口的话。多行台词仍按自然消息分段展示。
 
-Memory Recall 不是敏感词召回。当前同步主路径会把最近 6 小时最多 10 条同房间短期对话/事件、过去 6 小时关系/状态/场景摘要、长期记忆候选和关系记忆候选整理成自然语言清单，直接放进 `roleTurn` 上下文，由同一个 LLM 在人物心理里判断此刻什么会浮现。短期上下文可以包含当前说话者、其他用户、角色自己和时间事件；当前说话者的关系记忆仍单独进入 `当前关系`，避免多人房间覆盖一对一关系感。`memoryRecall` trace 仍保留短期上下文和长期候选，只是由 `roleTurn.memoryNarrative` 派生，不再单独调用 Memory Recall LLM。跨天历史不会被描述成“刚才”。未来异步生命路径仍可复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
+Memory Recall 不是敏感词召回。当前同步主路径会把最近 6 小时最多 10 条同房间短期对话/事件、过去 6 小时关系/状态/场景摘要、长期记忆候选和关系记忆候选整理成自然语言清单，直接放进 `roleTurn` 上下文，由同一个 LLM 在人物心理里判断此刻什么会浮现。短期上下文可以包含当前说话者、其他用户、角色自己和现场事件；用户消息会带渠道标签，避免把微信、电话、门外声音和面对面共处混成同一种现实。当前说话者的关系记忆仍单独进入 `当前关系`，避免多人房间覆盖一对一关系感。`memoryRecall` trace 仍保留短期上下文和长期候选，只是由 `roleTurn.memoryNarrative` 派生，不再单独调用 Memory Recall LLM。跨天历史不会被描述成“刚才”。未来异步生命路径仍可复用同一套召回上下文，只是 `source` 从 `sync_response` 变成 `async_life`。
 
 左侧 UI 里的 DeepSeek 预览、性格标签、能量、情绪、情绪倾向、唤醒度和当前位置是给人快速观察的摘要。它们由 DeepSeek 预览缓存、State Update 确定性写入的 runtime 展示信号、种子档案或管理员维护字段提供，不由兼容字段直接控制台词。Runtime Signal Evaluation 在同步对话里只保留本地快照和 trace，不再调用外部 LLM 覆盖 State Update 刚写入的 runtime。提交给 `roleTurn` 的是 `fullLifeStory`、`lifeEvents`、`socialPersonaPattern`、`personalitySummary`、`personalityFacets`、`relationships`、`relationshipMemory`、`runtime.signalProfiles.*.cognitiveNarrative`、`scene.cognitiveNarrative`、`characterLocation` 和 `mapContext` 等自然语言综合描述。
 
 对话开始后，系统不再把人物固定在档案初始场景。Conversation Pipeline 会先运行本地 `temporalSceneProgression`：根据 `CharacterState.location` 推断时区，用该地真实当前时间判断人物更可能在工作、通勤、住处、睡眠或临时外出场景，再把 `scene/location` 推进为同一地理范围内的自然现场。同步对话路径不再用用户话语关键词触发移动或瞬移；用户话语对行动意图的影响交给后续 LLM 自然语言模块评价，并由 State Update 决定是否写成关系、状态或长期记忆。routine 仍可继续推进上班、睡眠、通勤和回家，跨城/跨国或世界观不可能的地点不会瞬移。
 
-时间事件触发不是聊天输入。App Shell 接收一个 `datetime-local` 时间，构造 `system_tick` 事件并调用 `advanceSceneForCurrentTime(state, event, selectedDate)`，把角色推进到该时间对应的现场；随后调用 `runEventActivity` 让 LLM 进入一次非聊天人物活动回合，streaming 生成心理活动、动作、位移、关系影响、短期记忆写入和可能的外显输出。完成后写入一条可折叠 `event_activity` 房间活动卡。事件活动可以持久化到当前用户私有历史并通过房间时间线被其他用户看到，但它不会调用 `roleTurn` 强制角色说话。
+现场事件触发不是聊天输入。App Shell 接收一段现场文字，例如“杯子掉了”，构造 `room_event` 事件并用 `scene_event` 渠道标记它不是某个人说话；系统按角色所在地真实时间调用 `advanceSceneForCurrentTime(state, event)` 校准当前现场，随后调用 `runEventActivity` 让 LLM 进入一次非聊天人物活动回合，streaming 生成心理活动、动作、位移、关系影响、短期记忆写入和可能的外显输出。完成后写入一条可折叠 `event_activity` 房间活动卡。事件活动可以持久化到当前用户私有历史并通过房间时间线被其他用户看到，但它不会调用 `roleTurn` 强制角色说话。
 
 人物属性、状态信号和场景叙述只描述内部倾向、形成原因、身体感、关系距离和注意力落点，不能写成“回复应如何”“不要如何”“用什么话术”这类直接指令。`roleTurn` 会把这些自然语言材料放进同一个人物心理回合里，让 LLM 直接完成理解和表达；旧 `Prompt Builder` 和 `runExpressionLlm` 仍作为兼容 helper 保留，不再是 Conversation Pipeline 主路径的表达决策环节。
 
@@ -156,7 +156,7 @@ flowchart TD
     RT -. 流式输出 .-> T
     S -. 流式输出 .-> T
     G -. 流式输出 .-> T
-    E2[用户输入时间事件] --> TE[system_tick + advanceSceneForCurrentTime]
+    E2[用户输入现场事件文字] --> TE[room_event + scene_event + advanceSceneForCurrentTime]
     TE --> ACT[event_activity LLM 活动卡]
     ACT --> C
     ACT --> STATE[写入角色短期记忆和全局运行态]
@@ -780,7 +780,7 @@ flowchart LR
     MONITOR --> GENJSON[人物短预览/人物档案/场景生成输入输出状态]
     TRACE --> AUDIT[管理员输入输出和模块调用审计]
     CHAT --> ROOM[房间时间线: 合并多用户历史]
-    CHAT --> EVENT[时间事件触发]
+    CHAT --> EVENT[现场事件触发]
     CHAT --> SHAREDHIST[单用户历史只读筛选]
     TOP --> LOGIN[登录浮窗]
     TOP --> UPDATE[服务器更新浮窗]
@@ -830,15 +830,16 @@ flowchart LR
 | 登录机制 | initialized | 用户来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室登录接口；未登录可看界面但操作会弹登录浮窗 |
 | 权限控制 | initialized | `isAdmin` 用户可维护共享档案和查看审计；普通登录用户可选择共享档案、对话并只读查看当前角色下其他用户历史 |
 | 共享多人档案 | initialized | 管理员保存到 `.persona-dossiers.local.json`，所有登录用户可读取和使用 |
-| 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`；连续回复会按 `replyOutput.segments` 写成多条角色消息；心理流折叠卡只留在当前 UI，不进入历史文件 |
+| 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`；连续回复会按 `replyOutput.segments` 写成多条角色消息；渠道标签、现场事件活动卡和折叠后的真实心理流记录会随历史保存 |
 | 房间时间线 | initialized | 中间栏默认通过 `readConversationRoomMessages(dossierId)` 合并同一角色所有用户私有历史，Qoo、当前用户和虚拟人的消息会同时可见；发送仍只写当前用户私有桶 |
 | 共享角色历史查看 | initialized | 登录用户可在当前人物下列出所有用户历史摘要，并选择某个用户以只读方式查看该用户与该人物的私有历史；查看时禁用发送和事件触发 |
 | 角色全局对话运行态 | initialized | 登录用户对话后按 `dossierId` 写入 `.conversation-states.local.json`，读取档案时叠加同一人物的全局记忆、runtime、scene 和 location |
 | 当前角色重置 | initialized | 管理员通过 `/api/persona-dossiers/:id/reset-conversation` 清理该档案全部用户历史、全局运行态和对应审计；共享档案底稿不变，前端同步清理消息桶和 localStorage |
 | 用户关系印象记忆 | initialized | `CharacterState.relationshipMemory` 作为长期记忆中的关系记忆区，按当前说话用户保存自然语言印象、关系总结、证据和最近互动，并进入召回、回复提示词和右侧展示 |
 | 输入输出审计 | initialized | 登录用户对话后写入 `.conversation-audits.local.json`，包含用户输入、虚拟人输出、conversationEventId、history message ids 和每个 pipeline 模块的输入输出；仅管理员可查看、删除单条、清空、导出所选或完整导出所有用户所有记录；删除会级联清理同轮历史和角色运行态记忆 |
-| 心理流 streaming | initialized | `PipelineTrace.mindFlow` 和 `PipelineStepProgress.mindFlow` 承接每轮说话前/说话后的心理、动作、场景和余波；App Shell 只把它作为临时聊天消息展示，第一句完成后折叠 pre-speech，整轮完成后折叠 post-speech |
-| 时间事件触发 | initialized | App Shell 可输入时间触发 `system_tick`，推进场景/位置，再由 `eventActivity` LLM streaming 生成可折叠活动卡并写入短期记忆；不强制角色输出聊天台词 |
+| 心理流 streaming | initialized | `PipelineTrace.mindFlow` 和 `PipelineStepProgress.mindFlow` 承接每轮说话前/说话后的心理、动作、场景和余波；App Shell streaming 展示真实帧，第一句完成后折叠 pre-speech，整轮完成后折叠 post-speech，并把折叠记录保存到历史 |
+| 现场事件触发 | initialized | App Shell 可输入一段现场事件文字，构造 `room_event`/`scene_event`，按真实时间校准场景/位置，再由 `eventActivity` LLM streaming 生成可折叠活动卡并写入短期记忆；不强制角色输出聊天台词 |
+| 消息渠道现实约束 | initialized | 对话发送可选微信、短信、电话、面对面或门外；渠道写入 `EventInput`、`ChatMessage`、主脑 prompt、审计和短期记忆，私密场景里的异常面对面不会被当成普通远程消息 |
 | 心理探针 | initialized | `roleTurnProbe` 默认关闭；开启后在状态写回和 `stateDelta` 完成后旁路审计主脑决策路径、标签锁定风险和上下文噪声，只进入 trace 和模块审计 |
 | 人物档案生成 | initialized | 通过 Dossier Interpretation LLM 重新解读用户素材，生成 profile、concerns、longTermMemory 和 runtime 预览 |
 | 人物档案预览 | initialized | 左侧只展示 `profile.displaySummary` 等摘要信息，用户确认后应用 |
@@ -847,7 +848,7 @@ flowchart LR
 | 场景预览 | initialized | 先显示场景摘要和状态影响预览，用户确认后应用完整状态 |
 | 人物场景一致性检测 | initialized | Profile Scene Consistency LLM 判断人物和场景是否硬冲突；硬冲突需要扭曲时空密码继续 |
 | 时间场景推进 | initialized | `temporalSceneProgression` 在 Event 后、Role Turn 前只根据位置时区和真实时间推进 `scene/location`；同步对话不再用用户话语关键词触发移动 |
-| 同步对话路径 | initialized | 登录用户身份 -> 事件 -> 时间场景推进 -> Role Turn 人物主脑 -> Appraisal/Memory/Decision 兼容视图 -> 回应输出/分段 -> State Update 自然语言写回 -> 信号快照 -> 状态变化 |
+| 同步对话路径 | initialized | 登录用户身份 + 消息渠道 -> 事件 -> 时间场景推进 -> Role Turn 人物主脑 -> Appraisal/Memory/Decision 兼容视图 -> 回应输出/分段 -> State Update 自然语言写回 -> 信号快照 -> 状态变化；旧兼容视图默认隐藏 |
 | 真实 LLM 接入 | initialized | 当前固定使用本地 DeepSeek 代理、`deepseek-v4-flash`、根目录密钥文件、关闭思考模式和流式输出；UI 不提供模拟语言模型 |
 | 结构化输出回退 | initialized | Cognitive Module Client 对仍使用结构化输出的生成/兼容模块保留 JSON 截断 fallback；同步对话认知模块使用自然语言 narrative |
 | 流程追踪输入输出 | initialized | 每个模块都有输入、输出、状态；执行时自动切换当前模块 |

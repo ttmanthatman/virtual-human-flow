@@ -1,4 +1,5 @@
-import { CharacterState, CognitiveModuleTrace, LlmConfig, MindFlowFrame, PipelineStepProgress, PipelineTrace, RoleTurnProbeResult } from "../core/types";
+import { CharacterState, CognitiveModuleTrace, ConversationChannel, LlmConfig, MindFlowFrame, PipelineStepProgress, PipelineTrace, RoleTurnProbeResult } from "../core/types";
+import { getConversationChannelLabel } from "../core/conversationChannels";
 import {
   buildAppraisalTraceFromRoleTurn,
   buildDecisionTraceFromRoleTurn,
@@ -18,13 +19,15 @@ interface RunConversationPipelineInput {
     id: string;
     name: string;
   };
+  channel?: ConversationChannel;
   debug?: {
     roleTurnProbeEnabled?: boolean;
+    legacyTraceEnabled?: boolean;
   };
   onProgress?: (progress: PipelineStepProgress) => void;
 }
 
-export async function runConversationPipeline({ content, state, llmConfig, speaker, debug, onProgress }: RunConversationPipelineInput): Promise<{
+export async function runConversationPipeline({ content, state, llmConfig, speaker, channel = "wechat", debug, onProgress }: RunConversationPipelineInput): Promise<{
   nextState: CharacterState;
   trace: PipelineTrace;
 }> {
@@ -36,6 +39,8 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     speakerId: speaker.id,
     speakerName: speaker.name,
     roomId: "main_room",
+    channel,
+    channelLabel: getConversationChannelLabel(channel),
     content,
   };
   const mindFlow: MindFlowFrame[] = [];
@@ -57,7 +62,7 @@ export async function runConversationPipeline({ content, state, llmConfig, speak
     });
   };
 
-  emit({ step: "event", status: "completed", input: summarizeText(content), output: `${speaker.name}说：「${content}」`, transport: "local" });
+  emit({ step: "event", status: "completed", input: summarizeText(content), output: `${speaker.name}通过${event.channelLabel}说：「${content}」`, transport: "local" });
 
   const { nextState: sceneAwareState, progression: sceneContext } = advanceSceneForCurrentTime(state, event);
   emit({

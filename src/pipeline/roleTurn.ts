@@ -9,6 +9,7 @@ import {
   RoleTurnProbeResult,
   RoleTurnResult,
 } from "../core/types";
+import { describeConversationChannelForPrompt } from "../core/conversationChannels";
 import { runCognitiveModule } from "./cognitiveModuleClient";
 import {
   formatDialogueMemoryForPrompt,
@@ -230,6 +231,7 @@ function buildRoleTurnPrompt(event: EventInput, state: CharacterState) {
   const examples = state.profile.examples.length
     ? state.profile.examples.map((example) => `情境「${example.situation}」里她可能说：「${example.expectedReply}」`).join("\n")
     : "没有表达样本。";
+  const channelNarrative = describeConversationChannelForPrompt(event, state);
 
   return [
     `你现在不是分析模块，也不是编剧旁白。你要直接进入 ${state.profile.name} 的一次心理-表达回合。`,
@@ -247,6 +249,7 @@ function buildRoleTurnPrompt(event: EventInput, state: CharacterState) {
     `当前位置：${locationNarrative}`,
     `当前自然语言状态：\n${runtimeNarrative}`,
     `当前注意焦点：${state.runtime.attentionFocus || "没有明确写入"}`,
+    `消息渠道与现实约束：${channelNarrative}`,
     "",
     `当前关系：${relationshipNarrative}`,
     `最近直接对话：\n${shortTermContext.length ? shortTermContext.map((memory) => formatDialogueMemoryForPrompt(memory, state, event)).join("\n") : "最近几个小时没有直接上下文。"}`,
@@ -254,7 +257,7 @@ function buildRoleTurnPrompt(event: EventInput, state: CharacterState) {
     `长期记忆和关系记忆候选：\n${formatLongTermCandidates(longTermCandidates)}`,
     `长期心事：\n${activeConcerns.length ? activeConcerns.map((concern) => `${concern.title}：${concern.description}`).join("\n") : "没有特别放不下的心事。"}`,
     "",
-    `${event.speakerName ?? "对方"}刚刚说：「${event.content}」`,
+    `${event.speakerName ?? "对方"}刚刚通过${event.channelLabel || "当前渠道"}说：「${event.content}」`,
     "",
     "请输出四段自然语言，段首使用下面四个标题。标题只是为了系统把心理摘要和台词分开，不是让你填表：",
     "心理状态：她这一刻真实的身体感、情绪、关系距离和控制感。",

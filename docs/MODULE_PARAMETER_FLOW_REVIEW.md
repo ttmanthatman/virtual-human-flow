@@ -7,7 +7,7 @@
 当前系统有三条主要数据流：
 
 1. 对话同步响应流：`App Shell -> Conversation Pipeline -> Role Turn -> Appraisal/Memory/Decision 兼容视图 -> State Update -> Runtime Signal Snapshot -> App Shell -> Server Support 持久化`。
-2. 非聊天时间事件流：`App Shell -> Temporal Scene Progression -> Event Activity -> App Shell 活动卡 -> Server Support 持久化`。
+2. 非聊天现场事件流：`App Shell -> Temporal Scene Progression -> Event Activity -> App Shell 活动卡 -> Server Support 持久化`。
 3. 档案和场景生成流：`App Shell -> Generators -> Cognitive Module Client -> DeepSeek Proxy -> Generators 归一化 -> Profile Scene Consistency -> App Shell -> Server Support 共享档案持久化`。
 4. 登录、审计、历史和部署流：`App Shell -> Vite Dev Proxy 或 Production Server -> Server Support -> liao Chatroom / runtime JSON files / git working tree / DeepSeek API`。
 
@@ -235,6 +235,8 @@
 | `EventInput` | `speakerName` | `string?` | 当前登录用户展示名。 |
 | `EventInput` | `roomId` | `string?` | 当前固定为 `main_room`。 |
 | `EventInput` | `content` | `string` | 用户输入内容。 |
+| `EventInput` | `channel` | `ConversationChannel?` | 消息或事件渠道，例如 `wechat`、`sms`、`phone`、`face_to_face`、`outside_door`、`scene_event`。 |
+| `EventInput` | `channelLabel` | `string?` | 渠道人类可读标签，进入主脑 prompt、审计和短期记忆。 |
 | `EventInput` | `metadata` | `Record<string, unknown>?` | 预留元数据。 |
 | `RoleTurnResult` | `narrative` | `string?` | 主脑心理状态、记忆浮现和开口倾向的合成摘要。 |
 | `RoleTurnResult` | `innerStateNarrative` | `string` | 主脑输出的心理状态段落；当前 Appraisal 兼容视图由此派生。 |
@@ -271,7 +273,9 @@
 | `EventActivityResult` | `relationshipShift` | `string` | 非聊天事件对房间关系距离的影响。 |
 | `EventActivityResult` | `memoryNote` | `string` | 非聊天事件写入短期记忆的余味。 |
 | `EventActivityResult` | `externalOutput` | `string` | 外显输出；可为空，不等同于聊天回复。 |
-| `ChatMessage` | `messageType` | `"normal" / "mind_flow" / "event_activity"?` | 中间栏消息类型；心理流和时间事件使用活动卡展示。 |
+| `ChatMessage` | `channel` | `ConversationChannel?` | 中间栏消息渠道；用于刷新后保留现实媒介。 |
+| `ChatMessage` | `channelLabel` | `string?` | 中间栏显示的渠道标签。 |
+| `ChatMessage` | `messageType` | `"normal" / "mind_flow" / "event_activity"?` | 中间栏消息类型；心理流和现场事件使用活动卡展示。 |
 | `ChatMessage` | `collapsed` | `boolean?` | 活动卡是否折叠。 |
 | `ChatMessage` | `details` | `string[]?` | 折叠活动卡展开后展示的心理、动作、位移、关系或余波细节。 |
 | `StateUpdatePlan` | `concernUpdates` | array | 关切变化计划。 |
@@ -340,7 +344,7 @@
 | `handleSaveDeepseekConfig` | 无 | 管理员保存 DeepSeek key。 | POST `/api/deepseek-config`，服务端写 `.deepseek.local.json`。 |
 | `handleTestDeepseekConfig` | 无 | 测试 DeepSeek。 | POST `/api/deepseek-chat`。 |
 | `handleSend` | form event | 对话发送主入口。 | 运行 pipeline、保存历史、同步状态、记录审计。 |
-| `handleTriggerTimeEvent` | form event | 非聊天时间事件触发入口。 | 调 `advanceSceneForCurrentTime` 后运行 `runEventActivity`，streaming 更新 `event_activity` 活动卡，并写短期记忆、房间历史和角色全局运行态。 |
+| `handleTriggerRoomEvent` | form event | 非聊天现场事件触发入口。 | 根据文字构造 `room_event`/`scene_event`，调 `advanceSceneForCurrentTime` 校准当前现场后运行 `runEventActivity`，streaming 更新 `event_activity` 活动卡，并写短期记忆、房间历史和角色全局运行态。 |
 | `handleGenerateDossier` | 无 | 管理员生成档案预览。 | 调 `generateDossierFromDescription`。 |
 | `handleApplyDossier` | 无 | 应用人物预览。 | 调 `applyCandidateState`。 |
 | `handleGenerateScene` | 无 | 管理员生成场景预览。 | 调 `generateSceneFromDescription`。 |
@@ -357,6 +361,7 @@
 | 参数 | 类型 | 来源 | 说明 |
 | --- | --- | --- | --- |
 | `content` | `string` | `handleSend` 的输入框 | 用户本轮消息。 |
+| `channel` | `ConversationChannel` | App Shell 渠道选择器 | 本轮消息渠道，进入 `EventInput`、主脑 prompt、短期记忆和审计。 |
 | `state` | `CharacterState` | 当前档案叠加角色全局运行态后的状态 | 所有认知模块的基础上下文。 |
 | `llmConfig` | `LlmConfig` | App Shell | LLM 入口、模型和 token。 |
 | `speaker.id` | `string` | `createConversationSpeaker` | 当前登录用户稳定 ID。 |
@@ -391,7 +396,7 @@
 | `llmConfig` | `LlmConfig` | LLM 配置。 |
 | `onStream` | callback? | 主脑自然语言输出流式回调。 |
 
-内部派生：`buildRoleTurnPrompt` 将人物稳定背景、成长经历、性格面、表达样本、当前场景、当前位置、runtime narrative、最近 6 小时直接对话、过去 6 小时关系/状态/场景摘要、长期记忆候选、关系记忆候选和用户原话组织为同一个自然语言心理回合。
+内部派生：`buildRoleTurnPrompt` 将人物稳定背景、成长经历、性格面、表达样本、当前场景、当前位置、runtime narrative、消息渠道与物理在场约束、最近 6 小时直接对话、过去 6 小时关系/状态/场景摘要、长期记忆候选、关系记忆候选和用户原话组织为同一个自然语言心理回合。
 
 输出：`CognitiveModuleTrace<RoleTurnResult>`。`output.innerStateNarrative`、`output.memoryNarrative`、`output.decisionNarrative` 分别派生 Appraisal/Memory/Decision 兼容视图；`output.replyOutput` 进入聊天历史、State Update 和审计。
 
@@ -411,13 +416,13 @@
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
-| `event` | `EventInput` | 非聊天时间/环境事件，当前由 App Shell 构造 `system_tick`。 |
+| `event` | `EventInput` | 非聊天现场/环境事件，当前由 App Shell 构造 `room_event` 并用 `scene_event` 渠道标记。 |
 | `state` | `CharacterState` | 已经过 `advanceSceneForCurrentTime` 推进后的场景感知状态。 |
 | `progression` | `TemporalSceneProgression` | 本地真实时间/地理约束推进结果。 |
 | `llmConfig` | `LlmConfig` | LLM 配置。 |
 | `onStream` | callback? | 事件活动自然语言输出流式回调，App Shell 用它更新房间活动卡内容。 |
 
-内部派生：`buildEventActivityPrompt` 将人物稳定背景、性格面、当前场景、位置、runtime、最近房间上下文、长期候选和时间推进结果组织成一次非聊天活动回合。外部模型只需要自然语言输出六段：心理活动、动作、位移、关系变化、记忆变化、外显输出。
+内部派生：`buildEventActivityPrompt` 将人物稳定背景、性格面、当前场景、位置、runtime、现场事件渠道约束、最近房间上下文、长期候选和当前时间/场景校准结果组织成一次非聊天活动回合。外部模型只需要自然语言输出六段：心理活动、动作、位移、关系变化、记忆变化、外显输出。
 
 输出：`CognitiveModuleTrace<EventActivityResult>`。结果由 `formatEventActivityDetails` 转为可展开活动卡详情；`externalOutput` 可为空，不能强制进入聊天台词。
 
@@ -701,15 +706,15 @@ DeepSeek proxy 参数：
 | `scripts/verify-conversation-message-history.mjs` | 无 | 消息历史按用户和档案保存读取。 |
 | `scripts/verify-admin-history-and-module-audit.mjs` | 无 | 共享角色历史查看和管理员模块审计记录。 |
 | `scripts/verify-user-relationship-memory.mjs` | 无 | 当前用户关系印象记忆写入和回填关系备注。 |
-| `scripts/verify-temporal-scene-and-reply-segments.mjs` | 无 | 时间场景推进、事件活动 streaming/解析、回复分段和动作旁白清洗。 |
+| `scripts/verify-temporal-scene-and-reply-segments.mjs` | 无 | 时间场景推进、现场事件活动 streaming/解析、回复分段和动作旁白清洗。 |
 
 ## 参数级数据流
 
 ### 对话发送到状态保存
 
-1. 用户输入框 `input` 进入 `handleSend`。
-2. `handleSend` 用 `activeConversationSpeaker` 生成 `speaker.id/name`，把用户消息写入当前用户私有历史桶和本地房间时间线桶。
-3. `runConversationPipeline` 接收 `content/state/llmConfig/speaker/debug/onProgress`，生成 `EventInput`。
+1. 用户输入框 `input` 和渠道选择器 `conversationChannel` 进入 `handleSend`。
+2. `handleSend` 用 `activeConversationSpeaker` 生成 `speaker.id/name`，把带 `channel/channelLabel` 的用户消息写入当前用户私有历史桶和本地房间时间线桶。
+3. `runConversationPipeline` 接收 `content/channel/state/llmConfig/speaker/debug/onProgress`，生成带渠道的 `EventInput`。
 4. `advanceSceneForCurrentTime` 根据人物位置时区和真实时间推进 `scene/location`。
 5. `runRoleTurn` 接收 `event/sceneAwareState/llmConfig`，一次性输出 `RoleTurnResult.innerStateNarrative/memoryNarrative/decisionNarrative/replyOutput`。
 6. `buildAppraisalTraceFromRoleTurn`、`buildMemoryTraceFromRoleTurn` 和 `buildDecisionTraceFromRoleTurn` 生成兼容 trace，供 UI、审计和 State Update 读取。
@@ -717,17 +722,17 @@ DeepSeek proxy 参数：
 8. State Updater 接收 `state/event/replyOutput/context/llmConfig`，输出自然语言 `StateUpdatePlan.narrative` 和兼容壳，写回 `nextState` 和 `StateDelta`。
 9. Runtime Signal Evaluator 接收 `stateAfterUpdate/event/replyOutput/context/llmConfig`，输出四项观察信号快照；值来自 State Update 已写入的 `nextState.runtime`。
 10. 如果 `debug.roleTurnProbeEnabled` 为真，`runRoleTurnProbe` 在 `stateDelta` 完成后旁路审计；关闭时不调用。
-11. `handleSend` 把回复消息写入当前用户私有历史桶和本地房间时间线桶；心理流折叠卡只留在房间 UI。
-12. `persistConversationHistoryMessages` POST 当前用户和当前档案消息到 `.conversation-histories.local.json`，随后房间读取可通过 `readConversationRoomMessages` 聚合所有用户。
+11. `handleSend` 把折叠后的真实心理流记录和回复消息写入当前用户私有历史桶和本地房间时间线桶；当前 UI 继续使用 streaming 时生成的折叠卡。
+12. `persistConversationHistoryMessages` POST 当前用户和当前档案消息到 `.conversation-histories.local.json`，其中包含渠道标签、折叠心理流详情和回复；随后房间读取可通过 `readConversationRoomMessages` 聚合所有用户。
 13. `syncConversationState` POST `nextState + interaction` 到 `.conversation-states.local.json`，并在当前用户范围内传播关系余波。
 14. `recordConversationAudit` POST `PipelineTrace` 派生的 `moduleCalls` 到 `.conversation-audits.local.json`。
 
-### 时间事件到活动卡
+### 现场事件到活动卡
 
-1. 用户在中间栏 `eventTimeInput` 输入 `datetime-local` 时间并提交。
-2. `handleTriggerTimeEvent` 构造 `system_tick` `EventInput`，不把它当作用户聊天消息。
-3. `advanceSceneForCurrentTime(state,event,selectedDate)` 先在本地推进可信 `scene/location/runtime.attentionFocus`。
-4. `handleTriggerTimeEvent` 先插入一条临时 `event_activity` 房间消息。
+1. 用户在中间栏 `eventTextInput` 输入现场事件文字并提交，例如“杯子掉了”。
+2. `handleTriggerRoomEvent` 构造 `room_event` `EventInput`，并设置 `channel: "scene_event"` / `channelLabel: "现场事件"`，不把它当作用户聊天消息。
+3. `advanceSceneForCurrentTime(state,event)` 先按角色所在地真实时间校准可信 `scene/location/runtime.attentionFocus`。
+4. `handleTriggerRoomEvent` 先插入一条临时 `event_activity` 房间消息。
 5. `runEventActivity(event,sceneAwareState,progression,llmConfig,onStream)` 调用事件活动 LLM；`onStream` 持续更新该活动卡内容。
 6. LLM 完成后，`formatEventActivityDetails` 把心理、动作、位移、关系、记忆和外显输出整理为可展开详情。
 7. App Shell 将临时卡替换为折叠活动卡，写入短期记忆、当前用户私有历史和角色全局运行态。

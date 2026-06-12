@@ -30,7 +30,8 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { ChatMessage, CharacterState, GenerationMonitorStep, LlmConfig, PersonaDossier, PipelineStepProgress, PipelineTrace, ProfileSceneConsistencyResult, ReplyOutput } from "./core/types";
+import { ChatMessage, CharacterState, ConversationChannel, GenerationMonitorStep, LlmConfig, PersonaDossier, PipelineStepProgress, PipelineTrace, ProfileSceneConsistencyResult, ReplyOutput } from "./core/types";
+import { conversationChannelOptions, getConversationChannelLabel } from "./core/conversationChannels";
 import { makeId, nowIso } from "./core/utils";
 import { defaultLlmConfig, seedMessages, seedState } from "./data/seedState";
 import { runConversationPipeline } from "./pipeline/conversationPipeline";
@@ -58,6 +59,8 @@ const traceSteps: { key: keyof PipelineTrace; label: string; icon: typeof Activi
   { key: "runtimeSignalEvaluation", label: "信号评估", icon: Activity },
   { key: "stateDelta", label: "状态变化", icon: Network },
 ];
+
+const legacyTraceStepKeys = new Set<keyof PipelineTrace>(["appraisal", "memoryRecall", "decision", "llmRequest", "llmOutput", "runtimeSignalEvaluation", "stateDelta"]);
 
 const generationSteps: { key: GenerationMonitorStep; label: string; icon: typeof Activity }[] = [
   { key: "dossierSummaryGeneration", label: "短预览生成", icon: Sparkles },
@@ -182,6 +185,7 @@ type AppUpdateLogEntry = {
 const distortionPassword = "扭曲时空密码";
 const authTokenStorageKey = "virtualHumanFlowAuthToken";
 const roleTurnProbeStorageKey = "virtualHumanFlowRoleTurnProbeEnabled";
+const legacyTraceStorageKey = "virtualHumanFlowLegacyTraceVisible";
 const conversationHistoryStoragePrefix = "virtualHumanFlowConversationHistory";
 const maxConversationHistoryMessages = 160;
 
@@ -320,16 +324,6 @@ function normalizeReplySegments(output: ReplyOutput) {
   return [output.reply.trim()].filter(Boolean);
 }
 
-function formatDateTimeLocalInput(date: Date) {
-  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
-}
-
-function parseDateTimeLocalInput(value: string) {
-  const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed : undefined;
-}
-
 function createConversationAuditExportFilename(payload: ConversationAuditExportPayload) {
   const timestamp = payload.exportedAt.replace(/[:.]/g, "-");
   return `conversation-audits-${payload.scope}-${timestamp}.json`;
@@ -374,7 +368,8 @@ export function App() {
     [initialConversationHistoryKey]: readStoredConversationHistory(initialConversationHistoryKey) ?? seedMessages,
   }));
   const [input, setInput] = useState("周末一起去爬山吗？");
-  const [eventTimeInput, setEventTimeInput] = useState(() => formatDateTimeLocalInput(new Date()));
+  const [eventTextInput, setEventTextInput] = useState("杯子掉了");
+  const [conversationChannel, setConversationChannel] = useState<ConversationChannel>("wechat");
   const [dossierDescription, setDossierDescription] = useState(initialDossierDescription);
   const [sceneDescription, setSceneDescription] = useState(initialSceneDescription);
   const [dossierPreview, setDossierPreview] = useState<CharacterState | undefined>();
@@ -391,6 +386,7 @@ export function App() {
   const [deepseekStatus, setDeepseekStatus] = useState("正在检查 DeepSeek 连接");
   const [deepseekConnected, setDeepseekConnected] = useState(false);
   const [roleTurnProbeEnabled, setRoleTurnProbeEnabled] = useState(() => localStorage.getItem(roleTurnProbeStorageKey) === "true");
+  const [legacyTraceVisible, setLegacyTraceVisible] = useState(() => localStorage.getItem(legacyTraceStorageKey) === "true");
   const [isGeneratingDossier, setIsGeneratingDossier] = useState(false);
   const [isGeneratingScene, setIsGeneratingScene] = useState(false);
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(authTokenStorageKey) || "");
@@ -418,6 +414,8 @@ export function App() {
 
   const selectedTraceData = liveTrace[activeStep] ?? (isPipelineTraceStep(activeStep) ? buildCompletedTraceProgress(activeStep, activeTrace) : undefined);
   const traceDisplay = formatTraceDisplay(selectedTraceData);
+  const visibleTraceSteps = useMemo(() => traceSteps.filter((step) => legacyTraceVisible || !legacyTraceStepKeys.has(step.key)), [legacyTraceVisible]);
+  const allTraceSteps = useMemo(() => [...visibleTraceSteps, ...generationSteps], [visibleTraceSteps]);
   const selectedAuditIdSet = useMemo(() => new Set(selectedAuditIds), [selectedAuditIds]);
   const allVisibleAuditEntriesSelected = auditEntries.length > 0 && auditEntries.every((entry) => selectedAuditIdSet.has(entry.id));
   const isAuthenticated = Boolean(authToken && authUser);
@@ -1150,7 +1148,8 @@ export function App() {
   }
 
   function updateMonitorProgress(progress: PipelineStepProgress) {
-    setActiveStep(progress.step);
+    const shouldShowStep = !isPipelineTraceStep(progress.step) || legacyTraceVisible || !legacyTraceStepKeys.has(progress.step);
+    if (shouldShowStep) setActiveStep(progress.step);
     setLiveTrace((current) => ({
       ...current,
       [progress.step]: {
@@ -1164,6 +1163,15 @@ export function App() {
     setRoleTurnProbeEnabled((current) => {
       const next = !current;
       localStorage.setItem(roleTurnProbeStorageKey, next ? "true" : "false");
+      return next;
+    });
+  }
+
+  function handleLegacyTraceToggle() {
+    setLegacyTraceVisible((current) => {
+      const next = !current;
+      localStorage.setItem(legacyTraceStorageKey, next ? "true" : "false");
+      if (!next && legacyTraceStepKeys.has(activeStep as keyof PipelineTrace)) setActiveStep("roleTurn");
       return next;
     });
   }
@@ -1405,7 +1413,7 @@ export function App() {
     event.preventDefault();
     if (!requireLogin("发送消息")) return;
     if (isViewingSharedUserHistory) {
-      setError("正在查看其他用户历史；切回“我的历史”后再发送。");
+      setError("正在查看单个用户历史；切回房间时间线后再发送。");
       return;
     }
     if (!input.trim() || isRunning) return;
@@ -1421,6 +1429,8 @@ export function App() {
       id: makeId("msg"),
       speaker: "user",
       speakerName: activeConversationSpeaker.name,
+      channel: conversationChannel,
+      channelLabel: getConversationChannelLabel(conversationChannel),
       content: input.trim(),
       timestamp: nowIso(),
     };
@@ -1434,8 +1444,10 @@ export function App() {
         state,
         llmConfig,
         speaker: activeConversationSpeaker,
+        channel: conversationChannel,
         debug: {
           roleTurnProbeEnabled,
+          legacyTraceEnabled: legacyTraceVisible,
         },
         onProgress: (progress) => {
           updateMonitorProgress(progress);
@@ -1482,6 +1494,7 @@ export function App() {
         trace: visibleReplyMessages.length === 0 && index === 0 ? result.trace : undefined,
       }));
       const replyMessages = visibleReplyMessages.length > 0 ? [...visibleReplyMessages, ...remainingReplyMessages] : remainingReplyMessages;
+      const recordedMindFlowMessages = createRecordedMindFlowMessages(result.trace.mindFlow);
       setMessagesForHistory(sendingHistoryKey, (items) => [...items, ...replyMessages]);
       setMessagesForHistory(sendingRoomHistoryKey, (items) => {
         const folded = foldTransientMindFlowMessages(items).map((message) => {
@@ -1490,9 +1503,9 @@ export function App() {
         });
         return [...folded, ...remainingReplyMessages];
       });
-      await persistConversationHistoryMessages(sendingDossierId, [userMessage, ...replyMessages]);
+      await persistConversationHistoryMessages(sendingDossierId, [userMessage, ...recordedMindFlowMessages, ...replyMessages]);
       await syncConversationState(result.nextState, {
-        userInput: userMessage.content,
+        userInput: `${userMessage.channelLabel || "消息"}：${userMessage.content}`,
         personaOutput: reply,
       });
       await recordConversationAudit({
@@ -1500,10 +1513,10 @@ export function App() {
         dossierTitle: result.nextState.profile.name,
         conversationEventId: result.trace.event.id,
         conversationHistoryMessageIds: [userMessage.id, ...replyMessages.map((message) => message.id)],
-        userInput: userMessage.content,
+        userInput: `${userMessage.channelLabel || "消息"}：${userMessage.content}`,
         personaOutput: reply,
         status: "completed",
-        moduleCalls: buildConversationModuleCalls(result.trace),
+        moduleCalls: buildConversationModuleCalls(result.trace, legacyTraceVisible),
       });
       setInput("");
     } catch (caught) {
@@ -1534,34 +1547,36 @@ export function App() {
     }
   }
 
-  async function handleTriggerTimeEvent(event: FormEvent) {
+  async function handleTriggerRoomEvent(event: FormEvent) {
     event.preventDefault();
     if (!requireLogin("触发事件")) return;
     if (isViewingSharedUserHistory) {
       setError("正在查看单个用户历史；切回房间时间线后再触发事件。");
       return;
     }
-    const eventDate = parseDateTimeLocalInput(eventTimeInput);
-    if (!eventDate || isTriggeringEvent) {
-      setError("请输入有效时间。");
+    const eventContent = eventTextInput.trim();
+    if (!eventContent || isTriggeringEvent) {
+      setError("请输入要触发的现场事件。");
       return;
     }
 
     setIsTriggeringEvent(true);
     setError("");
-    const eventIso = eventDate.toISOString();
+    const eventIso = nowIso();
     const eventInput = {
-      id: `time_event_${Date.now()}`,
-      type: "system_tick" as const,
+      id: `room_event_${Date.now()}`,
+      type: "room_event" as const,
       timestamp: eventIso,
-      speakerId: "system:time",
-      speakerName: "时间事件",
+      speakerId: "system:room_event",
+      speakerName: "现场事件",
       roomId: "main_room",
-      content: `时间推进到 ${eventDate.toLocaleString("zh-CN", { hour12: false })}`,
+      channel: "scene_event" as const,
+      channelLabel: "现场事件",
+      content: eventContent,
     };
 
     try {
-      const { nextState: sceneAwareState, progression } = advanceSceneForCurrentTime(state, eventInput, eventDate);
+      const { nextState: sceneAwareState, progression } = advanceSceneForCurrentTime(state, eventInput);
       const activityMessageId = makeId("event_activity");
       setMessagesForHistory(activeRoomHistoryKey, (items) => [
         ...items,
@@ -1569,7 +1584,9 @@ export function App() {
           id: activityMessageId,
           speaker: "persona",
           speakerName: `${sceneAwareState.profile.name} · 活动`,
-          content: "时间变了，她正在把身体、现场和关系余波重新过一遍。",
+          channel: "scene_event",
+          channelLabel: "现场事件",
+          content: "现场发生了点事，她正在把身体、现场和关系余波重新过一遍。",
           timestamp: eventIso,
           messageType: "event_activity",
           transient: true,
@@ -1595,7 +1612,9 @@ export function App() {
         id: activityMessageId,
         speaker: "persona",
         speakerName: `${sceneAwareState.profile.name} · 活动`,
-        content: `时间推进到 ${progression.localTimeLabel}，${eventSummary}`,
+        channel: "scene_event",
+        channelLabel: "现场事件",
+        content: `现场事件：${eventContent}。${progression.localTimeLabel}，${eventSummary}`,
         timestamp: eventIso,
         messageType: "event_activity",
         transient: false,
@@ -1629,7 +1648,7 @@ export function App() {
         userInput: activityMessage.content,
         personaOutput: details.join("；"),
       });
-      setEventTimeInput(formatDateTimeLocalInput(new Date(eventDate.getTime() + 60 * 60 * 1000)));
+      setEventTextInput("");
       if (isAuthenticated) await loadSharedConversationHistorySummaries(activeDossierId);
     } finally {
       setIsTriggeringEvent(false);
@@ -2117,6 +2136,7 @@ export function App() {
               >
                 <div>
                   <strong>{message.speakerName}</strong>
+                  {message.channelLabel ? <span className="message-channel">{message.channelLabel}</span> : null}
                   <time>{new Date(message.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
                   {message.details?.length ? (
                     <button className="message-toggle" type="button" onClick={() => toggleMessageCollapsed(message.id)}>
@@ -2136,14 +2156,21 @@ export function App() {
             ))}
           </div>
 
-          <form className="event-trigger" onSubmit={handleTriggerTimeEvent}>
-            <input value={eventTimeInput} onChange={(event) => setEventTimeInput(event.target.value)} type="datetime-local" disabled={isTriggeringEvent || isViewingSharedUserHistory} />
+          <form className="event-trigger" onSubmit={handleTriggerRoomEvent}>
+            <input value={eventTextInput} onChange={(event) => setEventTextInput(event.target.value)} placeholder="现场事件，例如：杯子掉了" disabled={isTriggeringEvent || isViewingSharedUserHistory} />
             <button type="submit" disabled={isTriggeringEvent || isViewingSharedUserHistory}>
               <Activity size={16} /> {isTriggeringEvent ? "触发中" : "触发事件"}
             </button>
           </form>
 
           <form className="composer" onSubmit={handleSend}>
+            <select value={conversationChannel} onChange={(event) => setConversationChannel(event.target.value as ConversationChannel)} disabled={isViewingSharedUserHistory || isRunning}>
+              {conversationChannelOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
             <input
               value={input}
               onChange={(event) => setInput(event.target.value)}
@@ -2165,7 +2192,7 @@ export function App() {
 
           <div className="flow-group-label">对话流程</div>
           <div className="flow-rail">
-            {traceSteps.map((step) => {
+            {visibleTraceSteps.map((step) => {
               const Icon = step.icon;
               return (
                 <button
@@ -2249,6 +2276,13 @@ export function App() {
                   <small>回复和状态写回完成后旁路运行，只写入本轮审计。</small>
                 </span>
               </label>
+              <label className="probe-toggle">
+                <input type="checkbox" checked={legacyTraceVisible} onChange={handleLegacyTraceToggle} />
+                <span>
+                  <strong>显示旧兼容管线</strong>
+                  <small>展开评估、记忆召回、回应决策、表达整合等兼容视图。</small>
+                </span>
+              </label>
               <button className="secondary-button" type="button" onClick={handleTestDeepseekConfig}>
                 测试连接
               </button>
@@ -2285,6 +2319,13 @@ export function App() {
                   <small>需要 DeepSeek 可用；开启后只增加旁路审计，不影响回复。</small>
                 </span>
               </label>
+              <label className="probe-toggle">
+                <input type="checkbox" checked={legacyTraceVisible} onChange={handleLegacyTraceToggle} />
+                <span>
+                  <strong>显示旧兼容管线</strong>
+                  <small>默认关闭；需要排查兼容字段时再打开。</small>
+                </span>
+              </label>
             </div>
           )}
 
@@ -2300,7 +2341,7 @@ export function App() {
 
           <div className="json-view">
             <div className="json-head">
-              <strong>{[...traceSteps, ...generationSteps].find((step) => step.key === activeStep)?.label ?? "追踪"}</strong>
+              <strong>{allTraceSteps.find((step) => step.key === activeStep)?.label ?? "追踪"}</strong>
               <span>{selectedTraceData ? traceStatusLabel(selectedTraceData.status) : "等待中"}</span>
             </div>
             {traceDisplay}
@@ -2683,8 +2724,40 @@ function buildCompletedTraceProgress(step: keyof PipelineTrace, trace: PipelineT
   };
 }
 
-function buildConversationModuleCalls(trace: PipelineTrace): ConversationModuleCall[] {
+function createRecordedMindFlowMessages(frames: PipelineTrace["mindFlow"]): ChatMessage[] {
+  const phases = ["pre_speech", "post_speech"] as const;
+  return phases
+    .map((phase): ChatMessage | undefined => {
+      const phaseFrames = frames.filter((frame) => frame.phase === phase);
+      if (phaseFrames.length === 0) return undefined;
+      const first = phaseFrames[0];
+      const last = phaseFrames.at(-1) ?? first;
+      const details = phaseFrames.map((frame) => `${frame.title}：${frame.content}`).filter(Boolean);
+      return {
+        id: `recorded_mind_flow_${phase}_${first.eventId}`,
+        speaker: "system",
+        speakerName: phase === "pre_speech" ? "心理流" : "余波",
+        channelLabel: "心理记录",
+        content: `${phase === "pre_speech" ? "说话前心理流" : "说话后余波"}已记录（${details.length} 条）`,
+        timestamp: last.timestamp,
+        messageType: "mind_flow",
+        transient: false,
+        collapsed: true,
+        details,
+        mindFlow: {
+          id: last.id,
+          phase,
+          kind: last.kind,
+          status: "completed",
+        },
+      };
+    })
+    .filter((message): message is ChatMessage => Boolean(message));
+}
+
+function buildConversationModuleCalls(trace: PipelineTrace, includeLegacyTrace: boolean): ConversationModuleCall[] {
   return traceSteps
+    .filter((step) => includeLegacyTrace || !legacyTraceStepKeys.has(step.key))
     .map((step): ConversationModuleCall | undefined => {
       const progress = buildCompletedTraceProgress(step.key, trace);
       if (!progress) return undefined;

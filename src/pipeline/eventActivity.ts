@@ -1,4 +1,5 @@
 import { CharacterState, CognitiveModuleTrace, EventActivityResult, EventInput, LlmConfig, TemporalSceneProgression } from "../core/types";
+import { describeConversationChannelForPrompt } from "../core/conversationChannels";
 import { runCognitiveModule } from "./cognitiveModuleClient";
 import { formatDialogueMemoryForPrompt, selectRecentDialogueMemories } from "./conversationContext";
 import { createLongTermCandidates, formatLongTermCandidates } from "./memoryRetrieval";
@@ -75,10 +76,11 @@ function buildEventActivityPrompt(event: EventInput, state: CharacterState, prog
   const runtimeNarrative = Object.values(state.runtime.signalProfiles)
     .map((signal) => `${signal.label}：${signal.summary} ${signal.considerations.join("；")}。${signal.cognitiveNarrative}`)
     .join("\n");
+  const channelNarrative = describeConversationChannelForPrompt(event, state);
 
   return [
     `你现在不是聊天回复模块。你要直接进入 ${state.profile.name} 的一次非聊天事件活动回合。`,
-    "事件只是时间或环境推进，不是某个人在和她说话。请让她像真实的人一样先有身体和心理变化，再决定有没有外显动作、位置变化、关系余波或可被别人看见/听见的输出。",
+    "事件是现场或环境里发生的事，不是某个人在和她说话。请让她像真实的人一样先有身体和心理变化，再决定有没有外显动作、位置变化、关系余波或可被别人看见/听见的输出。",
     "不要输出 JSON，不要代码块，不要用规则引擎口吻，不要把人物标签当硬锁。外显输出可以为空；如果她不会说话，不要强行给台词。",
     "",
     `角色稳定背景：${state.profile.background}`,
@@ -90,13 +92,14 @@ function buildEventActivityPrompt(event: EventInput, state: CharacterState, prog
     `当前位置：${locationNarrative}`,
     `当前自然语言状态：\n${runtimeNarrative}`,
     `当前注意焦点：${state.runtime.attentionFocus || "没有明确写入"}`,
+    `事件渠道与现实约束：${channelNarrative}`,
     "",
     `房间最近上下文：\n${shortTermContext.length ? shortTermContext.map((memory) => formatDialogueMemoryForPrompt(memory, state, event)).join("\n") : "最近几个小时没有直接上下文。"}`,
     `长期记忆和关系记忆候选：\n${formatLongTermCandidates(longTermCandidates)}`,
     `长期心事：\n${activeConcerns.length ? activeConcerns.map((concern) => `${concern.title}：${concern.description}`).join("\n") : "没有特别放不下的心事。"}`,
     "",
     `事件：${event.content}`,
-    `时间推进结果：当地时间 ${progression.localTimeLabel}；阶段 ${progression.schedulePhase}；${progression.reason}；${progression.locationPlausibility}`,
+    `当前时间和场景校准：当地时间 ${progression.localTimeLabel}；阶段 ${progression.schedulePhase}；${progression.reason}；${progression.locationPlausibility}`,
     "",
     "请输出六段自然语言，段首使用下面六个标题。标题只是为了系统折叠展示，不是让你填表：",
     "心理活动：她这一刻真实的身体感、情绪、注意力和控制感怎么变。",
@@ -113,12 +116,12 @@ function buildFallbackEventActivity(event: EventInput, state: CharacterState, pr
     ? `${state.location.label}，${formatMotionState(state.location.motionState)}，仍在${state.location.region}。`
     : "没有足够位置信息，只能确认她没有发生突兀位移。";
   return {
-    narrative: `${state.profile.name}把「${event.content}」当作时间经过来承接，而不是当作聊天台词。`,
-    psychologicalActivity: `${state.profile.name}的注意力被${progression.localTimeLabel}重新拉回当前身体和现场节奏。`,
-    action: progression.changed ? "她顺着新的时间段收拾动作和注意力，外在节奏有了轻微变化。" : "她没有明显外显动作，只是把当前状态重新收束了一下。",
+    narrative: `${state.profile.name}把「${event.content}」当作现场事件来承接，而不是当作聊天台词。`,
+    psychologicalActivity: `${state.profile.name}的注意力被「${event.content}」从当前节奏里拽了一下，同时意识到现在是${progression.localTimeLabel}。`,
+    action: progression.changed ? "她一边被现场动静牵动，一边顺着新的时间段调整动作和注意力。" : "她没有立刻开口，只是先判断这个现场动静从哪里来。",
     movement,
-    relationshipShift: "这不是某个人发起的聊天，不直接改变某段关系；但它会成为房间里所有人之后能承接的共同背景。",
-    memoryNote: "时间事件写入短期记忆，下一轮角色主脑会带着这次场景和身体余波理解对话。",
+    relationshipShift: "这不是某个人发起的聊天，不直接改变某段关系；但它会成为房间里所有人之后能承接的共同现场背景。",
+    memoryNote: "现场事件写入短期记忆，下一轮角色主脑会带着这次场景和身体余波理解对话。",
     externalOutput: "",
   };
 }

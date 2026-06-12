@@ -85,6 +85,7 @@ const multiTurnResult = await runConversationPipeline({
   state: roomAwareState,
   llmConfig: { provider: "external", endpoint: "http://fake.local/deepseek", model: "deepseek-v4-flash" },
   speaker: { id: "user_b", name: "当前对话者" },
+  channel: "wechat",
   onProgress: (progress) => multiTurnProgress.push(progress),
 });
 
@@ -97,6 +98,12 @@ if (!preSpeechFrames.some((frame) => frame.kind === "scene") || !preSpeechFrames
 }
 if (!roleTurnPrompts[0]?.includes("房间里的Qoo说过")) {
   throw new Error("Expected role_turn prompt to include recent room messages from other users.");
+}
+if (!roleTurnPrompts[0]?.includes("渠道：微信") || !roleTurnPrompts[0]?.includes("手机微信消息")) {
+  throw new Error("Expected role_turn prompt to include device-mediated channel context.");
+}
+if (!multiTurnResult.nextState.shortTermMemory.some((memory) => memory.content.includes("【微信】周末一起去爬山吗？"))) {
+  throw new Error("Expected State Update short-term memory to record message channel.");
 }
 
 const firstSpeechIndex = multiTurnProgress.findIndex((progress) => progress.step === "llmOutput" && progress.status === "completed");
@@ -193,6 +200,33 @@ await runConversationPipeline({
 const settleFrames = singleProgress.map((progress) => progress.mindFlow).filter((frame) => frame?.phase === "post_speech" && frame.kind === "settle");
 if (settleFrames.length < 1) {
   throw new Error("Expected single-reply post-speech continuation to settle into silence.");
+}
+
+const faceToFaceHomePromptIndex = roleTurnPrompts.length;
+await runConversationPipeline({
+  content: "我在你旁边。",
+  state: {
+    ...seedState,
+    scene: {
+      ...seedState.scene,
+      title: "家里卧室",
+      description: "她已经回到家，屋里安静，女儿在另一个房间写作业。",
+    },
+    location: {
+      ...seedState.location,
+      label: "家里",
+      address: "郑州市家中住处",
+      region: "郑州市",
+    },
+  },
+  llmConfig: { provider: "external", endpoint: "http://fake.local/deepseek", model: "deepseek-v4-flash" },
+  speaker: { id: "user_b", name: "当前对话者" },
+  channel: "face_to_face",
+  onProgress: () => undefined,
+});
+const faceToFaceHomePrompt = roleTurnPrompts[faceToFaceHomePromptIndex] || "";
+if (!faceToFaceHomePrompt.includes("渠道：面对面") || !faceToFaceHomePrompt.includes("当前场景偏私密") || !faceToFaceHomePrompt.includes("惊讶、警觉、质问来源")) {
+  throw new Error("Expected face-to-face home prompt to make impossible co-presence feel strange or unsafe.");
 }
 
 const probeProgress = [];

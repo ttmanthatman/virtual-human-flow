@@ -136,17 +136,23 @@ if (goHomeCommandResult.nextState.location.label !== workResult.nextState.locati
 }
 
 const streamedEventActivity = [];
-globalThis.fetch = async () =>
+const eventActivityPrompts = [];
+globalThis.fetch = async (_url, init) => {
+  const body = JSON.parse(String(init.body));
+  eventActivityPrompts.push(body.prompt);
+  return (
   createSseResponse([
-    { delta: "心理活动：她先被时间从手头事里拽了一下。\n" },
+    { delta: "心理活动：杯子落地的声音让她肩膀先紧了一下。\n" },
     { delta: "动作：她把拖把靠到墙边，停了半秒。\n" },
     {
       final:
-        "心理活动：她先被时间从手头事里拽了一下。\n动作：她把拖把靠到墙边，停了半秒。\n位移：还在金水区写字楼走廊，没有离开工作现场。\n关系变化：这不是某个人在逼近她，但房间里的人之后会感到她更忙、更短。\n记忆变化：这一刻会留下“正赶楼层卫生”的余味。\n外显输出：（无）",
+        "心理活动：杯子落地的声音让她肩膀先紧了一下。\n动作：她把拖把靠到墙边，停了半秒。\n位移：还在金水区写字楼走廊，没有离开工作现场。\n关系变化：这不是某个人在逼近她，但房间里的人之后会感到她更忙、更短。\n记忆变化：这一刻会留下“杯子突然掉了”的余味。\n外显输出：（无）",
     },
-  ]);
+  ])
+  );
+};
 const eventActivity = await runEventActivity(
-  { ...ordinaryEvent, type: "system_tick", speakerId: "system:time", speakerName: "时间事件", content: "时间推进到 2026/6/10 10:30:00" },
+  { ...ordinaryEvent, type: "room_event", speakerId: "system:room_event", speakerName: "现场事件", channel: "scene_event", channelLabel: "现场事件", content: "杯子掉了" },
   workResult.nextState,
   workResult.progression,
   { provider: "external", endpoint: "http://fake.local/event-activity", model: "fixture" },
@@ -155,8 +161,11 @@ const eventActivity = await runEventActivity(
 if (streamedEventActivity.length < 2) {
   throw new Error("Expected event activity to stream partial natural-language output.");
 }
-if (!eventActivity.output.psychologicalActivity.includes("时间") || !eventActivity.output.action.includes("拖把")) {
+if (!eventActivity.output.psychologicalActivity.includes("杯子") || !eventActivity.output.action.includes("拖把")) {
   throw new Error("Expected event activity to parse psychological and action sections.");
+}
+if (!eventActivityPrompts[0]?.includes("杯子掉了") || !eventActivityPrompts[0]?.includes("现场环境事件")) {
+  throw new Error("Expected event activity prompt to describe a text room event rather than a time trigger.");
 }
 const eventDetails = formatEventActivityDetails(eventActivity.output);
 if (eventDetails.length < 5 || eventDetails.some((detail) => detail.includes("JSON"))) {

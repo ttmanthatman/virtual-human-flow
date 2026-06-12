@@ -73,7 +73,7 @@ export function foldTransientMindFlowMessages(messages: ChatMessage[], phase?: M
 }
 
 export function filterPersistableConversationMessages(messages: ChatMessage[]) {
-  return messages.filter((message) => !message.transient && message.messageType !== "mind_flow");
+  return messages.filter((message) => !message.transient);
 }
 
 function createMindFlowMessageId(frameId: string) {

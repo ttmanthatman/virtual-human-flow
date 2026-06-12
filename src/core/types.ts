@@ -233,9 +233,13 @@ export interface EventInput {
   speakerId?: string;
   speakerName?: string;
   roomId?: string;
+  channel?: ConversationChannel;
+  channelLabel?: string;
   content: string;
   metadata?: Record<string, unknown>;
 }
+
+export type ConversationChannel = "face_to_face" | "wechat" | "sms" | "phone" | "outside_door" | "scene_event";
 
 export interface TemporalSceneProgression {
   changed: boolean;
@@ -500,6 +504,8 @@ export interface ChatMessage {
   id: string;
   speaker: "user" | "persona" | "system";
   speakerName: string;
+  channel?: ConversationChannel;
+  channelLabel?: string;
   content: string;
   timestamp: string;
   trace?: PipelineTrace;

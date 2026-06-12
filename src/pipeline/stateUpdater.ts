@@ -44,6 +44,7 @@ async function planStateUpdates(
 ) {
   const targetId = event.speakerId ?? "user_b";
   const targetName = event.speakerName ?? "当前对话者";
+  const eventContentWithChannel = formatEventContentWithChannel(event);
   const mockOutput: StateUpdatePlan = {
     concernUpdates: [],
     relationshipUpdates: [],
@@ -53,7 +54,7 @@ async function planStateUpdates(
       targetUserName: targetName,
       impressionSummary: targetName + "这次互动后，她在心里有了一个初步的印象。",
       relationshipSummary: "她和" + targetName + "的关系还在形成中。",
-      evidence: ["对方说：" + event.content],
+      evidence: ["对方说：" + eventContentWithChannel],
       lastInteractionSummary: "本轮互动让她对" + targetName + "有了更具体的判断。",
     },
     internalStateNote: "这次对话后，她的内心状态没有明显变化。",
@@ -114,7 +115,7 @@ function stateUpdatePlanFromNarrative(narrative: string, fallback: StateUpdatePl
       targetUserName,
       impressionSummary: `${targetUserName}在这轮互动里留下的印象需要结合自然语言状态写回理解：${text}`,
       relationshipSummary: `她和${targetUserName}的关系感在这轮互动后被重新解释，不能只沿用旧标签：${text}`,
-      evidence: [`${targetUserName}本轮说：「${event.content}」`],
+      evidence: [`${targetUserName}本轮说：「${formatEventContentWithChannel(event)}」`],
       lastInteractionSummary: text,
     },
     internalStateNote: text,
@@ -136,6 +137,7 @@ function commitStateUpdates(
   const relationshipChanges: string[] = [];
   const memoryWrites: string[] = [];
   const runtimeChanges: string[] = [];
+  const eventContentWithChannel = formatEventContentWithChannel(event);
 
   const nextConcerns = state.concerns.map((concern) => {
     const update = stateUpdatePlan.concernUpdates.find((candidate) => candidate.concernId === concern.id);
@@ -187,7 +189,7 @@ function commitStateUpdates(
       timestamp: event.timestamp,
       speakerId: event.speakerId ?? "unknown",
       speakerName: event.speakerName ?? "Unknown",
-      content: event.content,
+      content: eventContentWithChannel,
       eventId: event.id,
     },
   ];
@@ -433,7 +435,7 @@ function strengthenUserRelationshipMemoryForCurrentEvent(
   if (!memory) return memory;
 
   const targetName = memory.targetUserName || event.speakerName || "这个用户";
-  const currentEventEvidence = `${targetName}本轮说：「${event.content}」`;
+  const currentEventEvidence = `${targetName}本轮说：「${formatEventContentWithChannel(event)}」`;
   const replyEvidence = replyOutput.reply ? `她当时回应：「${replyOutput.reply}」` : "她当时没有能正常回应。";
   const naturalAftermath = [
     "这次关系印象应承接 State Update 的自然语言判断。",
@@ -459,6 +461,10 @@ function strengthenUserRelationshipMemoryForCurrentEvent(
     evidence: [...memory.evidence.filter(Boolean), currentEventEvidence, replyEvidence].slice(-6),
     lastInteractionSummary: `${currentEventEvidence}；${replyEvidence}；${naturalAftermath}`,
   };
+}
+
+function formatEventContentWithChannel(event: EventInput) {
+  return event.channelLabel ? `【${event.channelLabel}】${event.content}` : event.content;
 }
 
 function ensureMentionsCurrentEvent(text: string, eventContent: string, prefix: string) {
