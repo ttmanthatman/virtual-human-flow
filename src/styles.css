@@ -44,6 +44,7 @@ textarea {
 .topbar-actions,
 .panel-title,
 .composer,
+.event-trigger,
 .flow-step,
 .subsection-head,
 .distortion-head,
@@ -991,6 +992,57 @@ textarea {
 
 .message.mind-flow p {
   font-size: 13px;
+}
+
+.message.event-activity {
+  align-self: center;
+  background: #fffaf1;
+  border: 1px solid #ead7aa;
+  color: #574525;
+  max-width: 92%;
+}
+
+.message-toggle {
+  background: #ffffff;
+  border: 1px solid #d5e0e4;
+  border-radius: 7px;
+  color: #40545d;
+  cursor: pointer;
+  font-size: 11px;
+  margin-left: auto;
+  min-height: 24px;
+  padding: 0 8px;
+}
+
+.message-details {
+  color: #52646c;
+  display: grid;
+  font-size: 12px;
+  gap: 6px;
+  line-height: 1.45;
+  margin: 9px 0 0;
+  padding-left: 18px;
+}
+
+.event-trigger {
+  gap: 10px;
+}
+
+.event-trigger input {
+  border: 1px solid #d7e0e4;
+  border-radius: 8px;
+  flex: 1;
+  height: 38px;
+  padding: 0 11px;
+}
+
+.event-trigger button {
+  background: #f7fbfa;
+  border: 1px solid #cfe1dd;
+  border-radius: 8px;
+  color: #23534d;
+  height: 38px;
+  min-width: 118px;
 }
 
 .composer {

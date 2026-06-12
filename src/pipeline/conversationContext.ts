@@ -9,14 +9,10 @@ export function selectRecentDialogueMemories(
 ): ShortTermMemory[] {
   const eventTime = Date.parse(event.timestamp);
   const hasEventTime = Number.isFinite(eventTime);
-  const personaId = state.profile.id;
 
   return state.shortTermMemory
     .filter((memory) => {
-      const sameDialogue =
-        memory.speakerId === personaId ||
-        (event.speakerId ? memory.speakerId === event.speakerId : false);
-      if (!sameDialogue) return false;
+      if (!memory.speakerId && !memory.speakerName) return false;
 
       if (!hasEventTime) return true;
       const memoryTime = Date.parse(memory.timestamp);
@@ -91,7 +87,9 @@ export function formatDialogueMemoryForPrompt(
       ? state.profile.name
       : event.speakerId && memory.speakerId === event.speakerId
         ? "当前说话者"
-        : memory.speakerName || "另一位说话者";
+        : memory.speakerName
+          ? `房间里的${memory.speakerName}`
+          : "房间里的另一位说话者";
   return `${timing}，${speaker}说过：「${memory.content}」`;
 }
 

@@ -34,8 +34,10 @@ import { ChatMessage, CharacterState, GenerationMonitorStep, LlmConfig, PersonaD
 import { makeId, nowIso } from "./core/utils";
 import { defaultLlmConfig, seedMessages, seedState } from "./data/seedState";
 import { runConversationPipeline } from "./pipeline/conversationPipeline";
+import { formatEventActivityDetails, runEventActivity } from "./pipeline/eventActivity";
 import { generateDossierFromDescription, generateSceneFromDescription } from "./pipeline/generators";
 import { evaluateProfileSceneConsistency } from "./pipeline/profileSceneConsistency";
+import { advanceSceneForCurrentTime } from "./pipeline/temporalScene";
 import { filterPersistableConversationMessages, foldTransientMindFlowMessages, upsertMindFlowChatMessage } from "./chat/mindFlowMessages";
 import packageInfo from "../package.json";
 
@@ -191,6 +193,10 @@ function createConversationHistoryKey(user: AuthUser | undefined, dossierId: str
   return `${userPart}::dossier-${dossierId || "none"}`;
 }
 
+function createRoomConversationHistoryKey(dossierId: string) {
+  return `room::dossier-${dossierId || "none"}`;
+}
+
 function createConversationSpeaker(user: AuthUser | undefined) {
   const stableId = user ? `user:${user.userId || user.username}` : "user:guest";
   const displayName = user?.nickname || user?.username || "当前对话者";
@@ -314,6 +320,16 @@ function normalizeReplySegments(output: ReplyOutput) {
   return [output.reply.trim()].filter(Boolean);
 }
 
+function formatDateTimeLocalInput(date: Date) {
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function parseDateTimeLocalInput(value: string) {
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : undefined;
+}
+
 function createConversationAuditExportFilename(payload: ConversationAuditExportPayload) {
   const timestamp = payload.exportedAt.replace(/[:.]/g, "-");
   return `conversation-audits-${payload.scope}-${timestamp}.json`;
@@ -358,6 +374,7 @@ export function App() {
     [initialConversationHistoryKey]: readStoredConversationHistory(initialConversationHistoryKey) ?? seedMessages,
   }));
   const [input, setInput] = useState("周末一起去爬山吗？");
+  const [eventTimeInput, setEventTimeInput] = useState(() => formatDateTimeLocalInput(new Date()));
   const [dossierDescription, setDossierDescription] = useState(initialDossierDescription);
   const [sceneDescription, setSceneDescription] = useState(initialSceneDescription);
   const [dossierPreview, setDossierPreview] = useState<CharacterState | undefined>();
@@ -368,6 +385,7 @@ export function App() {
   const [liveTrace, setLiveTrace] = useState<TraceDisplayState>({});
   const [activeStep, setActiveStep] = useState<MonitorStepKey>("event");
   const [isRunning, setIsRunning] = useState(false);
+  const [isTriggeringEvent, setIsTriggeringEvent] = useState(false);
   const [error, setError] = useState("");
   const [deepseekApiKey, setDeepseekApiKey] = useState("");
   const [deepseekStatus, setDeepseekStatus] = useState("正在检查 DeepSeek 连接");
@@ -410,14 +428,15 @@ export function App() {
   );
   const activeDossier = useMemo(() => dossiers.find((dossier) => dossier.id === activeDossierId) ?? dossiers[0], [activeDossierId, dossiers]);
   const activeConversationHistoryKey = useMemo(() => createConversationHistoryKey(authUser, activeDossierId), [authUser, activeDossierId]);
+  const activeRoomHistoryKey = useMemo(() => createRoomConversationHistoryKey(activeDossierId), [activeDossierId]);
   const activeConversationSpeaker = useMemo(() => createConversationSpeaker(authUser), [authUser]);
   const activeRelationshipMemory = useMemo(
     () => (state.relationshipMemory ?? []).find((memory) => memory.targetUserId === activeConversationSpeaker.id),
     [activeConversationSpeaker.id, state.relationshipMemory],
   );
-  const displayedConversationHistoryKey = selectedSharedHistoryKey ? createSharedConversationHistoryKey(selectedSharedHistoryKey) : activeConversationHistoryKey;
+  const displayedConversationHistoryKey = selectedSharedHistoryKey ? createSharedConversationHistoryKey(selectedSharedHistoryKey) : activeRoomHistoryKey;
   const isViewingSharedUserHistory = Boolean(selectedSharedHistoryKey);
-  const messages = conversationHistories[displayedConversationHistoryKey] ?? (isViewingSharedUserHistory ? [] : seedMessages);
+  const messages = conversationHistories[displayedConversationHistoryKey] ?? (isViewingSharedUserHistory || isAuthenticated ? [] : seedMessages);
   const selectedSharedHistorySummary = sharedHistorySummaries.find((summary) => summary.key === selectedSharedHistoryKey);
   const globalSceneStatus = useMemo(() => formatGlobalSceneStatus(state), [state]);
   const groupedDossiers = useMemo(() => {
@@ -440,17 +459,19 @@ export function App() {
 
   useEffect(() => {
     const cachedMessages = readStoredConversationHistory(activeConversationHistoryKey);
+    const cachedRoomMessages = readStoredConversationHistory(activeRoomHistoryKey);
     setConversationHistories((current) => {
-      if (current[activeConversationHistoryKey]) return current;
       return {
         ...current,
-        [activeConversationHistoryKey]: cachedMessages ?? seedMessages,
+        ...(current[activeConversationHistoryKey] ? {} : { [activeConversationHistoryKey]: cachedMessages ?? [] }),
+        ...(current[activeRoomHistoryKey] ? {} : { [activeRoomHistoryKey]: cachedRoomMessages ?? (isAuthenticated ? [] : seedMessages) }),
       };
     });
     if (isAuthenticated && activeDossierId) {
       void loadConversationHistory(activeDossierId, activeConversationHistoryKey, cachedMessages);
+      void loadConversationRoomHistory(activeDossierId, activeRoomHistoryKey, cachedRoomMessages);
     }
-  }, [activeConversationHistoryKey, activeDossierId, isAuthenticated]);
+  }, [activeConversationHistoryKey, activeDossierId, activeRoomHistoryKey, isAuthenticated]);
 
   useEffect(() => {
     setSelectedSharedHistoryKey("");
@@ -520,12 +541,12 @@ export function App() {
   }
 
   function setMessages(updater: MessageUpdater) {
-    setMessagesForHistory(activeConversationHistoryKey, updater);
+    setMessagesForHistory(activeRoomHistoryKey, updater);
   }
 
   function setMessagesForHistory(historyKey: string, updater: MessageUpdater) {
     setConversationHistories((current) => {
-      const existing = current[historyKey] ?? readStoredConversationHistory(historyKey) ?? seedMessages;
+      const existing = current[historyKey] ?? readStoredConversationHistory(historyKey) ?? (historyKey === initialConversationHistoryKey && !isAuthenticated ? seedMessages : []);
       const nextMessages = typeof updater === "function" ? updater(existing) : updater;
       const trimmedMessages = nextMessages.slice(-maxConversationHistoryMessages);
       writeStoredConversationHistory(historyKey, trimmedMessages);
@@ -705,6 +726,18 @@ export function App() {
       return;
     }
     setMessagesForHistory(historyKey, []);
+  }
+
+  async function loadConversationRoomHistory(dossierId: string, historyKey: string, cachedMessages?: ChatMessage[]) {
+    const response = await fetch(`/api/conversation-histories?dossierId=${encodeURIComponent(dossierId)}&room=1`, { headers: authHeaders() }).catch(() => undefined);
+    if (!response?.ok) return;
+    const data = (await response.json()) as { messages?: ChatMessage[] };
+    const remoteMessages = Array.isArray(data.messages) ? data.messages : [];
+    if (remoteMessages.length > 0) {
+      setMessagesForHistory(historyKey, remoteMessages);
+      return;
+    }
+    setMessagesForHistory(historyKey, cachedMessages ?? []);
   }
 
   function syncConversationHistoriesAfterAuditDeletion(entry: ConversationAuditEntry) {
@@ -943,6 +976,7 @@ export function App() {
     if (deletedEntry?.dossierId === activeDossierId) {
       await loadSharedDossiers(authToken, activeDossierId);
       await loadConversationHistory(activeDossierId, activeConversationHistoryKey, []);
+      await loadConversationRoomHistory(activeDossierId, activeRoomHistoryKey, []);
       if (selectedSharedHistoryKey) await handleSelectSharedHistoryKey(selectedSharedHistoryKey, true);
       if (isAuthenticated) await loadSharedConversationHistorySummaries(activeDossierId);
     }
@@ -965,6 +999,7 @@ export function App() {
     for (const entry of entriesToClear) syncConversationHistoriesAfterAuditDeletion(entry);
     await loadSharedDossiers(authToken, activeDossierId);
     await loadConversationHistory(activeDossierId, activeConversationHistoryKey, []);
+    await loadConversationRoomHistory(activeDossierId, activeRoomHistoryKey, []);
     if (selectedSharedHistoryKey) await handleSelectSharedHistoryKey(selectedSharedHistoryKey, true);
     if (isAuthenticated) await loadSharedConversationHistorySummaries(activeDossierId);
     setAuditEntries([]);
@@ -1131,6 +1166,12 @@ export function App() {
       localStorage.setItem(roleTurnProbeStorageKey, next ? "true" : "false");
       return next;
     });
+  }
+
+  function toggleMessageCollapsed(messageId: string) {
+    setMessagesForHistory(displayedConversationHistoryKey, (items) =>
+      items.map((message) => (message.id === messageId ? { ...message, collapsed: !message.collapsed } : message)),
+    );
   }
 
   function updateActiveDossier(patch: Partial<Pick<PersonaDossier, "state" | "dossierDescription" | "sceneDescription" | "title" | "groupName">>) {
@@ -1370,6 +1411,7 @@ export function App() {
     if (!input.trim() || isRunning) return;
     const sendingDossierId = activeDossierId;
     const sendingHistoryKey = activeConversationHistoryKey;
+    const sendingRoomHistoryKey = activeRoomHistoryKey;
     setIsRunning(true);
     setError("");
     setActiveTrace(undefined);
@@ -1384,6 +1426,7 @@ export function App() {
     };
     const liveReplyMessages: ChatMessage[] = [];
     setMessagesForHistory(sendingHistoryKey, (items) => [...items, userMessage]);
+    setMessagesForHistory(sendingRoomHistoryKey, (items) => [...items, userMessage]);
 
     try {
       const result = await runConversationPipeline({
@@ -1397,7 +1440,7 @@ export function App() {
         onProgress: (progress) => {
           updateMonitorProgress(progress);
           if (progress.mindFlow) {
-            setMessagesForHistory(sendingHistoryKey, (items) => upsertMindFlowChatMessage(items, progress.mindFlow!));
+            setMessagesForHistory(sendingRoomHistoryKey, (items) => upsertMindFlowChatMessage(items, progress.mindFlow!));
           }
           if (progress.step === "llmOutput" && progress.status === "completed" && progress.replyOutput && liveReplyMessages.length === 0) {
             const liveSegments = normalizeReplySegments(progress.replyOutput);
@@ -1411,7 +1454,7 @@ export function App() {
               timestamp: nowIso(),
             };
             liveReplyMessages.push(firstReplyMessage);
-            setMessagesForHistory(sendingHistoryKey, (items) => [...foldTransientMindFlowMessages(items, "pre_speech"), firstReplyMessage]);
+            setMessagesForHistory(sendingRoomHistoryKey, (items) => [...foldTransientMindFlowMessages(items, "pre_speech"), firstReplyMessage]);
           }
         },
       });
@@ -1439,7 +1482,8 @@ export function App() {
         trace: visibleReplyMessages.length === 0 && index === 0 ? result.trace : undefined,
       }));
       const replyMessages = visibleReplyMessages.length > 0 ? [...visibleReplyMessages, ...remainingReplyMessages] : remainingReplyMessages;
-      setMessagesForHistory(sendingHistoryKey, (items) => {
+      setMessagesForHistory(sendingHistoryKey, (items) => [...items, ...replyMessages]);
+      setMessagesForHistory(sendingRoomHistoryKey, (items) => {
         const folded = foldTransientMindFlowMessages(items).map((message) => {
           const replacement = visibleReplyMessages.find((replyMessage) => replyMessage.id === message.id);
           return replacement ?? message;
@@ -1465,7 +1509,7 @@ export function App() {
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "流程运行失败";
       setError(message);
-      setMessagesForHistory(sendingHistoryKey, (items) => foldTransientMindFlowMessages(items));
+      setMessagesForHistory(sendingRoomHistoryKey, (items) => foldTransientMindFlowMessages(items));
       await persistConversationHistoryMessages(sendingDossierId, [userMessage]);
       await recordConversationAudit({
         dossierId: activeDossierId,
@@ -1487,6 +1531,108 @@ export function App() {
       }));
     } finally {
       setIsRunning(false);
+    }
+  }
+
+  async function handleTriggerTimeEvent(event: FormEvent) {
+    event.preventDefault();
+    if (!requireLogin("触发事件")) return;
+    if (isViewingSharedUserHistory) {
+      setError("正在查看单个用户历史；切回房间时间线后再触发事件。");
+      return;
+    }
+    const eventDate = parseDateTimeLocalInput(eventTimeInput);
+    if (!eventDate || isTriggeringEvent) {
+      setError("请输入有效时间。");
+      return;
+    }
+
+    setIsTriggeringEvent(true);
+    setError("");
+    const eventIso = eventDate.toISOString();
+    const eventInput = {
+      id: `time_event_${Date.now()}`,
+      type: "system_tick" as const,
+      timestamp: eventIso,
+      speakerId: "system:time",
+      speakerName: "时间事件",
+      roomId: "main_room",
+      content: `时间推进到 ${eventDate.toLocaleString("zh-CN", { hour12: false })}`,
+    };
+
+    try {
+      const { nextState: sceneAwareState, progression } = advanceSceneForCurrentTime(state, eventInput, eventDate);
+      const activityMessageId = makeId("event_activity");
+      setMessagesForHistory(activeRoomHistoryKey, (items) => [
+        ...items,
+        {
+          id: activityMessageId,
+          speaker: "persona",
+          speakerName: `${sceneAwareState.profile.name} · 活动`,
+          content: "时间变了，她正在把身体、现场和关系余波重新过一遍。",
+          timestamp: eventIso,
+          messageType: "event_activity",
+          transient: true,
+          collapsed: false,
+          details: [],
+        },
+      ]);
+      const activity = await runEventActivity(eventInput, sceneAwareState, progression, llmConfig, (output) => {
+        setMessagesForHistory(activeRoomHistoryKey, (items) =>
+          items.map((message) =>
+            message.id === activityMessageId
+              ? {
+                  ...message,
+                  content: output.slice(0, 1200),
+                }
+              : message,
+          ),
+        );
+      });
+      const details = formatEventActivityDetails(activity.output);
+      const eventSummary = (activity.output.externalOutput || activity.output.action || activity.output.psychologicalActivity).slice(0, 260);
+      const activityMessage: ChatMessage = {
+        id: activityMessageId,
+        speaker: "persona",
+        speakerName: `${sceneAwareState.profile.name} · 活动`,
+        content: `时间推进到 ${progression.localTimeLabel}，${eventSummary}`,
+        timestamp: eventIso,
+        messageType: "event_activity",
+        transient: false,
+        collapsed: true,
+        details,
+      };
+      const nextState: CharacterState = {
+        ...sceneAwareState,
+        runtime: {
+          ...sceneAwareState.runtime,
+          attentionFocus: activity.output.psychologicalActivity.slice(0, 160) || sceneAwareState.runtime.attentionFocus,
+        },
+        shortTermMemory: [
+          ...sceneAwareState.shortTermMemory,
+          {
+            id: makeId("stm"),
+            timestamp: eventIso,
+            speakerId: eventInput.speakerId,
+            speakerName: eventInput.speakerName,
+            content: [activityMessage.content, ...details].join("\n"),
+            eventId: eventInput.id,
+          },
+        ].slice(-20),
+      };
+
+      setState(nextState);
+      updateActiveDossier({ state: nextState, title: nextState.profile.name });
+      setMessagesForHistory(activeRoomHistoryKey, (items) => items.map((message) => (message.id === activityMessageId ? activityMessage : message)));
+      await persistConversationHistoryMessages(activeDossierId, [activityMessage]);
+      await syncConversationState(nextState, {
+        userInput: activityMessage.content,
+        personaOutput: details.join("；"),
+      });
+      setEventTimeInput(formatDateTimeLocalInput(new Date(eventDate.getTime() + 60 * 60 * 1000)));
+      if (isAuthenticated) await loadSharedConversationHistorySummaries(activeDossierId);
+    } finally {
+      setIsTriggeringEvent(false);
     }
   }
 
@@ -1925,7 +2071,7 @@ export function App() {
         </aside>
 
         <section className="panel chat-panel">
-          <PanelTitle icon={MessageSquare} title="对话" />
+          <PanelTitle icon={MessageSquare} title="房间" />
           <div className="scene-strip">
             <div className="scene-strip-main">
               <strong>{state.scene?.title}</strong>
@@ -1945,9 +2091,9 @@ export function App() {
           {isAuthenticated ? (
             <div className="shared-history-toolbar">
               <label>
-                <span>查看用户历史</span>
+                <span>时间线</span>
                 <select value={selectedSharedHistoryKey} onChange={(event) => void handleSelectSharedHistoryKey(event.target.value)}>
-                  <option value="">我的历史</option>
+                  <option value="">房间时间线</option>
                   {sharedHistorySummaries.map((summary) => (
                     <option key={summary.key} value={summary.key}>
                       {(summary.nickname || summary.username || `用户 ${summary.userId}`) + ` · ${summary.messageCount} 条`}
@@ -1958,22 +2104,44 @@ export function App() {
               <small>
                 {selectedSharedHistorySummary
                   ? `正在查看 ${selectedSharedHistorySummary.nickname || selectedSharedHistorySummary.username} 与 ${activeDossier?.title ?? state.profile.name} 的历史`
-                  : sharedHistoryStatus}
+                  : `${sharedHistoryStatus}；当前可发言`}
               </small>
             </div>
           ) : null}
 
           <div className="message-list">
             {messages.map((message) => (
-              <article className={`message ${message.speaker}${message.messageType === "mind_flow" ? " mind-flow" : ""}`} key={message.id}>
+              <article
+                className={`message ${message.speaker}${message.messageType === "mind_flow" ? " mind-flow" : ""}${message.messageType === "event_activity" ? " event-activity" : ""}`}
+                key={message.id}
+              >
                 <div>
                   <strong>{message.speakerName}</strong>
                   <time>{new Date(message.timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</time>
+                  {message.details?.length ? (
+                    <button className="message-toggle" type="button" onClick={() => toggleMessageCollapsed(message.id)}>
+                      {message.collapsed ? "展开" : "折叠"}
+                    </button>
+                  ) : null}
                 </div>
                 <p>{message.content}</p>
+                {message.details?.length && !message.collapsed ? (
+                  <ul className="message-details">
+                    {message.details.map((detail, index) => (
+                      <li key={`${message.id}_${index}`}>{detail}</li>
+                    ))}
+                  </ul>
+                ) : null}
               </article>
             ))}
           </div>
+
+          <form className="event-trigger" onSubmit={handleTriggerTimeEvent}>
+            <input value={eventTimeInput} onChange={(event) => setEventTimeInput(event.target.value)} type="datetime-local" disabled={isTriggeringEvent || isViewingSharedUserHistory} />
+            <button type="submit" disabled={isTriggeringEvent || isViewingSharedUserHistory}>
+              <Activity size={16} /> {isTriggeringEvent ? "触发中" : "触发事件"}
+            </button>
+          </form>
 
           <form className="composer" onSubmit={handleSend}>
             <input
@@ -1982,7 +2150,7 @@ export function App() {
               onFocus={() => {
                 if (!isAuthenticated) setLoginModalOpen(true);
               }}
-              placeholder={isViewingSharedUserHistory ? "正在查看其他用户历史" : "输入一句话，观察多模块语言模型数据流"}
+              placeholder={isViewingSharedUserHistory ? "正在查看单个用户历史" : `对 ${state.profile.name} 说话，房间里其他人也能看到`}
               disabled={isViewingSharedUserHistory}
             />
             <button type="submit" disabled={isRunning || isViewingSharedUserHistory}>

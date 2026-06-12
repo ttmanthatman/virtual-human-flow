@@ -355,6 +355,7 @@ export interface RoleTurnProbeResult {
 export type CognitiveModuleName =
   | "role_turn"
   | "role_turn_probe"
+  | "event_activity"
   | "appraisal"
   | "memory_retrieval"
   | "response_decision"
@@ -389,6 +390,16 @@ export type GenerationMonitorStep = "dossierSummaryGeneration" | "dossierGenerat
 export type MindFlowPhase = "pre_speech" | "post_speech";
 
 export type MindFlowKind = "scene" | "internal_state" | "memory" | "relationship" | "action" | "speech" | "settle";
+
+export interface EventActivityResult {
+  narrative?: string;
+  psychologicalActivity: string;
+  action: string;
+  movement: string;
+  relationshipShift: string;
+  memoryNote: string;
+  externalOutput: string;
+}
 
 export interface MindFlowFrame {
   id: string;
@@ -492,8 +503,10 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   trace?: PipelineTrace;
-  messageType?: "normal" | "mind_flow";
+  messageType?: "normal" | "mind_flow" | "event_activity";
   transient?: boolean;
+  collapsed?: boolean;
+  details?: string[];
   mindFlow?: Pick<MindFlowFrame, "id" | "phase" | "kind" | "status">;
 }
 

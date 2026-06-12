@@ -39,6 +39,8 @@
 | 认知模块调用 | `cognitiveModuleTrace` | runtime object | 一个脑区式模块的一次 LLM 调用记录 | `debugInfo` |
 | 人物主脑回合 | `roleTurn` | pipeline module | 同步对话说话前唯一主脑 LLM 调用；在同一上下文里模拟人物心理、记忆浮现、开口倾向和最终台词 | `splitBrainReply`, `jsonDecisionRouter` |
 | 人物主脑结果 | `roleTurnResult` | runtime object | `roleTurn` 的自然语言心理状态、记忆浮现、开口倾向和 `ReplyOutput` | `brainJson`, `replyPlan` |
+| 事件活动回合 | `eventActivity` | pipeline module | 非聊天时间/环境事件的 LLM 活动回合；输出人物心理、动作、位移、关系变化、记忆变化和可能的外显输出 | `eventJsonParser`, `timeRuleCard` |
+| 事件活动结果 | `eventActivityResult` | runtime object | `eventActivity` 的自然语言活动段落，用于房间可折叠活动卡和短期记忆 | `activityJson`, `eventLogText` |
 | 回复请求 | `expressionLlmRequest` | runtime object | 旧统一表达 helper 的自然语言上下文；当前同步主路径用 `roleTurn.request.prompt` 作为审计用表达输入 | `promptData` |
 | 回复输出 | `replyOutput` | runtime object | `roleTurn` 的“说出口”段落或旧 Reply LLM 结果归一化后的角色台词和本地分段 | `aiResult` |
 | 回复分段 | `replyOutput.segments` | runtime field | 从自然语言角色回复归一化出的多条聊天消息，用于 `multi_turn` 或 `burst` 展示；不是 Reply LLM JSON 契约 | `replyArrayContract`, `messageJson` |
@@ -101,9 +103,10 @@
 | Cognitive Module Client | `src/pipeline/cognitiveModuleClient.ts` | 调用认知模块 LLM，记录 request/output/transport/fallbackReason；同步主路径由 `roleTurn` 和 State Update 使用 | `CognitiveModuleRequest`, `LlmConfig` | `CognitiveModuleTrace` | Role Turn/State Update/Generators/compat modules | 外部 LLM endpoint |
 | Cognitive Module Fallback Verification | `scripts/verify-cognitive-module-fallback.mjs` | 伪造未闭合 SSE JSON，验证认知模块会 fallback 而不是抛错卡住 | 无 | pass/fail | npm script | TypeScript compiler |
 | Severe State Continuity Verification | `scripts/verify-severe-state-continuity.mjs` | 伪造重大坏消息和后续普通邀约，验证自然语言 Appraisal/Decision/State Update 能承接余波且不会依赖本地强制路由 | 无 | pass/fail | npm script | Appraisal, State Updater, Response Decision, Expression Module |
-| Temporal Scene And Reply Segments Verification | `scripts/verify-temporal-scene-and-reply-segments.mjs` | 验证真实时间场景推进不会瞬移，工作/睡眠场景按当地时区变化，连续/爆发回复会归一化为多条消息 | 无 | pass/fail | npm script | Temporal Scene Progression, LLM Client |
+| Temporal Scene And Reply Segments Verification | `scripts/verify-temporal-scene-and-reply-segments.mjs` | 验证真实时间场景推进不会瞬移，事件活动 LLM 能 streaming 并解析活动段落，连续/爆发回复会归一化为多条消息 | 无 | pass/fail | npm script | Temporal Scene Progression, Event Activity, LLM Client |
 | Update Button Clickable Verification | `scripts/verify-update-button-clickable.mjs` | 用 Playwright mock 有新版本状态，验证未登录时“更新服务器”按钮仍可点击并进入权限反馈路径 | 无 | pass/fail | npm script | App Shell |
 | Role Turn | `src/pipeline/roleTurn.ts` | 同步对话主脑：一次 LLM 调用读取人物、场景、位置、最近对话、关系记忆、长期候选和用户原话，输出心理状态、记忆浮现、开口倾向和台词 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<RoleTurnResult>` | Conversation Pipeline | Cognitive Module Client, Memory Retrieval helpers |
+| Event Activity | `src/pipeline/eventActivity.ts` | 非聊天事件活动主脑：接收时间/环境事件和场景推进结果，让 LLM 输出心理活动、动作、位移、关系变化、记忆变化和外显输出 | `EventInput`, `CharacterState`, `TemporalSceneProgression`, `LlmConfig` | `CognitiveModuleTrace<EventActivityResult>` | App Shell time event trigger | Cognitive Module Client, Conversation Context, Memory Retrieval helpers |
 | Appraisal | `src/pipeline/appraisal.ts` | 旧独立自然语言评估模块，当前同步主路径改由 `roleTurn` 派生 Appraisal 兼容视图；文件保留供实验和回滚 | `EventInput`, `CharacterState`, `LlmConfig` | `CognitiveModuleTrace<AppraisalResult>` | compat scripts/future experiments | Cognitive Module Client |
 | Memory Retrieval | `src/pipeline/memoryRetrieval.ts` | 提供最近 6 小时短期上下文、长期记忆和关系记忆候选 helper；旧独立 Memory Recall LLM 保留供实验和回滚 | event, appraisal, state, llmConfig | `CognitiveModuleTrace<MemoryRecallResult>` or candidate lists | Role Turn/compat scripts | Cognitive Module Client |
 | Response Decision | `src/pipeline/responseDecision.ts` | 旧独立自然语言回应决策模块，当前同步主路径改由 `roleTurn` 派生 Decision 兼容视图；文件保留供实验和回滚 | event, appraisal, recall, state, llmConfig | `CognitiveModuleTrace<ResponseDecision>` | compat scripts/future experiments | Cognitive Module Client |
@@ -216,7 +219,8 @@
 | `createPersonaDossier` | `src/App.tsx` | 创建绑定人物状态和场景素材的可切换档案条目 | state, dossierDescription, sceneDescription, title | PersonaDossier | 无 | implemented |
 | `ensureDossierPreview` | `src/App.tsx` | 当前角色缺少预览时调用 DeepSeek 流式生成短预览，并提交后台全局保存 | dossier | Promise<void> | 调用 `/api/deepseek-chat` 和 `/api/persona-dossiers/:id/preview`，上报生成监视 | implemented |
 | `createConversationHistoryKey` | `src/App.tsx` | 为中间栏消息历史生成 `user + dossier` 隔离键 | user, dossierId | string | 无 | implemented |
-| `createAdminConversationHistoryKey` | `src/App.tsx` | 为管理员查看其他用户历史生成前端只读历史桶键 | historyKey | string | 无 | implemented |
+| `createRoomConversationHistoryKey` | `src/App.tsx` | 为当前角色房间时间线生成前端本地合并桶键 | dossierId | string | 无 | implemented |
+| `createSharedConversationHistoryKey` | `src/App.tsx` | 为查看某个用户历史生成前端只读历史桶键 | historyKey | string | 无 | implemented |
 | `createConversationSpeaker` | `src/App.tsx` | 将登录用户归一化为 pipeline 事件说话者身份 | user | `{ id, name }` | 无 | implemented |
 | `readStoredConversationHistory` | `src/App.tsx` | 从 localStorage 读取指定历史桶 | historyKey | ChatMessage[]? | 读取 localStorage | implemented |
 | `writeStoredConversationHistory` | `src/App.tsx` | 过滤临时心理流后，将指定历史桶截断写入 localStorage | historyKey, messages | void | 写入 localStorage | implemented |
@@ -227,9 +231,17 @@
 | `normalizeReplySegments` | `src/App.tsx` | 将 `ReplyOutput.segments` 归一化为中间栏可展示和可保存的多条消息内容 | replyOutput | string[] | 无 | implemented |
 | `setMessagesForHistory` | `src/App.tsx` | 将消息更新写入指定 `conversationHistoryKey`，避免切任务或切用户串历史 | historyKey, updater | void | 更新 App state 和 localStorage | implemented |
 | `loadConversationHistory` | `src/App.tsx` | 切换人物或登录后读取当前用户当前人物的后台中间栏历史，并在后台为空时回填本地缓存 | dossierId, historyKey, cachedMessages? | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-history` 并更新历史桶 | implemented |
+| `loadConversationRoomHistory` | `src/App.tsx` | 读取当前角色房间时间线，合并展示所有用户与该角色的消息 | dossierId, historyKey, cachedMessages? | Promise<void> | 调用 `/api/conversation-histories?room=1` 并更新房间桶 | implemented |
 | `loadSharedConversationHistorySummaries` | `src/App.tsx` | 登录用户读取当前人物下所有用户历史摘要 | dossierId | Promise<void> | 调用 `/api/conversation-histories` | implemented |
 | `handleSelectSharedHistoryKey` | `src/App.tsx` | 登录用户选择某个用户历史后只读加载其当前人物消息；本地空缓存但摘要非空时会重新拉取 | historyKey, forceReload? | Promise<void> | 更新中间栏共享历史桶 | implemented |
 | `persistConversationHistoryMessages` | `src/App.tsx` | 将本轮新增的用户消息和角色回复追加保存到后台历史 | dossierId, messagesToSave | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-history` | implemented |
+| `formatDateTimeLocalInput` | `src/App.tsx` | 将 Date 转为 `datetime-local` input 可用值 | date | string | 无 | implemented |
+| `parseDateTimeLocalInput` | `src/App.tsx` | 将 `datetime-local` 输入解析为本地 Date | value | Date? | 无 | implemented |
+| `runEventActivity` | `src/pipeline/eventActivity.ts` | 运行非聊天事件活动 LLM，支持 streaming 和本地 fallback | event, state, progression, llmConfig, onStream? | `CognitiveModuleTrace<EventActivityResult>` | Cognitive Module Client | implemented |
+| `formatEventActivityDetails` | `src/pipeline/eventActivity.ts` | 将事件活动结果整理为心理、动作、位移、关系、记忆和外显输出详情 | activity | string[] | 无 | implemented |
+| `toggleMessageCollapsed` | `src/App.tsx` | 切换中间栏活动卡折叠/展开状态 | messageId | void | 更新当前显示历史桶 | implemented |
+| `handleSend` | `src/App.tsx` | 对话发送主入口；私有桶持久化、房间桶展示，多人可见 | form event | Promise<void> | 运行 pipeline、保存历史、同步状态、记录审计 | implemented |
+| `handleTriggerTimeEvent` | `src/App.tsx` | 非聊天时间事件触发入口，推进场景/位置后运行事件活动 LLM 并生成房间活动卡 | form event | Promise<void> | streaming 更新 `event_activity`、写短期记忆、房间历史和角色全局运行态 | implemented |
 | `buildConversationModuleCalls` | `src/App.tsx` | 将 `PipelineTrace` 转成可持久化的模块调用记录列表 | trace | ConversationModuleCall[] | 无 | implemented |
 | `syncConversationState` | `src/App.tsx` | 一轮对话完成后把角色最新状态写回全局对话运行态 | nextState, interaction | Promise<void> | 调用 `/api/persona-dossiers/:id/conversation-state` 并更新已叠加全局运行态的档案列表 | implemented |
 | `formatGlobalSceneStatus` | `src/App.tsx` | 将当前角色全局场景、位置、移动状态和 runtime 心情摘要格式化给中间栏场景条 | state | string | 中间栏 scene strip | implemented |
@@ -281,6 +293,7 @@
 | `exportConversationAudits` | `serverSupport.mjs` | 管理员导出所选或全部用户输入输出记录 | ids? | conversationAuditExport payload | 读取 `.conversation-audits.local.json` | implemented |
 | `readConversationHistorySummaries` | `serverSupport.mjs` | 登录用户按人物只读读取所有用户历史摘要 | dossierId | ConversationHistorySummary[] | 读取 `.conversation-histories.local.json` | implemented |
 | `readConversationHistoryMessagesByKey` | `serverSupport.mjs` | 登录用户按内部历史 key 只读读取某用户某人物消息 | dossierId, key | ChatMessage[] | 读取 `.conversation-histories.local.json` | implemented |
+| `readConversationRoomMessages` | `serverSupport.mjs` | 登录用户读取某人物的房间时间线，合并同一 `dossierId` 下所有用户私有历史 | dossierId | ChatMessage[] | 读取 `.conversation-histories.local.json` | implemented |
 | `deleteConversationArtifactsForAudit` | `serverSupport.mjs` | 删除审计记录对应的中间栏历史、短期记忆、长期记忆和关系记忆片段 | conversationAuditEntry | auditArtifactDeletionResult | 写 `.conversation-histories.local.json` 和 `.conversation-states.local.json` | implemented |
 | `deleteConversationAudit` | `serverSupport.mjs` | 管理员删除单条用户输入输出审计记录并级联清理同轮历史/记忆 | auditId | deleted flag + artifact cleanup summary | 写 runtime JSON | implemented |
 | `clearConversationAudits` | `serverSupport.mjs` | 管理员清空用户输入输出审计记录并级联清理关联历史/记忆 | 无 | deleted flag + artifact cleanup summary | 写 runtime JSON | implemented |
@@ -392,13 +405,16 @@
 | `pipelineStepProgress` | App state | `PipelineStepProgress` | 执行中某一步的输入、输出、状态和 transport，用于 live trace | conversationPipeline | App Shell | implemented |
 | `pipelineStepProgress.mindFlow` | `PipelineStepProgress` | `MindFlowFrame?` | 当前进度附带的心理流 streaming 帧；只用于当前轮临时 UI | conversationPipeline | App Shell temporary chat | implemented |
 | `pipelineStepProgress.replyOutput` | `PipelineStepProgress` | `ReplyOutput?` | Reply LLM 完成时附带完整回复结果，让 App Shell 能先显示第一句再继续跑后置心理流 | conversationPipeline | App Shell live first reply | implemented |
-| `chatMessage.messageType` | `ChatMessage` | `"normal" / "mind_flow"?` | 标识中间栏消息是否为临时心理流消息 | App Shell/Mind Flow Messages | message list rendering/persistence filter | implemented |
+| `chatMessage.messageType` | `ChatMessage` | `"normal" / "mind_flow" / "event_activity"?` | 标识中间栏消息是否为普通消息、心理流或事件活动 | App Shell/Mind Flow Messages | message list rendering/persistence filter | implemented |
+| `chatMessage.collapsed` | `ChatMessage` | `boolean?` | 心理流或事件活动卡是否折叠 | App Shell | message list rendering | implemented |
+| `chatMessage.details` | `ChatMessage` | `string[]?` | 折叠活动卡展开后展示的心理、动作、位移、关系或余波细节 | App Shell | message list rendering / event activity persistence | implemented |
 | `chatMessage.transient` | `ChatMessage` | `boolean?` | 标识消息只用于当前轮展示，不应持久化 | Mind Flow Messages | localStorage/backend history filter | implemented |
 | `chatMessage.mindFlow` | `ChatMessage` | object? | 保存心理流消息对应的帧 ID、阶段、类型和状态 | Mind Flow Messages | folding/upsert logic | implemented |
 | `TraceDisplayProgress` | App Shell type | `Omit<PipelineStepProgress, "output"> & { output?: unknown }` | 右侧流程追踪面板的本地展示态，允许完成态 trace 保留带 `narrative` 的原始输出对象 | App Shell | Pipeline Debug Panel | implemented |
 | `cognitiveModuleTrace.fallbackReason` | `CognitiveModuleTrace` | `string?` | 外部结构化输出无法解析时的回退原因，右侧流程追踪会展示 | cognitiveModuleClient | Pipeline Debug Panel | implemented |
 | `generationMonitorStep` | Core type | `GenerationMonitorStep` | 右侧生成监视可选步骤：`dossierSummaryGeneration`、`dossierGeneration`、`sceneGeneration` | App Shell/generators | live trace UI | implemented |
 | `role_turn_probe` | `CognitiveModuleName` | string literal | 旁路心理探针模块名；只审计已完成的 `role_turn`，不影响回复和状态 | App Shell `/api/deepseek-chat` | DeepSeek proxy | implemented |
+| `event_activity` | `CognitiveModuleName` | string literal | 非聊天事件活动模块名；生成活动卡段落，不强制生成聊天台词 | App Shell `/api/deepseek-chat` | DeepSeek proxy / event activity | implemented |
 | `dossier_summary_generation` | `CognitiveModuleName` | string literal | 人物短预览自然语言生成模块名，只写 `personaDossier.previewSummary` | App Shell `/api/deepseek-chat` | DeepSeek proxy | implemented |
 | `liveTrace` | App state | `TraceDisplayState` | 同时保存对话流程和生成监视的实时输入、输出、状态 | conversation pipeline/generators/preview cache | right panel | implemented |
 | `deepseekConnected` | App state | `boolean` | 顶部显示 DeepSeek 是否已有本地密钥并可作为真实 LLM 入口 | `/api/deepseek-config` / 测试连接 | App Shell | implemented |
@@ -415,7 +431,11 @@
 | `groupedDossiers` | App derived state | `[groupName, PersonaDossier[]][]` | 左侧多人档案按分组聚合后的渲染结构 | `dossiers` | App Shell UI | implemented |
 | `conversationHistories` | App state | `ConversationHistoryMap` | 中间栏消息历史集合，按 `conversationHistoryKey` 分桶 | App Shell/localStorage | Chat panel | implemented |
 | `conversationHistoryKey` | App derived state | `string` | 当前中间栏历史桶键，由 `authUser` 和 `activeDossierId` 组成 | App Shell | `setMessagesForHistory` | implemented |
+| `roomConversationHistoryKey` | App derived state | `string` | 当前角色房间时间线本地桶键，由 `activeDossierId` 组成 | App Shell | room timeline | implemented |
+| `eventTimeInput` | App state | `string` | 非聊天时间事件触发输入，使用 `datetime-local` 格式 | App Shell | time event trigger | implemented |
+| `isTriggeringEvent` | App state | `boolean` | 时间事件触发中的 UI 状态 | App Shell | event trigger form | implemented |
 | `userConversationHistoryEntry` | `.conversation-histories.local.json` | object | 某个用户在某个档案上的中间栏消息历史 | `/api/persona-dossiers/:id/conversation-history` | App Shell chat panel | implemented |
+| `roomConversationHistory` | `/api/conversation-histories?room=1` | `ChatMessage[]` | 同一角色下所有用户私有历史合并后的房间时间线 | Server Support | App Shell room timeline | implemented |
 | `conversationHistorySummary` | `/api/conversation-histories` | object | 登录用户可见的某人物下用户历史摘要，包含用户、消息数和更新时间 | Server Support | App Shell shared history selector | implemented |
 | `globalConversationStateEntry` | `.conversation-states.local.json` | object | 某个档案上的角色全局运行态覆盖层，包含 `scope: "global"` 和 `global::dossier:<id>` 键 | `/api/persona-dossiers/:id/conversation-state` | `readPersonaDossiers(user)` | implemented |
 | `conversationAuditEntry.id` | ConversationAuditEntry | `string` | 单条审计记录 ID，用于管理员删除 | serverSupport | Admin audit UI/API | implemented |
@@ -452,7 +472,7 @@
 | `/api/persona-dossiers/:id/preview` | POST | 登录用户提交 DeepSeek 已生成的人物短预览，全局保存到对应档案 | 需要登录会话；只允许写预览缓存，不允许改完整档案 | implemented |
 | `/api/persona-dossiers/:id/conversation-history` | GET | 登录用户读取自己在某个人物上的中间栏消息历史 | 需要登录会话；只返回当前用户当前档案历史 | implemented |
 | `/api/persona-dossiers/:id/conversation-history` | POST | 登录用户追加保存自己在某个人物上的中间栏消息历史 | 需要登录会话；写 `.conversation-histories.local.json` | implemented |
-| `/api/conversation-histories` | GET | 登录用户按 `dossierId` 列出用户历史摘要，或按 `dossierId + key` 只读读取某用户消息 | 需要登录会话；只读 `.conversation-histories.local.json` | implemented |
+| `/api/conversation-histories` | GET | 登录用户按 `dossierId` 列出用户历史摘要，按 `dossierId + key` 只读读取某用户消息，或按 `room=1` 读取房间时间线 | 需要登录会话；只读 `.conversation-histories.local.json` | implemented |
 | `/api/admin/conversation-histories` | GET | 兼容旧前端的共享角色历史读取别名 | 需要登录会话；只读 `.conversation-histories.local.json` | implemented |
 | `/api/persona-dossiers/:id/conversation-state` | POST | 登录用户对话完成后写回该角色全局运行态，并向全局相关人物传播关系余波 | 需要登录会话；写入该人物共享记忆、runtime、scene 和 location | implemented |
 | `/api/persona-dossiers/:id/reset-conversation` | POST | 管理员重置当前角色对话运行态，清理该档案全部用户历史、全局运行态和对应审计 | 需要管理员会话；不改共享档案底稿 | implemented |

@@ -283,6 +283,23 @@ export function readConversationHistoryMessagesByKey(dossierId, key) {
   return Array.isArray(entry?.messages) ? entry.messages : [];
 }
 
+export function readConversationRoomMessages(dossierId) {
+  const store = readConversationHistoryStore();
+  const seenIds = new Set();
+  return store.entries
+    .filter((entry) => entry && entry.dossierId === dossierId && Array.isArray(entry.messages))
+    .flatMap((entry) => entry.messages)
+    .filter((message) => {
+      const id = typeof message?.id === "string" && message.id ? message.id : "";
+      if (!id) return false;
+      if (seenIds.has(id)) return false;
+      seenIds.add(id);
+      return true;
+    })
+    .sort((a, b) => Date.parse(a.timestamp || "0") - Date.parse(b.timestamp || "0"))
+    .slice(-maxConversationHistoryMessages);
+}
+
 export function appendConversationHistoryMessages(dossierId, messages, user) {
   const key = createConversationHistoryEntryKey(dossierId, user);
   if (!key) return { error: "缺少有效历史键" };
@@ -649,12 +666,17 @@ function sanitizeConversationHistoryMessages(messages) {
     .map((message) => {
       const speaker = ["user", "persona", "system"].includes(message.speaker) ? message.speaker : "system";
       const timestamp = typeof message.timestamp === "string" && message.timestamp ? message.timestamp : new Date().toISOString();
+      const messageType = message.messageType === "event_activity" ? "event_activity" : undefined;
+      const details = Array.isArray(message.details)
+        ? message.details.filter((item) => typeof item === "string" && item.trim()).map((item) => item.slice(0, 1600)).slice(0, 12)
+        : undefined;
       return {
         id: typeof message.id === "string" && message.id ? message.id.slice(0, 120) : randomBytes(8).toString("base64url"),
         speaker,
         speakerName: typeof message.speakerName === "string" ? message.speakerName.slice(0, 120) : "",
         content: typeof message.content === "string" ? message.content.slice(0, 8000) : "",
         timestamp,
+        ...(messageType ? { messageType, collapsed: message.collapsed !== false, details } : {}),
       };
     })
     .filter((message) => message.content.trim());

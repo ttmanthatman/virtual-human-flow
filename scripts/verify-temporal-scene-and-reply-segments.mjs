@@ -11,6 +11,10 @@ execFileSync(
   "node_modules/.bin/tsc",
   [
     "src/pipeline/temporalScene.ts",
+    "src/pipeline/eventActivity.ts",
+    "src/pipeline/cognitiveModuleClient.ts",
+    "src/pipeline/conversationContext.ts",
+    "src/pipeline/memoryRetrieval.ts",
     "src/pipeline/llmClient.ts",
     "src/data/seedState.ts",
     "src/core/types.ts",
@@ -35,6 +39,7 @@ execFileSync(
 
 const require = createRequire(import.meta.url);
 const { advanceSceneForCurrentTime } = require(join(outDir, "pipeline/temporalScene.js"));
+const { runEventActivity, formatEventActivityDetails } = require(join(outDir, "pipeline/eventActivity.js"));
 const { runLlm } = require(join(outDir, "pipeline/llmClient.js"));
 const { seedState } = require(join(outDir, "data/seedState.js"));
 
@@ -128,6 +133,34 @@ if (goHomeCommandResult.progression.schedulePhase !== "work") {
 }
 if (goHomeCommandResult.nextState.location.label !== workResult.nextState.location.label) {
   throw new Error("Expected go-home wording not to change location through local keyword logic.");
+}
+
+const streamedEventActivity = [];
+globalThis.fetch = async () =>
+  createSseResponse([
+    { delta: "心理活动：她先被时间从手头事里拽了一下。\n" },
+    { delta: "动作：她把拖把靠到墙边，停了半秒。\n" },
+    {
+      final:
+        "心理活动：她先被时间从手头事里拽了一下。\n动作：她把拖把靠到墙边，停了半秒。\n位移：还在金水区写字楼走廊，没有离开工作现场。\n关系变化：这不是某个人在逼近她，但房间里的人之后会感到她更忙、更短。\n记忆变化：这一刻会留下“正赶楼层卫生”的余味。\n外显输出：（无）",
+    },
+  ]);
+const eventActivity = await runEventActivity(
+  { ...ordinaryEvent, type: "system_tick", speakerId: "system:time", speakerName: "时间事件", content: "时间推进到 2026/6/10 10:30:00" },
+  workResult.nextState,
+  workResult.progression,
+  { provider: "external", endpoint: "http://fake.local/event-activity", model: "fixture" },
+  (output) => streamedEventActivity.push(output),
+);
+if (streamedEventActivity.length < 2) {
+  throw new Error("Expected event activity to stream partial natural-language output.");
+}
+if (!eventActivity.output.psychologicalActivity.includes("时间") || !eventActivity.output.action.includes("拖把")) {
+  throw new Error("Expected event activity to parse psychological and action sections.");
+}
+const eventDetails = formatEventActivityDetails(eventActivity.output);
+if (eventDetails.length < 5 || eventDetails.some((detail) => detail.includes("JSON"))) {
+  throw new Error("Expected event activity details to be display-ready natural-language rows.");
 }
 
 const decisionBase = {

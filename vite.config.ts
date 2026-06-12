@@ -17,6 +17,7 @@ import {
   readConversationAudits,
   readConversationHistoryMessages,
   readConversationHistoryMessagesByKey,
+  readConversationRoomMessages,
   readConversationHistorySummaries,
   readAppUpdateStatus,
   readJsonBody,
@@ -167,8 +168,13 @@ function deepseekProxyPlugin(): Plugin {
           const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
           const dossierId = url.searchParams.get("dossierId") || "";
           const key = url.searchParams.get("key") || "";
+          const room = url.searchParams.get("room") === "1";
           if (!dossierId) {
             sendJson(response, 400, { error: "缺少 dossierId" });
+            return;
+          }
+          if (room) {
+            sendJson(response, 200, { messages: readConversationRoomMessages(dossierId) });
             return;
           }
           if (key) {

@@ -7,8 +7,9 @@
 当前系统有三条主要数据流：
 
 1. 对话同步响应流：`App Shell -> Conversation Pipeline -> Role Turn -> Appraisal/Memory/Decision 兼容视图 -> State Update -> Runtime Signal Snapshot -> App Shell -> Server Support 持久化`。
-2. 档案和场景生成流：`App Shell -> Generators -> Cognitive Module Client -> DeepSeek Proxy -> Generators 归一化 -> Profile Scene Consistency -> App Shell -> Server Support 共享档案持久化`。
-3. 登录、审计、历史和部署流：`App Shell -> Vite Dev Proxy 或 Production Server -> Server Support -> liao Chatroom / runtime JSON files / git working tree / DeepSeek API`。
+2. 非聊天时间事件流：`App Shell -> Temporal Scene Progression -> Event Activity -> App Shell 活动卡 -> Server Support 持久化`。
+3. 档案和场景生成流：`App Shell -> Generators -> Cognitive Module Client -> DeepSeek Proxy -> Generators 归一化 -> Profile Scene Consistency -> App Shell -> Server Support 共享档案持久化`。
+4. 登录、审计、历史和部署流：`App Shell -> Vite Dev Proxy 或 Production Server -> Server Support -> liao Chatroom / runtime JSON files / git working tree / DeepSeek API`。
 
 ## 共享核心数据对象
 
@@ -264,6 +265,15 @@
 | `ExpressionLlmRequest` | `model` | `string` | 回复模型。 |
 | `ExpressionLlmRequest` | `prompt` | `string` | 旧表达 helper 的自然语言回复上下文；当前同步主路径中 `trace.llmRequest.prompt` 保存 `roleTurn.request.prompt` 供审计。 |
 | `ReplyOutput` | `reply` | `string` | 角色最终说出口的话。 |
+| `EventActivityResult` | `psychologicalActivity` | `string` | 非聊天事件触发后的心理/身体活动。 |
+| `EventActivityResult` | `action` | `string` | 非聊天事件触发后的动作或停顿。 |
+| `EventActivityResult` | `movement` | `string` | 非聊天事件触发后的位移或位置约束。 |
+| `EventActivityResult` | `relationshipShift` | `string` | 非聊天事件对房间关系距离的影响。 |
+| `EventActivityResult` | `memoryNote` | `string` | 非聊天事件写入短期记忆的余味。 |
+| `EventActivityResult` | `externalOutput` | `string` | 外显输出；可为空，不等同于聊天回复。 |
+| `ChatMessage` | `messageType` | `"normal" / "mind_flow" / "event_activity"?` | 中间栏消息类型；心理流和时间事件使用活动卡展示。 |
+| `ChatMessage` | `collapsed` | `boolean?` | 活动卡是否折叠。 |
+| `ChatMessage` | `details` | `string[]?` | 折叠活动卡展开后展示的心理、动作、位移、关系或余波细节。 |
 | `StateUpdatePlan` | `concernUpdates` | array | 关切变化计划。 |
 | `StateUpdatePlan` | `relationshipUpdates` | array | 关系变化计划。 |
 | `StateUpdatePlan` | `newConcerns` | array | 新关切计划；当前归一化后主要保留结构。 |
@@ -290,8 +300,9 @@
 | 函数或状态 | 参数 | 说明 | 输出或副作用 |
 | --- | --- | --- | --- |
 | `createConversationHistoryKey` | `user`, `dossierId` | 将当前用户和当前档案合成前端历史桶 key。未登录时使用 `guest`。 | `user-*::dossier-*` 字符串。 |
+| `createRoomConversationHistoryKey` | `dossierId` | 为同一角色的房间时间线生成前端本地合并桶 key。 | `room::dossier-*` 字符串。 |
 | `createConversationSpeaker` | `user` | 将登录用户归一化为 pipeline 说话者。 | `{ id: "user:<id-or-name>", name }`。 |
-| `createAdminConversationHistoryKey` | `historyKey` | 管理员查看他人历史时创建本地只读桶。 | `admin-history::<historyKey>`。 |
+| `createSharedConversationHistoryKey` | `historyKey` | 查看单个用户历史时创建本地只读桶。 | `shared-history::<historyKey>`。 |
 | `readStoredConversationHistory` | `historyKey` | 从 localStorage 读取前端缓存。 | `ChatMessage[]` 或 `undefined`。 |
 | `writeStoredConversationHistory` | `historyKey`, `messages` | 把消息截断到 `maxConversationHistoryMessages` 后写入 localStorage。 | localStorage 副作用。 |
 | `createPersonaDossier` | `state`, `dossierDescription`, `sceneDescription`, `title?` | 创建本地档案对象。 | `PersonaDossier`。 |
@@ -304,6 +315,7 @@
 | `ensureDossierPreview` | `dossier` | 生成缺失的短预览。 | 调 `/api/deepseek-chat` 流式生成，再 POST `/preview` 全局保存。 |
 | `syncConversationState` | `nextState`, `interaction` | 对话后保存当前人物的全局运行态。 | POST `/conversation-state`，服务端写 `.conversation-states.local.json`。 |
 | `loadConversationHistory` | `dossierId`, `historyKey`, `cachedMessages?` | 切换人物或登录后读取消息历史。 | GET `/conversation-history`，必要时回填缓存。 |
+| `loadConversationRoomHistory` | `dossierId`, `historyKey`, `cachedMessages?` | 读取当前角色房间时间线。 | GET `/api/conversation-histories?dossierId=...&room=1`，写房间本地桶。 |
 | `loadSharedConversationHistorySummaries` | `dossierId` | 登录用户读取当前人物下所有用户历史摘要。 | GET `/api/conversation-histories?dossierId=...`。生产服务和开发代理均已实现；旧 `/api/admin/conversation-histories` 保留兼容。 |
 | `handleSelectSharedHistoryKey` | `historyKey`, `forceReload?` | 登录用户选择某个用户历史，只读查看其当前人物消息；本地空缓存但摘要非空时会重新拉取。 | GET `dossierId + key`，写共享只读历史桶。 |
 | `persistConversationHistoryMessages` | `dossierId`, `messagesToSave` | 对话后保存中间栏消息。 | POST `/conversation-history`。 |
@@ -328,6 +340,7 @@
 | `handleSaveDeepseekConfig` | 无 | 管理员保存 DeepSeek key。 | POST `/api/deepseek-config`，服务端写 `.deepseek.local.json`。 |
 | `handleTestDeepseekConfig` | 无 | 测试 DeepSeek。 | POST `/api/deepseek-chat`。 |
 | `handleSend` | form event | 对话发送主入口。 | 运行 pipeline、保存历史、同步状态、记录审计。 |
+| `handleTriggerTimeEvent` | form event | 非聊天时间事件触发入口。 | 调 `advanceSceneForCurrentTime` 后运行 `runEventActivity`，streaming 更新 `event_activity` 活动卡，并写短期记忆、房间历史和角色全局运行态。 |
 | `handleGenerateDossier` | 无 | 管理员生成档案预览。 | 调 `generateDossierFromDescription`。 |
 | `handleApplyDossier` | 无 | 应用人物预览。 | 调 `applyCandidateState`。 |
 | `handleGenerateScene` | 无 | 管理员生成场景预览。 | 调 `generateSceneFromDescription`。 |
@@ -352,7 +365,7 @@
 
 输出：`{ nextState, trace }`。`nextState` 回到 App Shell 并保存到角色全局运行态；`trace` 显示在右侧并保存到审计。
 
-数据流顺序：`content -> event -> appraisal narrative -> memoryRecall narrative -> decision narrative -> expression request/reply -> stateUpdate narrative -> runtimeSignalEvaluation -> stateDelta -> nextState/trace`。
+数据流顺序：`content -> event -> temporalSceneProgression -> roleTurn -> appraisal/memory/decision compatibility traces -> replyOutput -> stateUpdate narrative -> runtimeSignalEvaluation -> stateDelta -> nextState/trace`。
 
 ### Cognitive Module Client: `src/pipeline/cognitiveModuleClient.ts`
 
@@ -393,6 +406,20 @@
 | `onStream` | callback? | 探针自然语言输出流式回调。 |
 
 输出：`CognitiveModuleTrace<RoleTurnProbeResult>`。它只解释主脑决策路径、关键心理证据、标签锁定风险、上下文噪声和建议裁剪；只进入 `PipelineTrace.roleTurnProbe`、右侧 trace 和模块审计，不进入 `ReplyOutput`、State Update、关系记忆或长期记忆。
+
+### Event Activity: `src/pipeline/eventActivity.ts`
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `event` | `EventInput` | 非聊天时间/环境事件，当前由 App Shell 构造 `system_tick`。 |
+| `state` | `CharacterState` | 已经过 `advanceSceneForCurrentTime` 推进后的场景感知状态。 |
+| `progression` | `TemporalSceneProgression` | 本地真实时间/地理约束推进结果。 |
+| `llmConfig` | `LlmConfig` | LLM 配置。 |
+| `onStream` | callback? | 事件活动自然语言输出流式回调，App Shell 用它更新房间活动卡内容。 |
+
+内部派生：`buildEventActivityPrompt` 将人物稳定背景、性格面、当前场景、位置、runtime、最近房间上下文、长期候选和时间推进结果组织成一次非聊天活动回合。外部模型只需要自然语言输出六段：心理活动、动作、位移、关系变化、记忆变化、外显输出。
+
+输出：`CognitiveModuleTrace<EventActivityResult>`。结果由 `formatEventActivityDetails` 转为可展开活动卡详情；`externalOutput` 可为空，不能强制进入聊天台词。
 
 ### Appraisal: `src/pipeline/appraisal.ts`
 
@@ -571,6 +598,7 @@
 | `readConversationHistoryMessages` | `dossierId`, `user` | 读取当前用户当前人物消息历史。 | `ChatMessage[]`。 |
 | `readConversationHistorySummaries` | `dossierId` | 管理员列出某人物下所有用户历史摘要。 | summary list。 |
 | `readConversationHistoryMessagesByKey` | `dossierId`, `key` | 管理员按 key 读取某用户某人物消息。 | `ChatMessage[]`。 |
+| `readConversationRoomMessages` | `dossierId` | 合并同一角色下所有用户私有历史，生成房间时间线。 | 去重并按时间排序的 `ChatMessage[]`。 |
 | `appendConversationHistoryMessages` | `dossierId`, `messages`, `user` | 追加保存消息历史。 | 写 `.conversation-histories.local.json`。 |
 | `appendConversationAudit` | `entry`, `user` | 保存输入、输出、状态和模块调用。 | 写 `.conversation-audits.local.json`。 |
 | `readConversationAudits` | `limit=200` | 读取最近审计。 | 审计列表。 |
@@ -673,13 +701,14 @@ DeepSeek proxy 参数：
 | `scripts/verify-conversation-message-history.mjs` | 无 | 消息历史按用户和档案保存读取。 |
 | `scripts/verify-admin-history-and-module-audit.mjs` | 无 | 共享角色历史查看和管理员模块审计记录。 |
 | `scripts/verify-user-relationship-memory.mjs` | 无 | 当前用户关系印象记忆写入和回填关系备注。 |
+| `scripts/verify-temporal-scene-and-reply-segments.mjs` | 无 | 时间场景推进、事件活动 streaming/解析、回复分段和动作旁白清洗。 |
 
 ## 参数级数据流
 
 ### 对话发送到状态保存
 
 1. 用户输入框 `input` 进入 `handleSend`。
-2. `handleSend` 用 `activeConversationSpeaker` 生成 `speaker.id/name`，把用户消息写入本地历史桶。
+2. `handleSend` 用 `activeConversationSpeaker` 生成 `speaker.id/name`，把用户消息写入当前用户私有历史桶和本地房间时间线桶。
 3. `runConversationPipeline` 接收 `content/state/llmConfig/speaker/debug/onProgress`，生成 `EventInput`。
 4. `advanceSceneForCurrentTime` 根据人物位置时区和真实时间推进 `scene/location`。
 5. `runRoleTurn` 接收 `event/sceneAwareState/llmConfig`，一次性输出 `RoleTurnResult.innerStateNarrative/memoryNarrative/decisionNarrative/replyOutput`。
@@ -688,10 +717,21 @@ DeepSeek proxy 参数：
 8. State Updater 接收 `state/event/replyOutput/context/llmConfig`，输出自然语言 `StateUpdatePlan.narrative` 和兼容壳，写回 `nextState` 和 `StateDelta`。
 9. Runtime Signal Evaluator 接收 `stateAfterUpdate/event/replyOutput/context/llmConfig`，输出四项观察信号快照；值来自 State Update 已写入的 `nextState.runtime`。
 10. 如果 `debug.roleTurnProbeEnabled` 为真，`runRoleTurnProbe` 在 `stateDelta` 完成后旁路审计；关闭时不调用。
-11. `handleSend` 把回复消息写入本地历史桶。
-12. `persistConversationHistoryMessages` POST 当前用户和当前档案消息到 `.conversation-histories.local.json`。
+11. `handleSend` 把回复消息写入当前用户私有历史桶和本地房间时间线桶；心理流折叠卡只留在房间 UI。
+12. `persistConversationHistoryMessages` POST 当前用户和当前档案消息到 `.conversation-histories.local.json`，随后房间读取可通过 `readConversationRoomMessages` 聚合所有用户。
 13. `syncConversationState` POST `nextState + interaction` 到 `.conversation-states.local.json`，并在当前用户范围内传播关系余波。
 14. `recordConversationAudit` POST `PipelineTrace` 派生的 `moduleCalls` 到 `.conversation-audits.local.json`。
+
+### 时间事件到活动卡
+
+1. 用户在中间栏 `eventTimeInput` 输入 `datetime-local` 时间并提交。
+2. `handleTriggerTimeEvent` 构造 `system_tick` `EventInput`，不把它当作用户聊天消息。
+3. `advanceSceneForCurrentTime(state,event,selectedDate)` 先在本地推进可信 `scene/location/runtime.attentionFocus`。
+4. `handleTriggerTimeEvent` 先插入一条临时 `event_activity` 房间消息。
+5. `runEventActivity(event,sceneAwareState,progression,llmConfig,onStream)` 调用事件活动 LLM；`onStream` 持续更新该活动卡内容。
+6. LLM 完成后，`formatEventActivityDetails` 把心理、动作、位移、关系、记忆和外显输出整理为可展开详情。
+7. App Shell 将临时卡替换为折叠活动卡，写入短期记忆、当前用户私有历史和角色全局运行态。
+8. 之后 `readConversationRoomMessages(dossierId)` 会把这条活动卡合并进房间时间线，供其他用户或未来虚拟人承接。
 
 ### 人物档案生成到共享保存
 

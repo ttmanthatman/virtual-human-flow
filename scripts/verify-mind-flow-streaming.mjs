@@ -49,10 +49,12 @@ const { foldTransientMindFlowMessages, upsertMindFlowChatMessage } = require(joi
 
 let decisionRhythm = "multi_turn";
 const fetchedModules = [];
+const roleTurnPrompts = [];
 
 globalThis.fetch = async (_url, init) => {
   const body = JSON.parse(String(init.body));
   fetchedModules.push(body.moduleName);
+  if (body.moduleName === "role_turn") roleTurnPrompts.push(body.prompt);
   const final = createFixtureFinal(body.moduleName);
   if (body.outputMode === "natural_language") {
     const naturalText = typeof final === "string" ? final : final.reply ?? JSON.stringify(final);
@@ -65,9 +67,22 @@ globalThis.fetch = async (_url, init) => {
 };
 
 const multiTurnProgress = [];
+const roomAwareState = {
+  ...seedState,
+  shortTermMemory: [
+    {
+      id: "room-qoo-message",
+      timestamp: new Date(Date.now() - 60 * 1000).toISOString(),
+      speakerId: "user:qoo",
+      speakerName: "Qoo",
+      content: "我刚才也在这个房间里问过孙小雅。",
+      eventId: "event_qoo_room_context",
+    },
+  ],
+};
 const multiTurnResult = await runConversationPipeline({
   content: "周末一起去爬山吗？",
-  state: seedState,
+  state: roomAwareState,
   llmConfig: { provider: "external", endpoint: "http://fake.local/deepseek", model: "deepseek-v4-flash" },
   speaker: { id: "user_b", name: "当前对话者" },
   onProgress: (progress) => multiTurnProgress.push(progress),
@@ -79,6 +94,9 @@ if (preSpeechFrames.length < 4) {
 }
 if (!preSpeechFrames.some((frame) => frame.kind === "scene") || !preSpeechFrames.some((frame) => frame.kind === "action")) {
   throw new Error("Expected pre-speech mind-flow to include scene and action/impulse frames.");
+}
+if (!roleTurnPrompts[0]?.includes("房间里的Qoo说过")) {
+  throw new Error("Expected role_turn prompt to include recent room messages from other users.");
 }
 
 const firstSpeechIndex = multiTurnProgress.findIndex((progress) => progress.step === "llmOutput" && progress.status === "completed");
@@ -116,8 +134,12 @@ chatMessages = [
     timestamp: new Date().toISOString(),
   },
 ];
-if (chatMessages.some((message) => message.messageType === "mind_flow" && message.mindFlow?.phase === "pre_speech")) {
-  throw new Error("Expected pre-speech mind-flow to fold after the first spoken reply.");
+const foldedPreSpeech = chatMessages.find((message) => message.messageType === "mind_flow" && message.mindFlow?.phase === "pre_speech" && message.collapsed);
+if (!foldedPreSpeech || !Array.isArray(foldedPreSpeech.details) || foldedPreSpeech.details.length < 2) {
+  throw new Error("Expected pre-speech mind-flow to fold into an expandable summary after the first spoken reply.");
+}
+if (chatMessages.some((message) => message.messageType === "mind_flow" && message.mindFlow?.phase === "pre_speech" && message.transient)) {
+  throw new Error("Expected transient pre-speech mind-flow messages to be replaced by the folded summary.");
 }
 if (!chatMessages.some((message) => message.speaker === "persona" && message.content.includes("等一下"))) {
   throw new Error("Expected the folded chat state to keep the final spoken reply visible.");
@@ -135,6 +157,11 @@ for (const frame of postSpeechFrames) {
 }
 if (!chatMessages.some((message) => message.messageType === "mind_flow" && message.mindFlow?.phase === "post_speech")) {
   throw new Error("Expected post-speech mind-flow to stream after first speech.");
+}
+chatMessages = foldTransientMindFlowMessages(chatMessages, "post_speech");
+const foldedPostSpeech = chatMessages.find((message) => message.messageType === "mind_flow" && message.mindFlow?.phase === "post_speech" && message.collapsed);
+if (!foldedPostSpeech || !Array.isArray(foldedPostSpeech.details) || foldedPostSpeech.details.length < 2) {
+  throw new Error("Expected post-speech mind-flow to fold into an expandable summary.");
 }
 
 const followUpSegments = multiTurnResult.trace.llmOutput.segments.slice(1);
