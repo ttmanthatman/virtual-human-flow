@@ -28,6 +28,7 @@
 | `APP_UPDATE_RESTART_COMMAND` | 可选；更新完成后的重启命令 |
 | `APP_UPDATE_PM2_NAME` | 可选；未设置 restart command 时用于 `pm2 restart <name> --update-env` |
 | `LIAO_CHATROOM_ORIGIN` | 登录用户来源聊天室 origin |
+| `LIAO_CHATROOM_LOGIN_PATH` | 可选；默认 `/api/auth/login`，仅当 liao 登录路径再次变化时覆盖 |
 | `PORT` | 生产服务监听端口 |
 | `DEEPSEEK_API_KEY` | 可选；也可以继续使用服务器本地 `.deepseek.local.json` |
 

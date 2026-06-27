@@ -7,6 +7,7 @@ import {
   Check,
   Database,
   Download,
+  ExternalLink,
   Eye,
   FileText,
   LogIn,
@@ -43,6 +44,7 @@ import { filterPersistableConversationMessages, foldTransientMindFlowMessages, u
 import packageInfo from "../package.json";
 
 const githubRepositoryUrl = "https://github.com/ttmanthatman/virtual-human-flow";
+const chatroomHomeUrl = "https://liao.xiaogushi.us/";
 const appVersionLabel = `v${packageInfo.version}`;
 
 const traceSteps: { key: keyof PipelineTrace; label: string; icon: typeof Activity }[] = [
@@ -527,6 +529,15 @@ export function App() {
       .catch(() => {
         clearLocalAuth();
       });
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("from") === "liao" || params.get("login") === "liao") {
+      setLoginModalOpen(true);
+      setLoginError("");
+      setError("已从 liao 聊天室跳转过来，请使用同一个聊天室账号登录。");
+    }
   }, []);
 
   function authHeaders(token = authToken, extra: Record<string, string> = {}) {
@@ -1927,6 +1938,9 @@ export function App() {
               <LogIn size={15} /> 登录
             </button>
           )}
+          <a className="secondary-button chatroom-link" href={chatroomHomeUrl} target="_blank" rel="noreferrer" title="打开 liao 聊天室">
+            <ExternalLink size={15} /> 聊天室
+          </a>
           <div className={deepseekConnected ? "connection-pill connected" : "connection-pill"}>
             <Check size={15} />
             <div>
@@ -2415,7 +2429,7 @@ export function App() {
             <div className="modal-head">
               <div>
                 <strong>登录后使用</strong>
-                <span>使用配置的聊天室账号和原密码</span>
+                <span>使用 liao.xiaogushi.us 聊天室账号和原密码</span>
               </div>
               <button className="icon-button compact" type="button" onClick={() => setLoginModalOpen(false)} title="关闭">
                 <X size={15} />
@@ -2430,6 +2444,9 @@ export function App() {
               <input value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} autoComplete="current-password" type="password" />
             </label>
             {loginError ? <p className="error-text">{loginError}</p> : null}
+            <a className="login-helper-link" href={chatroomHomeUrl} target="_blank" rel="noreferrer">
+              <ExternalLink size={14} /> 打开 liao 聊天室
+            </a>
             <button className="primary-button" type="submit" disabled={isLoggingIn}>
               <LogIn size={15} /> {isLoggingIn ? "登录中" : "登录"}
             </button>

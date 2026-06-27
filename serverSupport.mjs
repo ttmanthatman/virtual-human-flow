@@ -6,6 +6,7 @@ import { builtinPersonaDossiers } from "./builtinPersonaDossiers.mjs";
 
 const rootDir = process.cwd();
 const liaoChatroomOrigin = process.env.LIAO_CHATROOM_ORIGIN || "";
+const liaoChatroomLoginPaths = uniqueStrings([process.env.LIAO_CHATROOM_LOGIN_PATH || "/api/auth/login", "/api/login"]);
 const personaDossierStorePath = resolve(rootDir, ".persona-dossiers.local.json");
 const conversationStateStorePath = resolve(rootDir, ".conversation-states.local.json");
 const conversationHistoryStorePath = resolve(rootDir, ".conversation-histories.local.json");
@@ -25,12 +26,13 @@ export function createLocalSession(liaoUser) {
   pruneExpiredSessions();
   const token = randomBytes(32).toString("base64url");
   const expiresAt = Date.now() + authSessionTtlMs;
+  const userPayload = normalizeLiaoUserPayload(liaoUser);
   const user = {
-    userId: Number(liaoUser.userId || liaoUser.id || 0),
-    username: String(liaoUser.username || ""),
-    nickname: String(liaoUser.nickname || liaoUser.username || ""),
-    avatar: typeof liaoUser.avatar === "string" ? liaoUser.avatar : "",
-    isAdmin: Boolean(liaoUser.isAdmin || liaoUser.is_admin),
+    userId: userPayload.userId,
+    username: userPayload.username,
+    nickname: userPayload.nickname,
+    avatar: userPayload.avatar,
+    isAdmin: userPayload.isAdmin,
   };
 
   authSessions.set(token, {
@@ -81,25 +83,15 @@ export async function loginWithLiaoChatroom(username, password) {
     throw new Error("登录服务尚未配置");
   }
 
-  const upstream = await fetch(`${liaoChatroomOrigin}/api/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const text = await upstream.text();
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = {};
+  let lastFailure;
+  for (const loginPath of liaoChatroomLoginPaths) {
+    const result = await requestLiaoLogin(loginPath, username, password);
+    if (result.ok) return result.user;
+    lastFailure = result;
+    if (result.status !== 404 && result.status !== 405) break;
   }
 
-  if (!upstream.ok || !data.success || !data.token) {
-    const message = typeof data.message === "string" ? data.message : "登录失败";
-    throw new Error(message);
-  }
-
-  return data;
+  throw new Error(lastFailure?.message || "登录失败");
 }
 
 export function readPersonaDossiers(user) {
@@ -597,6 +589,101 @@ export function readJsonBody(request) {
     });
     request.on("error", reject);
   });
+}
+
+async function requestLiaoLogin(loginPath, username, password) {
+  const upstream = await fetch(buildLiaoLoginUrl(loginPath), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password, deviceName: "虚拟人心流工作台" }),
+  });
+  const text = await upstream.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = {};
+  }
+
+  if (!upstream.ok || data?.success === false) {
+    return {
+      ok: false,
+      status: upstream.status,
+      message: extractLiaoLoginMessage(data) || (upstream.status === 404 ? "登录服务路径不可用" : "登录失败"),
+    };
+  }
+
+  const normalizedUser = normalizeLiaoLoginResponse(data);
+  if (!normalizedUser) {
+    return {
+      ok: false,
+      status: upstream.status,
+      message: "登录服务返回格式不可识别",
+    };
+  }
+
+  return { ok: true, status: upstream.status, user: normalizedUser };
+}
+
+function buildLiaoLoginUrl(loginPath) {
+  return new URL(loginPath, `${liaoChatroomOrigin.replace(/\/+$/, "")}/`).href;
+}
+
+function normalizeLiaoLoginResponse(data) {
+  if (!data || typeof data !== "object") return undefined;
+  const nested = data.data && typeof data.data === "object" ? data.data : {};
+  const account =
+    firstObject(data.account, data.user, nested.account, nested.user, data.profile, nested.profile) ??
+    (hasAnyUserIdentity(data) ? data : undefined);
+  const upstreamToken = firstString(data.token, data.authToken, data.accessToken, nested.token, nested.authToken, nested.accessToken);
+  if (!upstreamToken || !account) return undefined;
+  const user = normalizeLiaoUserPayload(account);
+  if (!user.userId && !user.username) return undefined;
+  return user;
+}
+
+function normalizeLiaoUserPayload(liaoUser) {
+  const source = liaoUser && typeof liaoUser === "object" ? liaoUser : {};
+  const userId = Number(source.userId || source.user_id || source.id || source.accountId || source.account_id || 0);
+  const username = firstString(source.username, source.name, source.login, source.account) || "";
+  const nickname = firstString(source.nickname, source.displayName, source.display_name, source.name, source.username) || username;
+  const avatar = firstString(source.avatar, source.avatarUrl, source.avatar_url) || "";
+  const role = firstString(source.role, source.permission, source.accountRole) || "";
+  const isAdmin = Boolean(source.isAdmin || source.is_admin || source.admin || role === "admin" || role === "owner");
+  return {
+    userId: Number.isFinite(userId) ? userId : 0,
+    username,
+    nickname,
+    avatar,
+    isAdmin,
+  };
+}
+
+function extractLiaoLoginMessage(data) {
+  if (!data || typeof data !== "object") return "";
+  const nested = data.data && typeof data.data === "object" ? data.data : {};
+  return firstString(data.message, data.error, data.reason, nested.message, nested.error);
+}
+
+function firstObject(...values) {
+  return values.find((value) => value && typeof value === "object" && !Array.isArray(value));
+}
+
+function firstString(...values) {
+  const value = values.find((item) => typeof item === "string" && item.trim());
+  return value ? value.trim() : "";
+}
+
+function hasAnyUserIdentity(value) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      firstString(value.username, value.name, value.login, value.nickname, value.displayName, value.display_name),
+  );
+}
+
+function uniqueStrings(values) {
+  return Array.from(new Set(values.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim())));
 }
 
 function readBearerToken(request) {

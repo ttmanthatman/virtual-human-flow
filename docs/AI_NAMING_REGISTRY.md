@@ -22,6 +22,7 @@
 | 项目 | `virtual-human-flow` | project | 当前 MVP 的工程代号 | `test-app`, `demo` |
 | 用户 | `user` | domain entity | 使用或配置虚拟人的真人 | `client` |
 | 登录会话 | `authSession` | permission/session object | 本项目本地会话，来源于 liao 聊天室登录校验，不保存密码 | `loginState`, `tokenState` |
+| liao 登录路径 | `liaoChatroomLoginPaths` | external auth endpoint list | liao 当前 `/api/auth/login` 加旧 `/api/login` 回退列表 | `loginUrl`, `authApiPath` |
 | 管理员用户 | `adminUser` | permission role | liao 聊天室返回 `isAdmin` 的用户，可维护共享档案和查看审计 | `superUser`, `rootUser` |
 | 虚拟人 | `persona` | domain entity | 可被配置、对话、呈现的虚拟角色 | `bot`, `agent` |
 | 对话会话 | `conversationSession` | domain concept | 一次连续交互过程 | `chat`, `talk` |
@@ -284,7 +285,10 @@
 | `normalizeDeepseekModel` | `vite.config.ts` / `src/App.tsx` | 避免使用 `deepseek-reasoner`，改为非思考模型 | model | model | 无 | implemented |
 | `sendSse` | `vite.config.ts` | 写出本地 SSE data 事件 | response, data | void | 写 HTTP response | implemented |
 | `serveStatic` | `server.mjs` | 生产环境返回 `dist/` 静态文件并支持 SPA fallback | pathname, method, response | HTML/assets | 读取 dist | implemented |
-| `loginWithLiaoChatroom` | `serverSupport.mjs` | 用 liao 聊天室 `/api/login` 校验用户名和密码，不修改聊天室数据、不保存密码 | username, password | liao user payload | 读取外部登录接口 | implemented |
+| `loginWithLiaoChatroom` | `serverSupport.mjs` | 用 liao 聊天室 `/api/auth/login` 校验用户名和密码，路径不存在时回退旧 `/api/login`；不修改聊天室数据、不保存密码 | username, password | normalized liao user payload | 读取外部登录接口 | implemented |
+| `requestLiaoLogin` | `serverSupport.mjs` | 请求单个 liao 登录路径并解析 HTTP/JSON 结果 | loginPath, username, password | login result object | 调用 liao 登录接口 | implemented |
+| `normalizeLiaoLoginResponse` | `serverSupport.mjs` | 将 liao 当前 `{ token, account }` 和旧响应形状归一化为本地可建 session 的用户 payload | liao login JSON | normalized liao user payload? | 不返回上游 token 给前端 | implemented |
+| `normalizeLiaoUserPayload` | `serverSupport.mjs` | 将 liao account/user 字段映射成本项目 `authUser` 字段 | liao user/account object | `userId`, `username`, `nickname`, `avatar`, `isAdmin` | createLocalSession | implemented |
 | `createLocalSession` | `serverSupport.mjs` | 将 liao 登录结果转换成本项目本地会话 token | liao user payload | token, user, expiresAt | 写入内存会话表 | implemented |
 | `getRequestSession` | `serverSupport.mjs` | 从 Authorization Bearer token 读取当前本地登录会话 | HTTP request | auth session? | 清理过期会话 | implemented |
 | `requireSession` | `serverSupport.mjs` | 保护需要登录的 API | HTTP request/response | auth session? | 可能返回 401 | implemented |
@@ -490,7 +494,7 @@
 | `/api/deepseek-chat` | POST | 登录用户可调用的本地 DeepSeek Chat Completions 代理；支持 SSE 流式返回 | 需要登录会话；从 `.deepseek.local.json` 或 `DEEPSEEK_API_KEY` 读取密钥；强制关闭 thinking 并纠正 reasoner 模型 | implemented |
 | `/health` | GET | 线上 nginx 健康检查 | 只返回 OK | implemented |
 | `/api/auth/session` | GET | 返回当前本地会话是否有效和用户摘要 | 不返回 liao token 或密码 | implemented |
-| `/api/auth/login` | POST | 用 liao 聊天室账号密码登录本项目 | 请求会发送到 `liaoChatroomOrigin` 的 `/api/login`；本项目不保存密码 | implemented |
+| `/api/auth/login` | POST | 用 liao 聊天室账号密码登录本项目 | 请求会发送到 `liaoChatroomOrigin` 的 `/api/auth/login`，404/405 时回退旧 `/api/login`；本项目不保存密码 | implemented |
 | `/api/auth/logout` | POST | 销毁本项目内存会话 | 不修改 liao 聊天室数据 | implemented |
 | `/api/persona-dossiers` | GET | 登录用户读取后台共享多人档案，并叠加角色全局对话运行态 | 需要本项目登录会话 | implemented |
 | `/api/persona-dossiers` | POST | 管理员新增或更新后台共享多人档案 | 需要管理员会话；写 `.persona-dossiers.local.json` | implemented |
@@ -522,5 +526,6 @@
 | Nginx 站点 | `productionNginxSite` | 将生产域名反代到 `127.0.0.1:<production-port>` | `<production-nginx-site>` | 只修改该域名配置 |
 | DeepSeek API | `deepseekApi` | 本地真实 LLM 测试，驱动认知模块和 Reply LLM | `.deepseek.local.json` 或 `DEEPSEEK_API_KEY`，不进 git | 通过 Vite 本地代理调用；固定 `deepseek-v4-flash` 并强制 `thinking.disabled` |
 | 外部 LLM Endpoint | `externalLlmEndpoint` | DeepSeek 本地代理入口 | 不在前端保存密钥；由 Vite 代理读取本地密钥 | 当前由 `/api/deepseek-chat` 承担本地代理，不作为 UI 可选模拟模式 |
-| liao 聊天室 | `liaoChatroom` | 本项目用户来源和密码校验来源 | `LIAO_CHATROOM_ORIGIN` 配置的 `/api/login`；本项目只调用登录校验，不写聊天室数据 | 上游接口不可用或未配置时无法登录 |
+| liao 聊天室 | `liaoChatroom` | 本项目用户来源、密码校验来源和双向跳转目标 | `LIAO_CHATROOM_ORIGIN` 配置的 `/api/auth/login`，旧 `/api/login` 仅作路径回退；本项目只调用登录校验，不写聊天室数据 | 上游接口不可用或未配置时无法登录 |
+| liao 聊天室首页 | `chatroomHomeUrl` | App Shell external link | 顶部和登录浮窗跳回 `https://liao.xiaogushi.us/` | 当前固定为 liao 主站 |
 | 国内地图服务 | `domesticMapService` | 未来解析真实道路、建筑、POI 和角色位置；当前尚未接入 | 待选型；不得使用 Google Maps 作为国内用户默认服务 | 当前 `mapContext.source=seed/manual`，不能假装来自真实地图 API |

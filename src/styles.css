@@ -179,6 +179,12 @@ textarea {
   padding: 0 12px;
 }
 
+.chatroom-link {
+  min-height: 38px;
+  padding: 0 12px;
+  text-decoration: none;
+}
+
 .connection-pill.connected {
   border-color: rgba(15, 118, 110, 0.28);
   color: #0f766e;
@@ -1439,6 +1445,21 @@ pre {
   padding: 0 10px;
 }
 
+.login-helper-link {
+  align-items: center;
+  color: #0d5f58;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 760;
+  gap: 6px;
+  justify-self: start;
+  text-decoration: none;
+}
+
+.login-helper-link:hover {
+  text-decoration: underline;
+}
+
 .audit-list {
   display: grid;
   gap: 10px;
@@ -1722,6 +1743,7 @@ pre {
   }
 
   .topbar-login,
+  .chatroom-link,
   .icon-button {
     flex: 0 0 auto;
   }

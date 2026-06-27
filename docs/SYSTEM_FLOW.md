@@ -8,7 +8,7 @@
 
 开发工作流已改为模块上下文包模式。每轮先读轻量启动文档、错误精髓摘要和 `docs/modules/<module>.md`，再用 `rg` 从 `docs/AI_NAMING_REGISTRY.md` 与本文档中抽取本模块相关片段。只有跨模块协作、权限边界、数据流、部署路径或广域架构变化时，才全量阅读并更新本文档。
 
-当前系统已接入登录和权限边界。未登录用户可以看到完整工作台界面，但发送消息、切换档案、生成或应用档案、保存 DeepSeek 密钥、测试 DeepSeek、查看审计等操作会打开登录浮窗。登录账号来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室用户；本项目只调用 liao 聊天室 `/api/login` 校验用户名和密码，不保存密码，不修改聊天室数据。
+当前系统已接入登录和权限边界。未登录用户可以看到完整工作台界面，但发送消息、切换档案、生成或应用档案、保存 DeepSeek 密钥、测试 DeepSeek、查看审计等操作会打开登录浮窗。登录账号来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室用户；本项目优先调用 liao 聊天室 `/api/auth/login` 校验用户名和密码，只有路径不存在时才回退旧 `/api/login`，不保存密码，不修改聊天室数据。页面顶部和登录浮窗可跳回 `liao.xiaogushi.us`；从 liao 带 `?from=liao` 或 `?login=liao` 跳到本项目时，会自动打开登录浮窗。
 
 管理员权限沿用 liao 聊天室登录结果里的 `isAdmin`。只有管理员可以新增、保存、删除或应用共享多人档案，也可以修改档案分组；普通登录用户可以读取、选择和使用管理员保存的共享档案。用户对话时产生的中间栏消息仍按 `userId + dossierId` 写入：前端默认“我的历史”通过 `/api/persona-dossiers/:id/conversation-history` 加载当前用户消息，发送后也只写入当前用户消息桶。当前角色下的用户历史还会通过 `/api/conversation-histories` 以只读方式列出和读取，任一登录用户都可以查看其他用户与该角色的历史。服务端角色运行态通过 `/api/persona-dossiers/:id/conversation-state` 按 `dossierId` 写入 `.conversation-states.local.json` 的全局角色条目；短期记忆、长期记忆、runtime 状态、关系变化、对各用户的关系印象、scene 和 location 都由同一个人物共享，不覆盖 `.persona-dossiers.local.json` 中的共享底稿。
 
@@ -174,7 +174,9 @@ flowchart TD
     B -- 查看界面 --> C[允许查看]
     B -- 发送/切换/保存/审计/测试 --> D[打开登录浮窗]
     D --> E[提交用户名和原密码]
-    E --> F[Server Support: POST liaoChatroom /api/login]
+    E --> F[Server Support: POST liaoChatroom /api/auth/login]
+    F -- 404/405 --> F2[Fallback: POST liaoChatroom /api/login]
+    F2 --> G
     F --> G{liao 返回 success?}
     G -- 否 --> H[显示登录失败]
     G -- 是 --> I[createLocalSession: 生成本项目 token]
@@ -184,7 +186,7 @@ flowchart TD
     K -- 否 --> M[可选择共享档案和对话]
 ```
 
-本项目的本地 `authSession` 存在内存中，服务重启后需要重新登录。上游 liao token 不返回前端，也不写入仓库；用户密码只在登录请求中转发给 `LIAO_CHATROOM_ORIGIN` 配置的 liao 聊天室校验。
+本项目的本地 `authSession` 存在内存中，服务重启后需要重新登录。上游 liao token 不返回前端，也不写入仓库；用户密码只在登录请求中转发给 `LIAO_CHATROOM_ORIGIN` 配置的 liao 聊天室校验。当前 liao 成功响应形状是 `{ token, account }`，旧顶层用户字段仍通过归一化兼容。
 
 ## 记忆召回路径
 
@@ -688,7 +690,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     REQ["认证/档案/审计 API request"] --> SUPPORT["serverSupport.mjs"]
-    SUPPORT --> LIAO["liaoChatroom /api/login"]
+    SUPPORT --> LIAO["liaoChatroom /api/auth/login + legacy /api/login"]
     SUPPORT --> SESS["内存 authSession"]
     SUPPORT --> BUILTIN["builtinPersonaDossiers.mjs"]
     SUPPORT --> DOS[".persona-dossiers.local.json"]
@@ -832,7 +834,7 @@ flowchart LR
 | 多人档案 | initialized | 左侧可按 `personaDossierGroup` 分组、新建、切换、删除 `personaDossier`；每个档案绑定人物状态、配套场景素材和位置属性 |
 | 内置人物档案 | initialized | `builtinPersonaDossiers.mjs` 提供 7 个“马可福音10”和 7 个“郑州市”全局初始档案 |
 | 人物位置属性 | initialized | `CharacterState.location` 支持当前位置、速度、方向和周边地图上下文；初始来自 seed/manual，对话运行态可由 `temporalSceneProgression` 按真实当地时间推进 |
-| 登录机制 | initialized | 用户来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室登录接口；未登录可看界面但操作会弹登录浮窗 |
+| 登录机制 | initialized | 用户来自 `LIAO_CHATROOM_ORIGIN` 配置的聊天室登录接口；优先 `/api/auth/login` 并兼容旧 `/api/login`；未登录可看界面但操作会弹登录浮窗 |
 | 权限控制 | initialized | `isAdmin` 用户可维护共享档案和查看审计；普通登录用户可选择共享档案、对话并只读查看当前角色下其他用户历史 |
 | 共享多人档案 | initialized | 管理员保存到 `.persona-dossiers.local.json`，所有登录用户可读取和使用 |
 | 用户私有消息历史 | initialized | 登录用户发送对话后按 `userId + dossierId` 写入 `.conversation-histories.local.json`；连续回复会按 `replyOutput.segments` 写成多条角色消息；渠道标签、现场事件活动卡、当前活动快照和折叠后的真实心理流记录会随历史保存 |
